@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\src\os\os_biqueue.c" />
+    <ClCompile Include="..\src\os\os_config.c" />
+    <ClCompile Include="..\src\os\os_date.c" />
+    <ClCompile Include="..\src\os\os_epoll.c" />
+    <ClCompile Include="..\src\os\os_epoll_reactor.c" />
+    <ClCompile Include="..\src\os\os_log.c" />
+    <ClCompile Include="..\src\os\os_mutex.c" />
+    <ClCompile Include="..\src\os\os_queue.c" />
+    <ClCompile Include="..\src\os\os_rbt.c" />
+    <ClCompile Include="..\src\os\os_thread.c" />
+    <ClCompile Include="..\src\os\os_thread_pool.c" />
+    <ClCompile Include="..\src\os\os_vio_socket.c" />
+    <ClCompile Include="..\src\socks\sock_proxy.c" />
+    <ClCompile Include="..\src\os\os_file.c" />
+    <ClCompile Include="..\src\os\os_getopt.c" />
+    <ClCompile Include="..\src\os\os_pat.c" />
+    <ClCompile Include="..\src\os\os_timewheel.c" />
+    <ClCompile Include="..\src\os\os_mach.c" />
+    <ClCompile Include="..\src\os\os_thread_group.c" />
+    <ClCompile Include="..\src\os\os_md5.c" />
+    <ClCompile Include="..\src\os\os_rijndael.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\os\os_biqueue.h" />
+    <ClInclude Include="..\src\os\os_config.h" />
+    <ClInclude Include="..\src\os\os_date.h" />
+    <ClInclude Include="..\src\os\os_epoll.h" />
+    <ClInclude Include="..\src\os\os_epoll_reactor.h" />
+    <ClInclude Include="..\src\os\os_list.h" />
+    <ClInclude Include="..\src\os\os_log.h" />
+    <ClInclude Include="..\src\os\os_mutex.h" />
+    <ClInclude Include="..\src\os\os_queue.h" />
+    <ClInclude Include="..\src\os\os_rbt.h" />
+    <ClInclude Include="..\src\os\os_thread.h" />
+    <ClInclude Include="..\src\os\os_thread_pool.h" />
+    <ClInclude Include="..\src\os\os_type.h" />
+    <ClInclude Include="..\src\os\os_vio_socket.h" />
+    <ClInclude Include="..\src\os\os_file.h" />
+    <ClInclude Include="..\src\os\os_getopt.h" />
+    <ClInclude Include="..\src\os\os_pat.h" />
+    <ClInclude Include="..\src\os\os_timewheel.h" />
+    <ClInclude Include="..\src\os\os_mach.h" />
+    <ClInclude Include="..\src\os\os_thread_group.h" />
+    <ClInclude Include="..\src\os\os_md5.h" />
+    <ClInclude Include="..\src\os\os_rijndael.h" />
+  </ItemGroup>
+</Project>
