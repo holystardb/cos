@@ -14,6 +14,8 @@
 #include "os_pat.h"
 #include "os_mach.h"
 #include "os_rijndael.h"
+#include "os_md5.h"
+
 
 #define CMD_FIRST_CONTENT               1
 #define CMD_OTHER_CONTENT               2
@@ -33,6 +35,12 @@ typedef enum {
     L_PROXY     = 1,
     R_PROXY     = 2,
 } proxy_type_t;
+
+typedef enum {
+    ENCRYPT_NONE = 0,
+    ENCRYPT_AES = 1,
+    ENCRYPT_XOR = 2,
+} encrypt_type_t;
 
 typedef enum {
     HOST_IPV4     = 1,
@@ -93,11 +101,13 @@ typedef struct
     uint8              connect_timeout_sec;
     uint8              poll_timeout_sec;
     proxy_type_t       type;
+    encrypt_type_t     encrypt_type;
     spinlock_t         lock;
     int                log_level;
     int                log_type;
     uint8              encrypt_key[16];
-
+    uint8              auth_md5_buf[MD5_BLOCK_SIZE];
+    
     // statistics
     uint32             conn_alloc_count;
     uint32             working_threads;
@@ -192,10 +202,9 @@ static void srv_decrypt_xor(connection_t *conn)
 
 static uint32 pad_buffer(char* buf, uint32 len)
 {
-    uint32 m, n, pad_count;
+    uint32 n, pad_count;
     uint32 i;
 
-    m = (len + 4) / 16;
     n = (len + 4) % 16;
     pad_count = 16 - n;
 
@@ -212,7 +221,7 @@ static void srv_encrypt_aes(connection_t *conn)
 
     pad_data_len = pad_buffer(conn->buf + 4, conn->buf_len - 4);
     mach_write_to_4((uint8*)conn->buf + pad_data_len, conn->buf_len - 4);
-    aes_encrypt_ecb(AES_CYPHER_128, conn->buf + 4, pad_data_len, encrypt_init_key);
+    aes_encrypt_ecb(AES_CYPHER_128, (uint8*)conn->buf + 4, pad_data_len, encrypt_init_key);
     //
     conn->buf_len = pad_data_len + 4;
     mach_write_to_4((uint8*)conn->buf, pad_data_len);
@@ -220,18 +229,26 @@ static void srv_encrypt_aes(connection_t *conn)
 
 static void srv_decrypt_aes(connection_t *conn)
 {
-    aes_decrypt_ecb(AES_CYPHER_128, conn->buf, conn->buf_len, encrypt_init_key);
+    aes_decrypt_ecb(AES_CYPHER_128, (uint8*)conn->buf, conn->buf_len, encrypt_init_key);
     conn->buf_len = mach_read_from_4((uint8*)conn->buf + conn->buf_len - 4);
 }
 
 static void srv_encrypt(connection_t *conn)
 {
-    srv_encrypt_xor(conn);
+    if (g_socks_mgr.encrypt_type == ENCRYPT_XOR) {
+        srv_encrypt_xor(conn);
+    } else if (g_socks_mgr.encrypt_type == ENCRYPT_AES) {
+        srv_encrypt_aes(conn);
+    }
 }
 
 static void srv_decrypt(connection_t *conn)
 {
-    srv_decrypt_xor(conn);
+    if (g_socks_mgr.encrypt_type == ENCRYPT_XOR) {
+        srv_decrypt_xor(conn);
+    } else if (g_socks_mgr.encrypt_type == ENCRYPT_AES) {
+        srv_decrypt_aes(conn);
+    }
 }
 
 static bool32 srv_epoll_accept(reactor_t* reactor, my_socket listen_fd, my_socket accept_fd)
@@ -364,23 +381,33 @@ err_exit:
 
 static bool32 do_check_connection_status(uint32 events, connection_t *conn)
 {
+    char           *host;
+    uint16          port;
     int             ret;
+
+    if (g_socks_mgr.type == L_PROXY) {
+        host = g_socks_mgr.remote_host;
+        port = g_socks_mgr.remote_port;
+    } else {
+        host = conn->host;
+        port = conn->port;
+    }
 
     if (events & EPOLLTIMEOUT) {
         LOG_PRINT(LOG_NOTICE, "do_check_connection_status: timeout for connect server(%s:%d), connection(%d : %d)",
-            conn->host, conn->port, conn->id, conn->server_vio.sock_fd);
+            host, port, conn->id, conn->server_vio.sock_fd);
         return FALSE;
     }
     
     ret = vio_check_connection_status(&conn->server_vio);
     if (ret != VIO_SUCCESS) {
         LOG_PRINT(LOG_NOTICE, "do_check_connection_status: error for connect server(%s:%d), connection(%d : %d), error %d",
-            conn->host, conn->port, conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
+            host, port, conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         return FALSE;
     }
 
     LOG_PRINT(LOG_DEBUG, "do_check_connection_status: connected to server(%s:%d), connection(%d : %d)",
-        conn->host, conn->port, conn->id, conn->server_vio.sock_fd);
+        host, port, conn->id, conn->server_vio.sock_fd);
 
     return TRUE;
 }
@@ -781,11 +808,9 @@ static bool32 lproxy_handle_contents_req(uint32 events, connection_t *conn)
         goto err_exit;
     }
 
-    pos = 5;
+    pos = 5 + MD5_BLOCK_SIZE;
     if (conn->is_first_content) {
-        pos += 1 + conn->host_len;
-        pos += 2;
-        pos += 2 + g_socks_mgr.user_len + g_socks_mgr.passwd_len;
+        pos += 1 + conn->host_len + 2;
     }
     conn->buf_len = 0;
     ret = vio_try_read(&conn->client_vio, conn->buf + pos, conn->buf_size, &conn->buf_len);
@@ -805,6 +830,8 @@ static bool32 lproxy_handle_contents_req(uint32 events, connection_t *conn)
     pos = 4;
     mach_write_to_1((unsigned char*)conn->buf + pos, conn->is_first_content);
     pos += 1;
+    memcpy(conn->buf + pos, g_socks_mgr.auth_md5_buf, MD5_BLOCK_SIZE);
+    pos += MD5_BLOCK_SIZE;
     if (conn->is_first_content) {
         conn->is_first_content = FALSE;
         mach_write_to_1((unsigned char*)conn->buf + pos, conn->host_len);
@@ -813,14 +840,6 @@ static bool32 lproxy_handle_contents_req(uint32 events, connection_t *conn)
         pos += conn->host_len;
         mach_write_to_2((unsigned char*)conn->buf + pos, conn->port);
         pos += 2;
-        mach_write_to_1((unsigned char*)conn->buf + pos, g_socks_mgr.user_len);
-        pos += 1;
-        memcpy(conn->buf + pos, g_socks_mgr.user, g_socks_mgr.user_len);
-        pos += g_socks_mgr.user_len;
-        mach_write_to_1((unsigned char*)conn->buf + pos, g_socks_mgr.passwd_len);
-        pos += 1;
-        memcpy(conn->buf + pos, g_socks_mgr.password, g_socks_mgr.passwd_len);
-        pos += g_socks_mgr.passwd_len;
         LOG_PRINT(LOG_DEBUG, "lproxy_handle_contents_req: server(%s:%d)", conn->host, conn->port);
     }
 
@@ -941,10 +960,13 @@ static bool32 rproxy_parse_contents_req(connection_t *conn, bool32 *is_first_con
     srv_decrypt(conn);
     *is_first_content = mach_read_from_1((unsigned char*)conn->buf);
     pos = 1;
+    if (memcmp(g_socks_mgr.auth_md5_buf, conn->buf + pos, MD5_BLOCK_SIZE) != 0) {
+        LOG_PRINT(LOG_NOTICE, "rproxy_parse_contents_req: invalid user or password. connection(%d : %d)",
+            conn->id, conn->client_vio.sock_fd);
+        goto err_exit;
+    }
+    pos += MD5_BLOCK_SIZE;
     if (*is_first_content != 0) {
-        char  *user, *password;
-        uint8  user_len, passwd_len;
-        
         conn->host_len = mach_read_from_1((unsigned char*)conn->buf + pos);
         pos += 1;
         memcpy(conn->host, conn->buf + pos, conn->host_len);
@@ -952,24 +974,6 @@ static bool32 rproxy_parse_contents_req(connection_t *conn, bool32 *is_first_con
         pos += conn->host_len;
         conn->port = mach_read_from_2((unsigned char*)conn->buf + pos);
         pos += 2;
-        user_len = mach_read_from_1((unsigned char*)conn->buf + pos);
-        pos += 1;
-        user = conn->buf + pos;
-        pos += user_len;
-        passwd_len = mach_read_from_1((unsigned char*)conn->buf + pos);
-        pos += 1;
-        password = conn->buf + pos;
-        pos += passwd_len;
-        if (g_socks_mgr.user_len > 0) {
-            if (user_len != g_socks_mgr.user_len || passwd_len != g_socks_mgr.passwd_len ||
-                strncmp(user, g_socks_mgr.user, user_len) != 0 ||
-                strncmp(password, g_socks_mgr.password, passwd_len) != 0)
-            {
-                LOG_PRINT(LOG_NOTICE, "rproxy_parse_contents_req: invalid user or password. connection(%d : %d)",
-                    conn->id, conn->client_vio.sock_fd);
-                goto err_exit;
-            }
-        }
         LOG_PRINT(LOG_DEBUG, "rproxy_parse_contents_req: connection(%d : %d) SERVER(%s : %d)",
             conn->id, conn->client_vio.sock_fd, conn->host, conn->port);
     }
@@ -994,7 +998,7 @@ static bool32 rproxy_async_connect_server(connection_t *conn)
 
     phost = gethostbyname(conn->host);
     if (phost == NULL) {
-        LOG_PRINT(LOG_NOTICE, "rproxy_handle_content: error for convert domain, connection(%d : %d)",
+        LOG_PRINT(LOG_NOTICE, "rproxy_async_connect_server: error for convert domain, connection(%d : %d)",
             conn->id, conn->client_vio.sock_fd);
         goto err_exit;
     }
@@ -1006,12 +1010,12 @@ static bool32 rproxy_async_connect_server(connection_t *conn)
     ret = vio_connect_by_addr_async(&conn->server_vio, (struct sockaddr_in *)&sin, sizeof(struct sockaddr_in));
     if (VIO_SUCCESS != ret)
     {
-        LOG_PRINT(LOG_NOTICE, "rproxy_handle_content: error for connect server, connection(%d), error %d",
+        LOG_PRINT(LOG_NOTICE, "rproxy_async_connect_server: error for connect server, connection(%d), error %d",
             conn->id, conn->server_vio.error_no);
         goto err_exit;
     }
 
-    LOG_PRINT(LOG_DEBUG, "socks_async_connect_server: connecting to server(%s:%d), connection(%d : %d)",
+    LOG_PRINT(LOG_DEBUG, "rproxy_async_connect_server: connecting to server(%s:%d), connection(%d : %d)",
         conn->host, conn->port, conn->id, conn->server_vio.sock_fd);
 
     return TRUE;
@@ -1220,7 +1224,6 @@ static void socks_epoll_events(int fd, struct epoll_event* event)
     spin_lock(&g_socks_mgr.lock, NULL);
     g_socks_mgr.working_threads--;
     spin_unlock(&g_socks_mgr.lock);
-
 }
 
 static int get_options(int argc, char **argv)
@@ -1249,6 +1252,20 @@ static int get_options(int argc, char **argv)
     return 0;
 } /* get_options */
 
+static void srv_create_auth_md5()
+{
+    MD5_CTX ctx;
+
+    memset(g_socks_mgr.auth_md5_buf, 0, MD5_BLOCK_SIZE);
+    if (g_socks_mgr.user_len == 0) {
+        return;
+    }
+
+    md5_init(&ctx);
+    md5_update(&ctx, (uint8*)g_socks_mgr.user, g_socks_mgr.user_len);
+    md5_update(&ctx, (uint8*)g_socks_mgr.password, g_socks_mgr.passwd_len);
+    md5_final(&ctx, g_socks_mgr.auth_md5_buf);
+}
 
 static void reload_config()
 {
@@ -1261,6 +1278,7 @@ static void reload_config()
     g_socks_mgr.connect_timeout_sec = get_private_profile_int("general", "connect_timeout", 3, g_config_file);
     g_socks_mgr.poll_timeout_sec = get_private_profile_int("general", "poll_timeout", 10, g_config_file);
 
+    srv_create_auth_md5();
     log_init(g_socks_mgr.log_level, g_socks_mgr.log_type, NULL);
 }
 
@@ -1275,6 +1293,7 @@ static bool32 load_config(int argc, char **argv)
     }
 
     g_socks_mgr.type = get_private_profile_int("general", "type", 0, g_config_file);
+    g_socks_mgr.encrypt_type = get_private_profile_int("general", "encrypt_type", 0, g_config_file);
     g_socks_mgr.thread_count = get_private_profile_int("general", "thread_count", 10, g_config_file);
     get_private_profile_string("general", "bind-address", "0.0.0.0", g_socks_mgr.local_host, 255, g_config_file);
     g_socks_mgr.local_port = get_private_profile_int("general", "port", 1080, g_config_file);
@@ -1294,6 +1313,8 @@ static bool32 load_config(int argc, char **argv)
         g_socks_mgr.remote_port = get_private_profile_int("remote", "port", 1090, g_config_file);
     }
 
+    srv_create_auth_md5();
+    
     get_app_path(path);
 #ifdef __WIN__
     sprintf(logfile, "%s\\socks.log", path);
@@ -1331,19 +1352,27 @@ static bool32 service_initialize()
 uint32  g_pre_req_count = 0;
 static void print_statistics()
 {
-    uint32   alloc_count, inprocess_count, working_threads, req_count, tps;
+    uint32   alloc_count, inprocess_count;
+    uint32   free_threads, working_threads;
+    uint32   req_count, tps;
 
     spin_lock(&g_socks_mgr.lock, NULL);
     alloc_count = g_socks_mgr.conn_alloc_count;
-    working_threads = g_socks_mgr.working_threads;
-    req_count = g_socks_mgr.req_count;
     inprocess_count = alloc_count - UT_LIST_GET_LEN(g_socks_mgr.free_list);
+    working_threads = g_socks_mgr.working_threads;
+    free_threads = g_socks_mgr.thread_count - working_threads;
+    req_count = g_socks_mgr.req_count;
     tps = req_count - g_pre_req_count;
     g_pre_req_count = g_socks_mgr.req_count;
     spin_unlock(&g_socks_mgr.lock);
-    
-    LOG_PRINT(LOG_NOTICE, "alloc count %d inprocess count %d working threads %d request count %u tps %d",
-        alloc_count, inprocess_count, working_threads, req_count, tps);
+
+    LOG_PRINT(LOG_NOTICE, "-----------------------------------------------------------------------");
+    LOG_PRINT(LOG_NOTICE, "| connection count |   total % 8d     |   inprocess % 4d          |", alloc_count, inprocess_count);
+    LOG_PRINT(LOG_NOTICE, "-----------------------------------------------------------------------");
+    LOG_PRINT(LOG_NOTICE, "| thread count     |   free  % 8d     |   working   % 4d          |", free_threads, working_threads);
+    LOG_PRINT(LOG_NOTICE, "-----------------------------------------------------------------------");
+    LOG_PRINT(LOG_NOTICE, "| client request   |   count % 8d     |   tps       % 4d          |", req_count, tps);
+    LOG_PRINT(LOG_NOTICE, "-----------------------------------------------------------------------");
 }
 
 int main(int argc, char *argv[])

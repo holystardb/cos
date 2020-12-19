@@ -3,34 +3,27 @@
 
 #include "os_type.h"
 
-#define MD5 5
-
-#ifndef MD
-  #define MD MD5
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#ifndef PROTOTYPES
-  #define PROTOTYPES 1
-#endif
+// MD5 outputs a 16 byte digest
+#define MD5_BLOCK_SIZE       16
 
-#if PROTOTYPES
-  #define PROTO_LIST(list) list
-#else
-  #define PROTO_LIST(list) ()
-#endif
-
-typedef struct
-{
-  UINT32 state[4];
-  UINT32 count[2];
-  UCHAR buffer[64];
+typedef struct {
+   uint8 data[64];
+   uint32 datalen;
+   unsigned long long bitlen;
+   uint32 state[4];
 } MD5_CTX;
 
-void MD5Init PROTO_LIST ((MD5_CTX* Md5_ctx));
-void MD5Update PROTO_LIST ((MD5_CTX* Md5_ctx, PUCHAR Input, UINT32 Legth));
-void MD5Final PROTO_LIST ((UCHAR Digest[16], MD5_CTX* Md5_ctx));
+/*********************** FUNCTION DECLARATIONS **********************/
+void md5_init(MD5_CTX *ctx);
+void md5_update(MD5_CTX *ctx, uint8 data[], uint32 len);
+void md5_final(MD5_CTX *ctx, uint8 hash[]);
 
-int MDString (char* In, char* Out);
-
+#ifdef __cplusplus
+}
 #endif
 
+#endif   // _OS_MD5_H

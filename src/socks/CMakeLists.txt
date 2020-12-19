@@ -2,7 +2,6 @@ aux_source_directory (${CMAKE_CURRENT_SOURCE_DIR} SOCKS_LIB_SRCS)
 
 include_directories (  
     ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/src/os
 )
 
 link_directories (

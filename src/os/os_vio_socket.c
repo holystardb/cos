@@ -329,7 +329,7 @@ int vio_connect_by_addr_async(Vio* vio, struct sockaddr_in *addr, socklen_t len)
             vio->error_no == SOCKET_EWOULDBLOCK) {
             vio->error_no = 0;
         } else {
-            LOG_PRINT(LOG_NOTICE, "vio_connect_by_addr_async: can not connect to server, error %d", socket_errno);
+            LOG_PRINT(LOG_NOTICE, "vio_connect_by_addr_async: can not connect to server, error %d", vio->error_no);
             vio_close_socket(vio);
             return VIO_ERROR;
         }

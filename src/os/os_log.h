@@ -12,9 +12,9 @@ extern "C" {
 
 typedef enum
 {
-    LOG_TO_STDERR   = 1,
-    LOG_TO_FILE     = 2,
-    LOG_TO_SYSLOG   = 4,
+    LOG_TO_STDERR   = 0,
+    LOG_TO_FILE     = 1,
+    LOG_TO_SYSLOG   = 2,
 } log_type_t;
 
 typedef enum
