@@ -246,7 +246,17 @@ int get_private_profile_string(const char *section, const char *entry, const cha
         if (ep[i] == '#')
         {
             ep[i] = '\0';
+            len = i;
             break;
+        }
+    }
+    if (len > 0) {
+        for (i = len - 1; i >= 0; i--)
+        {
+            if (ep[i] != ' ') {
+                break;
+            }
+            ep[i] = '\0';
         }
     }
     strncpy(buffer, ep, buffer_len - 1);

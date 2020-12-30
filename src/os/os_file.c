@@ -10,3 +10,17 @@ bool32 get_app_path(char* str)
     
     return TRUE;
 }
+
+int32 file_size(char  *file_name, long long *file_byte_size)
+{
+    FILE *fp;
+    fp = fopen(file_name, "r");
+    if (!fp) {
+        return -1;
+    }
+    _fseeki64(fp, 0, SEEK_END);
+    *file_byte_size = _ftelli64(fp);
+    fclose(fp);
+
+    return 0;
+}
