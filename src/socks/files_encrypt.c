@@ -13,12 +13,9 @@ typedef enum {
 } encrypt_type_t;
 
 typedef struct {
-    char suffix[256];
-} suffix_t;
+    char name[256];
+} def_name_t;
 
-typedef struct {
-    char dir[256];
-} exclude_dir_t;
 
 char  g_config_file[255];
 /* 128 bit key */
@@ -203,11 +200,12 @@ void print_filename_by_level(int32 level, char *file_name, char *result_info)
     printf(" %s (%s)\n", file_name, result_info);
 }
 
-void recursion_encrypt_decryption(int32 level, char *plain_dir, suffix_t *suffix, uint32 suffix_count,
-    char *encrypt_dir, exclude_dir_t *exclude_dir, uint32 exclude_dir_count, encrypt_type_t type)
+void recursion_encrypt_decryption(int32 level, char *plain_dir, char *encrypt_dir,
+    def_name_t *include_file, uint32 file_count, def_name_t *include_suffix, uint32 suffix_count,
+    def_name_t *exclude_dir, uint32 dir_count, encrypt_type_t type)
 {
     struct _finddata_t  fdata[100];
-    int32               count = 0, ret, len, suffix_len, name_len;
+    int32               count = 0, ret, len, name_len;
     char                plain_file[256], encrypt_file[256];
 
     ret = find_data_from_dir(type == ENCRYPT_FLAG ? plain_dir : encrypt_dir, fdata, 100, &count);
@@ -222,8 +220,8 @@ void recursion_encrypt_decryption(int32 level, char *plain_dir, suffix_t *suffix
         }
         if (fdata[i].attrib == _A_SUBDIR) {
             bool32 is_found = FALSE;
-            for (uint32 j = 0; j < exclude_dir_count; j++) {
-                if (strcmp(fdata[i].name, exclude_dir[j].dir) == 0) {
+            for (uint32 j = 0; j < dir_count; j++) {
+                if (strcmp(fdata[i].name, exclude_dir[j].name) == 0) {
                     is_found = TRUE;
                     break;
                 }
@@ -239,24 +237,42 @@ void recursion_encrypt_decryption(int32 level, char *plain_dir, suffix_t *suffix
             plain_file[len] = '\0';
             len = snprintf(encrypt_file, 256, "%s\\%s", encrypt_dir, fdata[i].name);
             encrypt_file[len] = '\0';
-            recursion_encrypt_decryption(level+1, plain_file, suffix, suffix_count, encrypt_file, exclude_dir, exclude_dir_count, type);
+            recursion_encrypt_decryption(level+1, plain_file, encrypt_file, include_file, file_count,
+                include_suffix, suffix_count, exclude_dir, dir_count, type);
         }
     }
 
     for (int32 i = 0; i < count; i++)
     {
-        bool32 is_need_enc = FALSE;
+        bool32 is_need_enc;
         if (fdata[i].attrib == _A_SUBDIR) {
             continue;
         }
-
         name_len = strlen(fdata[i].name);
+        //
+        is_need_enc = FALSE;
         for (uint32 j = 0; j < suffix_count; j++) {
-            suffix_len = strlen(suffix[j].suffix);
-            if (suffix_len == 0 || name_len <= suffix_len) {
+            len = strlen(include_suffix[j].name);
+            if (len == 0 || name_len <= len) {
                 continue;
             }
-            if (strncmp(fdata[i].name + name_len - suffix_len, suffix[j].suffix, suffix_len) == 0) {
+            if (strncmp(fdata[i].name + name_len - len, include_suffix[j].name, len) == 0) {
+                is_need_enc = TRUE;
+                break;
+            }
+        }
+        if (is_need_enc == FALSE) {
+            print_filename_by_level(level + 1, fdata[i].name, "skip");
+                continue;
+            }
+        //
+        is_need_enc = FALSE;
+        for (uint32 j = 0; j < file_count; j++) {
+            len = strlen(include_file[j].name);
+            if (name_len != len + (type == ENCRYPT_FLAG ? 0 : 4)) {
+                continue;
+            }
+            if (strncmp(fdata[i].name + name_len - len, include_file[j].name, len) == 0) {
                 is_need_enc = TRUE;
                 break;
             }
@@ -283,12 +299,33 @@ void recursion_encrypt_decryption(int32 level, char *plain_dir, suffix_t *suffix
     }
 }
 
+void def_split(char *def_str, def_name_t *def, uint32 size, uint32 *count)
+{
+    uint32  len, j = 0;
+    
+    len = strlen(def_str);
+    if (len == 0) {
+        return;
+    }
+    
+    *count = 1;
+    for (uint32 i = 0; i < len && *count < size; i++) {
+        if (def_str[i] == ',') {
+            def[*count - 1].name[j] = '\0';
+            j = 0;
+            (*count)++;
+            continue;
+        }
+        def[*count - 1].name[j] = def_str[i];
+        j++;
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    char          plain_dir[256], encrypt_dir[256], plain_file_suffix[256], exclude_dir_name[256], encrypt_key[16];
-    suffix_t      suffix[100] = { 0 };
-    exclude_dir_t exclude_dir[100] = { 0 };
-    uint32        type, suffix_count, exclude_dir_count, len;
+    char          plain_dir[256], encrypt_dir[256], include_file_str[1024], include_suffix_str[256], exclude_dir_str[256], encrypt_key[16];
+    def_name_t    include_file[100] = { 0 }, include_suffix[100] = { 0 }, exclude_dir[100] = { 0 };
+    uint32        type, file_count = 0, suffix_count = 0, dir_count = 0;
     
     get_options(argc, argv);
     if (g_config_file[0] == '\0') {
@@ -299,8 +336,9 @@ int main(int argc, char *argv[])
     type = get_private_profile_int("general", "type", 0, g_config_file);
     get_private_profile_string("general", "encrypt_key", "", encrypt_key, 16, g_config_file);
     get_private_profile_string("general", "plain_dir", "", plain_dir, 256, g_config_file);
-    get_private_profile_string("general", "include_suffix", "", plain_file_suffix, 256, g_config_file);
-    get_private_profile_string("general", "exclude_dir_name", "", exclude_dir_name, 256, g_config_file);
+    get_private_profile_string("general", "include_file", "", include_file_str, 1024, g_config_file);
+    get_private_profile_string("general", "include_suffix", "", include_suffix_str, 256, g_config_file);
+    get_private_profile_string("general", "exclude_dir_name", "", exclude_dir_str, 256, g_config_file);
     get_private_profile_string("general", "encrypt_dir", "", encrypt_dir, 256, g_config_file);
 
     for (uint32 i = 0; i < 16; i++) {
@@ -308,36 +346,9 @@ int main(int argc, char *argv[])
             g_encrypt_init_key[i] = encrypt_key[i];
         }
     }
-    len = strlen(plain_file_suffix);
-    if (len > 0) {
-        uint32 j = 0;
-        suffix_count = 1;
-        for (uint32 i = 0; i < len && suffix_count < 100; i++) {
-            if (plain_file_suffix[i] == ',') {
-                suffix[suffix_count - 1].suffix[j] = '\0';
-                j = 0;
-                suffix_count++;
-                continue;
-            }
-            suffix[suffix_count - 1].suffix[j] = plain_file_suffix[i];
-            j++;
-        }
-    }
-    len = strlen(exclude_dir_name);
-    if (len > 0) {
-        uint32 j = 0;
-        exclude_dir_count = 1;
-        for (uint32 i = 0; i < len && exclude_dir_count < 100; i++) {
-            if (exclude_dir_name[i] == ',') {
-                exclude_dir[exclude_dir_count - 1].dir[j] = '\0';
-                j = 0;
-                exclude_dir_count++;
-                continue;
-            }
-            exclude_dir[exclude_dir_count - 1].dir[j] = exclude_dir_name[i];
-            j++;
-        }
-    }
+    def_split(include_file_str, include_file, 100, &file_count);
+    def_split(include_suffix_str, include_suffix, 100, &suffix_count);
+    def_split(exclude_dir_str, exclude_dir, 100, &dir_count);
 
     if (type == ENCRYPT_FLAG) {
         printf("\n\n*************************** encryption ***************************\n");
@@ -345,11 +356,12 @@ int main(int argc, char *argv[])
     } else if (type == DECRYPT_FLAG) {
         printf("\n\n*************************** decryption ***************************\n");
         printf("    From: %s\n    To: %s\n\n\n", encrypt_dir, plain_dir);
-        strcpy(suffix[0].suffix, ".enc");
-        suffix[0].suffix[4] = '\0';
+        strcpy(include_suffix[0].name, ".enc");
+        include_suffix[0].name[4] = '\0';
         suffix_count = 1;
     }
-    recursion_encrypt_decryption(0, plain_dir, suffix, suffix_count, encrypt_dir, exclude_dir, exclude_dir_count, type);
+    recursion_encrypt_decryption(0, plain_dir, encrypt_dir, include_file, file_count,
+        include_suffix, suffix_count, exclude_dir, dir_count, type);
     printf("\n\n*************************** done ***************************\n");
 
     return 0;
