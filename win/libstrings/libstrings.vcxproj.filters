@@ -1,0 +1,54 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\..\src\strings\ctype.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-big5.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-bin.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-cp932.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-czech.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-euc_kr.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-eucjpms.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-extra.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-gb2312.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-gb18030.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-gbk.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-latin1.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-mb.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-simple.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-sjis.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-tis620.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-ucs2.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-ujis.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-utf8.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-win1250ch.cc" />
+    <ClCompile Include="..\..\src\strings\decimal.cc" />
+    <ClCompile Include="..\..\src\strings\dtoa.cc" />
+    <ClCompile Include="..\..\src\strings\int2str.cc" />
+    <ClCompile Include="..\..\src\strings\longlong2str.cc" />
+    <ClCompile Include="..\..\src\strings\my_strchr.cc" />
+    <ClCompile Include="..\..\src\strings\my_strtoll10.cc" />
+    <ClCompile Include="..\..\src\strings\str_alloc.cc" />
+    <ClCompile Include="..\..\src\strings\str2int.cc" />
+    <ClCompile Include="..\..\src\strings\strcont.cc" />
+    <ClCompile Include="..\..\src\strings\strmake.cc" />
+    <ClCompile Include="..\..\src\strings\strxmov.cc" />
+    <ClCompile Include="..\..\src\strings\strxnmov.cc" />
+    <ClCompile Include="..\..\src\strings\xml.cc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\src\strings\README" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\strings\mb_wc.h" />
+    <ClInclude Include="..\..\src\strings\str_uca_type.h" />
+    <ClInclude Include="..\..\src\strings\t_ctype.h" />
+    <ClInclude Include="..\..\src\strings\uca_data.h" />
+    <ClInclude Include="..\..\src\strings\uca900_data.h" />
+    <ClInclude Include="..\..\src\strings\uca900_ja_data.h" />
+    <ClInclude Include="..\..\src\strings\uca900_zh_data.h" />
+    <ClInclude Include="..\..\src\include\strings\m_ctype.h" />
+    <ClInclude Include="..\..\src\include\strings\m_string.h" />
+    <ClInclude Include="..\..\src\include\strings\my_xml.h" />
+    <ClInclude Include="..\..\src\include\strings\decimal.h" />
+  </ItemGroup>
+</Project>

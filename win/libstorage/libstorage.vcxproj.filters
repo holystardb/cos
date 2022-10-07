@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\..\src\storage\sto_space.c" />
+    <ClCompile Include="..\..\src\storage\mtr_mtr.c" />
+    <ClCompile Include="..\..\src\storage\page.c" />
+    <ClCompile Include="..\..\src\storage\fut0lst.c" />
+    <ClCompile Include="..\..\src\storage\sto_rwlock.c" />
+    <ClCompile Include="..\..\src\storage\sto_temp_space.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\storage\sto_space.h" />
+    <ClInclude Include="..\..\src\storage\mtr_mtr.h" />
+    <ClInclude Include="..\..\src\storage\page.h" />
+    <ClInclude Include="..\..\src\storage\fut0lst.h" />
+    <ClInclude Include="..\..\src\storage\sto_rwlock.h" />
+    <ClInclude Include="..\..\src\storage\sto_temp_space.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\src\storage\fut0lst.ic" />
+  </ItemGroup>
+</Project>

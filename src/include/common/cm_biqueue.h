@@ -1,0 +1,48 @@
+#ifndef _CM_BI_QUEUE_H
+#define _CM_BI_QUEUE_H
+
+#include  <stddef.h>
+#include "cm_type.h"
+#include "cm_mutex.h"
+#include "cm_list.h"
+
+#define BIQUEUE_MAGIC       123461526
+
+#define VAR_OFFSET(type, member)    ((unsigned long long)(&((type *)0)->member))
+#define OFFSET_OFF                  offsetof
+#define OBJECT_OF_QUEUE_NODE(type, node, member) ((type *)((char *)(&node->node_id) - VAR_OFFSET(type, member)))
+#define QUEUE_NODE_OF_OBJECT(node, member)       ((biqueue_node_t *)&node->member)
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct st_biqueue_node
+{
+    uint32      node_id;
+    uint32      magic;
+    UT_LIST_NODE_T(struct st_biqueue_node) list_node;
+} biqueue_node_t;
+
+typedef struct
+{
+    uint32            node_size;
+    uint32            slot_count;
+    char            **slot;
+    uint32	          slot_index;
+    spinlock_t        lock;
+    UT_LIST_BASE_NODE_T(biqueue_node_t) free_list;
+} biqueue_t;
+
+biqueue_t* biqueue_init(uint32 node_size, uint32 count);
+biqueue_node_t* biqueue_alloc(biqueue_t *queue);
+biqueue_node_t* biqueue_get_node(biqueue_t *queue, uint32 node_id);
+bool32 biqueue_free(biqueue_t *queue, biqueue_node_t* node);
+bool32 biqueue_free_to_tail(biqueue_t *queue, biqueue_node_t* node);
+void biqueue_destroy(biqueue_t *queue);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  /* _CM_QUEUE_H */

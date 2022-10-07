@@ -1,0 +1,173 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{8038851A-B9E2-4D5F-99C6-3BA2ED6DB7FB}</ProjectGuid>
+    <RootNamespace>libstrings</RootNamespace>
+    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v140</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v140</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v140</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v140</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <IncludePath>../../src/include/common;../../src/include/strings;$(IncludePath)</IncludePath>
+    <OutDir>$(SolutionDir)..\lib\</OutDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>..\..\src\include\strings;..\..\src\include\common;$(IncludePath)</IncludePath>
+    <OutDir>$(SolutionDir)..\lib\</OutDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <SDLCheck>true</SDLCheck>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\strings\ctype-big5.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-bin.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-cp932.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-czech.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-eucjpms.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-euc_kr.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-extra.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-gb18030.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-gb2312.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-gbk.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-latin1.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-mb.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-simple.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-sjis.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-tis620.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-ucs2.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-ujis.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-utf8.cc" />
+    <ClCompile Include="..\..\src\strings\ctype-win1250ch.cc" />
+    <ClCompile Include="..\..\src\strings\ctype.cc" />
+    <ClCompile Include="..\..\src\strings\decimal.cc" />
+    <ClCompile Include="..\..\src\strings\dtoa.cc" />
+    <ClCompile Include="..\..\src\strings\int2str.cc" />
+    <ClCompile Include="..\..\src\strings\longlong2str.cc" />
+    <ClCompile Include="..\..\src\strings\my_strchr.cc" />
+    <ClCompile Include="..\..\src\strings\my_strtoll10.cc" />
+    <ClCompile Include="..\..\src\strings\str2int.cc" />
+    <ClCompile Include="..\..\src\strings\strcont.cc" />
+    <ClCompile Include="..\..\src\strings\strmake.cc" />
+    <ClCompile Include="..\..\src\strings\strxmov.cc" />
+    <ClCompile Include="..\..\src\strings\strxnmov.cc" />
+    <ClCompile Include="..\..\src\strings\str_alloc.cc" />
+    <ClCompile Include="..\..\src\strings\xml.cc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\src\strings\README" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\include\strings\decimal.h" />
+    <ClInclude Include="..\..\src\include\strings\my_xml.h" />
+    <ClInclude Include="..\..\src\include\strings\m_ctype.h" />
+    <ClInclude Include="..\..\src\include\strings\m_string.h" />
+    <ClInclude Include="..\..\src\strings\mb_wc.h" />
+    <ClInclude Include="..\..\src\strings\str_uca_type.h" />
+    <ClInclude Include="..\..\src\strings\t_ctype.h" />
+    <ClInclude Include="..\..\src\strings\uca900_data.h" />
+    <ClInclude Include="..\..\src\strings\uca900_ja_data.h" />
+    <ClInclude Include="..\..\src\strings\uca900_zh_data.h" />
+    <ClInclude Include="..\..\src\strings\uca_data.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

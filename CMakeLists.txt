@@ -1,0 +1,26 @@
+PROJECT(socks)  
+
+cmake_minimum_required(VERSION 2.8)  
+SET(CMAKE_VERBOSE_MAKEFILE on)
+
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDBUG_OFF")
+SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DDBUG_OFF")
+
+IF (CMAKE_SYSTEM_NAME MATCHES "Linux")  
+message(STATUS "current platform: Linux ")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -g -Wall -O0 -D_REENTRANT -DLINUX -D_X86_64BIT") 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -g -Wall -O0 -D_REENTRANT -DLINUX -D_X86_64BIT") 
+ELSEIF (CMAKE_SYSTEM_NAME MATCHES "Windows")  
+message(STATUS "current platform: Windows")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_WIN32")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_WIN32")
+ELSE ()  
+message(FATAL_ERROR "system not support!") 
+ENDIF (CMAKE_SYSTEM_NAME MATCHES "Linux")
+
+add_subdirectory(src)
+
+#package
+#install(DIRECTORY ${PROJECT_SOURCE_DIR}/include DESTINATION ${PROJECT_BINARY_DIR}/package) 
+#install(FILES ${PROJECT_BINARY_DIR}/src/libcos.so DESTINATION ${PROJECT_BINARY_DIR}/package/lib)
+#install(FILES ${PROJECT_BINARY_DIR}/src/libcos_lib.a DESTINATION ${PROJECT_BINARY_DIR}/package/lib)
