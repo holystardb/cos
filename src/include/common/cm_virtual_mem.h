@@ -16,7 +16,7 @@ typedef struct st_vm_page {
 
 typedef bool32 (*vm_swap_in)(vm_page_t *page, uint64 swid);
 typedef bool32 (*vm_swap_out)(vm_page_t *page, uint64 *swid);
-typedef void (*vm_swap_clean)();
+typedef void (*vm_swap_clean)(uint64 swid);
 
 typedef struct st_vm_swapper {
     vm_swap_out       out;

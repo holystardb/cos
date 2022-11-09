@@ -40,21 +40,71 @@ extern "C" {
 *                                      compiler                                                *
 ***********************************************************************************************/
 
-#if defined(__WIN__)
-#define likely(x) (x)
-#define unlikely(x) (x)
-#else
-#define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
+/* If supported, give compiler hints for branch prediction. */
+#if !defined(__builtin_expect) && (!defined(__GNUC__) || (__GNUC__ == 2 && __GNUC_MINOR__ < 96))
+#define __builtin_expect(x, expected_value)     (x)
 #endif
+
+#define likely(x)           __builtin_expect((x),1)
+#define unlikely(x)         __builtin_expect((x),0)
+
+/* Compile-time constant of the given array's size. */
+#define UT_ARR_SIZE(a)      (sizeof(a) / sizeof((a)[0]))
+
+#if defined(_MSC_VER)
+#define ALWAYS_INLINE       __forceinline
+#else
+#define ALWAYS_INLINE       __attribute__((always_inline)) inline
+#endif
+
+/*
+Disable MY_ATTRIBUTE for Sun Studio and Visual Studio.
+Note that Sun Studio supports some __attribute__ variants,
+but not format or unused which we use quite a lot.
+*/
+#ifndef MY_ATTRIBUTE
+#if defined(__GNUC__) || defined(__clang__)
+#define MY_ATTRIBUTE(A)     __attribute__(A)
+#else
+#define MY_ATTRIBUTE(A)
+#endif
+#endif
+
+#if defined(_MSC_VER)
+#define THREAD_LOCAL        __declspec(thread)
+#else
+#define THREAD_LOCAL        __thread
+#endif
+
+
+/** barrier definitions for memory ordering */
+#ifdef __WIN__
+#include <mmintrin.h>
+#define os_rmb          _mm_lfence()
+#define os_wmb          _mm_sfence()
+#define os_mb           _mm_mfence()
+#elif defined(HAVE_IB_GCC_ATOMIC_THREAD_FENCE)
+#define os_rmb          __atomic_thread_fence(__ATOMIC_ACQUIRE)
+#define os_wmb          __atomic_thread_fence(__ATOMIC_RELEASE)
+#define os_mb           __atomic_thread_fence()
+#elif defined(HAVE_IB_GCC_SYNC_SYNCHRONISE)
+#define os_rmb          __sync_synchronize()
+#define os_wmb          __sync_synchronize()
+#define os_mmb          __sync_synchronize()
+#else
+#define os_rmb
+#define os_wmb
+#define os_mb
+#endif
+
 
 
 /***********************************************************************************************
 *                                      types                                                   *
 ***********************************************************************************************/
 
-typedef unsigned char	        UCHAR;
-typedef unsigned char	        uchar;
+typedef unsigned char           UCHAR;
+typedef unsigned char           uchar;
 typedef unsigned char           BYTE;
 typedef unsigned char           byte;
 typedef unsigned char           BYTE8;
@@ -64,6 +114,16 @@ typedef unsigned char           uint8;
 typedef signed   char           INT8;
 typedef signed   char           int8;
 typedef signed   char           bool8;
+
+typedef char                    my_bool;
+
+#if defined(__GNUC__)
+typedef char                    pchar;      /* Mixed prototypes can take char */
+typedef char                    pbool;      /* Mixed prototypes can take char */
+#else
+typedef int                     pchar;      /* Mixed prototypes can't take char */
+typedef int                     pbool;      /* Mixed prototypes can't take char */
+#endif
 
 typedef unsigned short int      WORD;
 typedef unsigned short int      WORD16;
@@ -115,9 +175,6 @@ typedef unsigned long long      ULONGLONG;
 typedef unsigned long long      ulonglong;
 #endif
 
-#ifndef SIZE_T_MAX
-#define SIZE_T_MAX	((size_t)-1)
-#endif
 
 #ifndef __WIN__
 typedef void*                   HANDLE;
@@ -132,29 +189,49 @@ typedef unsigned char*          PUCHAR;
 
 /* Define some general constants */
 #ifndef TRUE
-#define TRUE                    (1)	/* Logical true */
-#define FALSE                   (0)	/* Logical false */
+#define TRUE                    (1) /* Logical true */
+#define FALSE                   (0) /* Logical false */
 #endif
 
+#ifndef SIZE_T_MAX
+#define SIZE_T_MAX              ((size_t)-1)
+#endif
+#define SIZEOF_CHARP            sizeof(char *)
+
+
 /** The 'undefined' value for a ulint */
-#define ULINT_UNDEFINED		    ((uint32)(-1))
+#define UINT32_UNDEFINED        ((uint32)(-1))
 
-#define INT_MIN64 (~0x7FFFFFFFFFFFFFFFLL)
-#define INT_MAX64 0x7FFFFFFFFFFFFFFFLL
-#define INT_MIN32 (~0x7FFFFFFFL)
-#define INT_MAX32 0x7FFFFFFFL
-#define UINT_MAX32 0xFFFFFFFFL
-#define INT_MIN24 (~0x007FFFFF)
-#define INT_MAX24 0x007FFFFF
-#define UINT_MAX24 0x00FFFFFF
-#define INT_MIN16 (~0x7FFF)
-#define INT_MAX16 0x7FFF
-#define UINT_MAX16 0xFFFF
-#define INT_MIN8 (~0x7F)
-#define INT_MAX8 0x7F
-#define UINT_MAX8 0xFF
+#define INT_MIN64               (~0x7FFFFFFFFFFFFFFFLL)
+#define INT_MAX64               0x7FFFFFFFFFFFFFFFLL
+#define INT_MIN32               (~0x7FFFFFFFL)
+#define INT_MAX32               0x7FFFFFFFL
+#define UINT_MAX32              0xFFFFFFFFL
+#define INT_MIN24               (~0x007FFFFF)
+#define INT_MAX24               0x007FFFFF
+#define UINT_MAX24              0x00FFFFFF
+#define INT_MIN16               (~0x7FFF)
+#define INT_MAX16               0x7FFF
+#define UINT_MAX16              0xFFFF
+#define INT_MIN8                (~0x7F)
+#define INT_MAX8                0x7F
+#define UINT_MAX8               0xFF
+
+#define MAX_TINYINT_WIDTH       3     /**< Max width for a TINY w.o. sign */
+#define MAX_SMALLINT_WIDTH      5     /**< Max width for a SHORT w.o. sign */
+#define MAX_MEDIUMINT_WIDTH     8     /**< Max width for a INT24 w.o. sign */
+#define MAX_INT_WIDTH           10    /**< Max width for a LONG w.o. sign */
+#define MAX_BIGINT_WIDTH        20    /**< Max width for a LONGLONG */
+#define MAX_CHAR_WIDTH          255   /**< Max length for a CHAR colum */
 
 
+// Definition of the null string (a null pointer of type char *), used in some of our string handling code.
+// New code should use nullptr instead.
+#define NullS                  (char *)0
+
+/***********************************************************************************************
+*                                      callback function                                       *
+***********************************************************************************************/
 
 typedef struct st_callback_data
 {
@@ -168,7 +245,7 @@ typedef struct st_callback_data
     uint32                len;
 } callback_data_t;
 
-typedef void (*os_callback_func) (callback_data_t *data);
+typedef void (*callback_func) (callback_data_t *data);
 
 
 

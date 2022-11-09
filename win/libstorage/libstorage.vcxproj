@@ -18,6 +18,28 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\storage\knl_buf.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_buf_flush.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_buf_lru.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_flst.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_fsp.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_handler.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_hash_table.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_mtr.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_server.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\storage\include\knl_handler.h" />
+    <ClInclude Include="..\..\src\storage\knl_buf.h" />
+    <ClInclude Include="..\..\src\storage\knl_buf_flush.h" />
+    <ClInclude Include="..\..\src\storage\knl_buf_lru.h" />
+    <ClInclude Include="..\..\src\storage\knl_flst.h" />
+    <ClInclude Include="..\..\src\storage\knl_fsp.h" />
+    <ClInclude Include="..\..\src\storage\knl_hash_table.h" />
+    <ClInclude Include="..\..\src\storage\knl_mtr.h" />
+    <ClInclude Include="..\..\src\storage\knl_server.h" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{535876AA-F70E-46C4-819B-4AAB9D9286AF}</ProjectGuid>
     <RootNamespace>libstorage</RootNamespace>
@@ -69,7 +91,7 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>../../src/include/common;$(IncludePath)</IncludePath>
+    <IncludePath>..\..\src\include\common;..\..\src\storage\include;$(IncludePath)</IncludePath>
     <OutDir>$(SolutionDir)..\lib\</OutDir>
     <LibraryPath>../lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
@@ -85,6 +107,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>DEBUG_OUTPUT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -113,25 +136,6 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="..\..\src\storage\sto_temp_space.c" />
-    <ClCompile Include="..\..\src\storage\fut0lst.c" />
-    <ClCompile Include="..\..\src\storage\mtr_mtr.c" />
-    <ClCompile Include="..\..\src\storage\page.c" />
-    <ClCompile Include="..\..\src\storage\sto_rwlock.c" />
-    <ClCompile Include="..\..\src\storage\sto_space.c" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="..\..\src\storage\sto_temp_space.h" />
-    <ClInclude Include="..\..\src\storage\fut0lst.h" />
-    <ClInclude Include="..\..\src\storage\mtr_mtr.h" />
-    <ClInclude Include="..\..\src\storage\page.h" />
-    <ClInclude Include="..\..\src\storage\sto_rwlock.h" />
-    <ClInclude Include="..\..\src\storage\sto_space.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\..\src\storage\fut0lst.ic" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

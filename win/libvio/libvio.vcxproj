@@ -116,16 +116,16 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\src\vio\vio_epoll.c" />
-    <ClCompile Include="..\..\src\vio\vio_epoll_reactor.c" />
-    <ClCompile Include="..\..\src\vio\vio_pat.c" />
-    <ClCompile Include="..\..\src\vio\vio_socket.c" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="..\..\src\include\vio\vio_epoll.h" />
     <ClInclude Include="..\..\src\include\vio\vio_epoll_reactor.h" />
     <ClInclude Include="..\..\src\include\vio\vio_pat.h" />
     <ClInclude Include="..\..\src\include\vio\vio_socket.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\vio\vio_epoll.cpp" />
+    <ClCompile Include="..\..\src\vio\vio_epoll_reactor.cpp" />
+    <ClCompile Include="..\..\src\vio\vio_pat.cpp" />
+    <ClCompile Include="..\..\src\vio\vio_socket.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

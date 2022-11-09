@@ -6,6 +6,8 @@
 #include "cm_mutex.h"
 #include "cm_list.h"
 #include "cm_queue.h"
+#include "cm_memory.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,37 +16,39 @@ extern "C" {
 typedef struct st_thread_task thread_task_t;
 struct st_thread_task
 {
-    os_callback_func      func; 
+    callback_func         func; 
     callback_data_t       data;
     UT_LIST_NODE_T(thread_task_t) list_node;
 };
 
 typedef struct st_thread_worker thread_worker_t;
-struct st_thread_worker
-{
-    os_event_t          event;
-    spinlock_t          lock;
-    UT_LIST_NODE_T(thread_worker_t) list_node;
-    UT_LIST_BASE_NODE_T(thread_task_t) high_task_list;
-    UT_LIST_BASE_NODE_T(thread_task_t) task_list;
-    UT_LIST_BASE_NODE_T(thread_task_t) free_list;
-}; 
 
 typedef struct
 {
-    uint16              thread_count;
+    memory_pool_t      *mem_pool;
+    os_event_t          event;
     spinlock_t          lock;
-    char               *workers;
-    UT_LIST_BASE_NODE_T(thread_worker_t) free_list;
+    uint16              thread_count;
+    UT_LIST_BASE_NODE_T(thread_worker_t) free_workers;
 } thread_pool_t; 
 
+struct st_thread_worker
+{
+    UT_LIST_NODE_T(thread_worker_t) list_node;
+    thread_pool_t      *pool;
+    os_event_t          task_event;
+    os_event_t          join_event;
+    spinlock_t          lock;
+    uint32              ref_count;
+    UT_LIST_BASE_NODE_T(thread_task_t) running_tasks;
+    UT_LIST_BASE_NODE_T(thread_task_t) free_tasks;
+}; 
 
-
-thread_pool_t* thread_pool_create(uint16 thread_count);
-thread_worker_t* thread_pool_get_worker(thread_pool_t* pool);
+thread_pool_t* thread_pool_create(memory_pool_t *mem_pool, uint16 thread_count);
+thread_worker_t* thread_pool_get_worker(thread_pool_t* pool, uint32 wait_microseconds);
 void thread_pool_release_worker(thread_pool_t* pool, thread_worker_t* worker);
-bool32 thread_worker_add_task(thread_worker_t *worker,
-                                       callback_data_t *data, os_callback_func func, bool32 is_high_priority);
+bool32 thread_worker_task_start(thread_worker_t *worker, callback_data_t *data, callback_func func);
+void thread_worker_task_join(thread_worker_t *worker);
 
 
 #ifdef __cplusplus

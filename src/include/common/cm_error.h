@@ -1,6 +1,8 @@
 #ifndef _CM_ERROR_H
 #define _CM_ERROR_H
 
+#include "cm_type.h"
+
 enum dberr_t {
     DB_ERROR_UNSET = 0,
     DB_SUCCESS_LOCKED_REC = 9,    /*!< like DB_SUCCESS, but a new explicit record lock was created */

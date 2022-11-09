@@ -10,6 +10,8 @@
 extern "C" {
 #endif
 
+#define MEM_PAGE_DATA_PTR(page)    ((char *)page + ut_align8(sizeof(memory_page_t)))
+
 typedef struct st_memory_page {
     UT_LIST_NODE_T(struct st_memory_page) list_node;
 } memory_page_t;
@@ -68,13 +70,13 @@ struct st_memory_context {
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
 
     // for alloc and free
-    //  64  128  256  512  1k  2k  4k  8k  16k  32k  64k  128k  256k  512k  1m  2m
-    //  0   1    2    3    4   5   6   7   8    9    10   11    12    13    14  15
+    //  64  128  256  512  1k  2k  4k  8k
+    //  0   1    2    3    4   5   6   7
     UT_LIST_BASE_NODE_T(mem_block_t) free_mem_blocks[MEM_BLOCK_FREE_LIST_SIZE];
     UT_LIST_BASE_NODE_T(memory_page_t) used_block_pages;
 };
 
-memory_area_t* marea_create(uint64 size, bool32 is_extend);
+memory_area_t* marea_create(uint64 mem_size, bool32 is_extend);
 void marea_destroy(memory_area_t* area);
 memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size);
 void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size);
@@ -91,21 +93,41 @@ void* mcontext_push(memory_context_t *context, uint32 size);
 void mcontext_pop(memory_context_t *context, void *ptr, uint32 size);
 void mcontext_pop2(memory_context_t *context, void *ptr);
 void* mcontext_alloc(memory_context_t *context, uint32 size);
+void* mcontext_realloc(memory_context_t *context, void *old_ptr, uint32 size);
 void mcontext_free(memory_context_t *context, void *ptr);
 
 //-------------------------------------------------------------------
+
+extern memory_area_t* system_memory_area;
+extern memory_pool_t* system_memory_pool;
+extern memory_context_t* system_memory_context;
+
+#define ut_malloc(size)         malloc(size)
+#define ut_free(size)           free(size)
 
 #ifdef MEMORY_DEBUG
 #define my_malloc(size)         malloc(size)
 #define my_free(size)           free(size)
 #define my_realloc(ptr, size)   realloc(ptr, size)
-#define my_alloca(size)         alloca((size_t)(size))
 #else
-#define my_malloc(size)         malloc(size)
-#define my_free(size)           free(size)
-#define my_realloc(ptr, size)   realloc(ptr, size)
-#define my_alloca(size)         alloca((size_t)(size))
+#define my_malloc(size)         (current_memory_context ? mcontext_alloc(current_memory_context, size) : malloc(size))
+#define my_free(ptr)            (current_memory_context ? mcontext_free(current_memory_context, ptr) : free(ptr))
+#define my_realloc(ptr, size)   (current_memory_context ? mcontext_realloc(current_memory_context, ptr, size) : realloc(ptr, size))
 #endif
+#define my_alloca(size)         alloca((size_t)(size))
+
+
+void *os_mem_alloc_large(uint64 *n);
+void os_mem_free_large(void *ptr, uint64 size);
+
+/* Advices the OS that this chunk should (not) be dumped to a core file. */
+bool32 madvise_dump(char *mem_ptr, uint64 mem_size);
+bool32 madvise_dont_dump(char *mem_ptr, uint64 mem_size);
+
+
+extern THREAD_LOCAL memory_pool_t     *current_memory_pool;
+extern THREAD_LOCAL memory_context_t  *current_memory_context;
+
 
 #ifdef __cplusplus
 }

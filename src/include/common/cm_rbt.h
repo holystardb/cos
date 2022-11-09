@@ -2,15 +2,14 @@
 #define _CM_RBT_H
 
 #include "cm_type.h"
+#include "cm_memory.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define	ut_malloc       malloc
-#define	ut_free         free
-#define	ut_alloc_node   alloc_rbt_node
-#define	ut_free_node    free_rbt_node
+#define ut_alloc_node   alloc_rbt_node
+#define ut_free_node    free_rbt_node
 
 
 /* Red black tree typedefs */

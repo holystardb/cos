@@ -18,6 +18,62 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\strings\bchange.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-big5.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-bin.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-cp932.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-czech.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-eucjpms.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-euc_kr.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-extra.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-gb18030.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-gb2312.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-gbk.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-latin1.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-mb.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-simple.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-sjis.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-tis620.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-uca.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-ucs2.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-ujis.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-utf8.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype-win1250ch.cpp" />
+    <ClCompile Include="..\..\src\strings\ctype.cpp" />
+    <ClCompile Include="..\..\src\strings\decimal.cpp" />
+    <ClCompile Include="..\..\src\strings\dtoa.cpp" />
+    <ClCompile Include="..\..\src\strings\int2str.cpp" />
+    <ClCompile Include="..\..\src\strings\is_prefix.cpp" />
+    <ClCompile Include="..\..\src\strings\llstr.cpp" />
+    <ClCompile Include="..\..\src\strings\longlong2str.cpp" />
+    <ClCompile Include="..\..\src\strings\my_stpmov.cpp" />
+    <ClCompile Include="..\..\src\strings\my_stpnmov.cpp" />
+    <ClCompile Include="..\..\src\strings\my_strchr.cpp" />
+    <ClCompile Include="..\..\src\strings\my_strtoll10.cpp" />
+    <ClCompile Include="..\..\src\strings\my_vsnprintf.cpp" />
+    <ClCompile Include="..\..\src\strings\str2int.cpp" />
+    <ClCompile Include="..\..\src\strings\strappend.cpp" />
+    <ClCompile Include="..\..\src\strings\strcend.cpp" />
+    <ClCompile Include="..\..\src\strings\strcont.cpp" />
+    <ClCompile Include="..\..\src\strings\strend.cpp" />
+    <ClCompile Include="..\..\src\strings\strfill.cpp" />
+    <ClCompile Include="..\..\src\strings\strmake.cpp" />
+    <ClCompile Include="..\..\src\strings\strnlen.cpp" />
+    <ClCompile Include="..\..\src\strings\strxmov.cpp" />
+    <ClCompile Include="..\..\src\strings\strxnmov.cpp" />
+    <ClCompile Include="..\..\src\strings\str_alloc.cpp" />
+    <ClCompile Include="..\..\src\strings\xml.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\include\strings\decimal.h" />
+    <ClInclude Include="..\..\src\include\strings\my_uctype.h" />
+    <ClInclude Include="..\..\src\include\strings\my_xml.h" />
+    <ClInclude Include="..\..\src\include\strings\m_ctype.h" />
+    <ClInclude Include="..\..\src\include\strings\m_string.h" />
+    <ClInclude Include="..\..\src\include\strings\template_utils.h" />
+    <ClInclude Include="..\..\src\strings\t_ctype.h" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{8038851A-B9E2-4D5F-99C6-3BA2ED6DB7FB}</ProjectGuid>
     <RootNamespace>libstrings</RootNamespace>
@@ -116,57 +172,6 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="..\..\src\strings\ctype-big5.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-bin.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-cp932.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-czech.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-eucjpms.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-euc_kr.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-extra.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-gb18030.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-gb2312.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-gbk.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-latin1.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-mb.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-simple.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-sjis.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-tis620.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-ucs2.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-ujis.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-utf8.cc" />
-    <ClCompile Include="..\..\src\strings\ctype-win1250ch.cc" />
-    <ClCompile Include="..\..\src\strings\ctype.cc" />
-    <ClCompile Include="..\..\src\strings\decimal.cc" />
-    <ClCompile Include="..\..\src\strings\dtoa.cc" />
-    <ClCompile Include="..\..\src\strings\int2str.cc" />
-    <ClCompile Include="..\..\src\strings\longlong2str.cc" />
-    <ClCompile Include="..\..\src\strings\my_strchr.cc" />
-    <ClCompile Include="..\..\src\strings\my_strtoll10.cc" />
-    <ClCompile Include="..\..\src\strings\str2int.cc" />
-    <ClCompile Include="..\..\src\strings\strcont.cc" />
-    <ClCompile Include="..\..\src\strings\strmake.cc" />
-    <ClCompile Include="..\..\src\strings\strxmov.cc" />
-    <ClCompile Include="..\..\src\strings\strxnmov.cc" />
-    <ClCompile Include="..\..\src\strings\str_alloc.cc" />
-    <ClCompile Include="..\..\src\strings\xml.cc" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\..\src\strings\README" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="..\..\src\include\strings\decimal.h" />
-    <ClInclude Include="..\..\src\include\strings\my_xml.h" />
-    <ClInclude Include="..\..\src\include\strings\m_ctype.h" />
-    <ClInclude Include="..\..\src\include\strings\m_string.h" />
-    <ClInclude Include="..\..\src\strings\mb_wc.h" />
-    <ClInclude Include="..\..\src\strings\str_uca_type.h" />
-    <ClInclude Include="..\..\src\strings\t_ctype.h" />
-    <ClInclude Include="..\..\src\strings\uca900_data.h" />
-    <ClInclude Include="..\..\src\strings\uca900_ja_data.h" />
-    <ClInclude Include="..\..\src\strings\uca900_zh_data.h" />
-    <ClInclude Include="..\..\src\strings\uca_data.h" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

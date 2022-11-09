@@ -3,6 +3,17 @@
 
 #include "cm_type.h"
 
+/* Bug in developerstudio: use the C version */
+#if defined(__cplusplus) && !defined(__SUNPRO_CC)
+template <class T, size_t N>
+constexpr size_t array_elements(T(&)[N]) noexcept
+{
+    return N;
+}
+#else
+// Less type-safe version that e.g. allows sending in pointers or STL containers without an error.
+#define array_elements(A) ((size_t)(sizeof(A) / sizeof(A[0])))
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,9 +23,16 @@ extern "C" {
 *                                      math or compare                                         *
 ***********************************************************************************************/
 
-#define ut_min(a, b)   ((a) < (b) ? (a) : (b))
-#define ut_max(a, b)   ((a) > (b) ? (a) : (b))
-#define ut_test(a)     ((a) ? 1 : 0)
+#define ut_min(a, b)    ((a) < (b) ? (a) : (b))
+#define ut_max(a, b)    ((a) > (b) ? (a) : (b))
+#define ut_test(a)      ((a) ? 1 : 0)
+
+#define swap_variables(t, a, b) { t dummy; dummy= a; a= b; b= dummy; }
+
+#define MY_TEST(a)      ((a) ? 1 : 0)
+#define MY_MAX(a, b)    ((a) > (b) ? (a) : (b))
+#define MY_MIN(a, b)    ((a) < (b) ? (a) : (b))
+
 
 #define set_if_bigger(a, b)   \
   do {                        \
@@ -44,6 +62,27 @@ uint32 ut_2_log(uint32 n);
 uint32 ut_2_exp(uint32 n);
 
 
+/** Determines if a number is zero or a power of two.
+@param[in] n number
+@return nonzero if n is zero or a power of two; zero otherwise */
+#define ut_is_2pow(n) (!((n) & ((n)-1)))
+
+/** Calculates the biggest multiple of m that is not bigger than n
+ when m is a power of two.  In other words, rounds n down to m * k.
+ @param n in: number to round down
+ @param m in: alignment, must be a power of two
+ @return n rounded down to the biggest possible integer multiple of m */
+#define ut_2pow_round(n, m) ((n) & ~((m)-1))
+
+/** Calculates fast the number rounded up to the nearest power of 2.
+ @return first power of 2 which is >= n */
+uint64 ut_2_power_up(uint64 n); /*!< in: number != 0 */
+
+/** Calculates fast the remainder of n/m when m is a power of two.
+    @param n in: numerator
+    @param m in: denominator, must be a power of two
+    @return the remainder of n/m */
+#define ut_2pow_remainder(n, m) ((n) & ((m)-1))
 
 
 /***********************************************************************************************
@@ -79,14 +118,14 @@ uint32 ut_bit_set_nth(
     uint32 n,    /* in: nth bit requested */
     bool32 val); /* in: value for the bit to set */
 
-#define ut_align4(size) (((size) & 0x03) == 0 ? (size) : (size) + 0x04 - ((size) & 0x03))
-#define ut_align8(size) (((size) & 0x07) == 0 ? (size) : (size) + 0x08 - ((size) & 0x07))
-#define ut_align16(size) (((size) & 0x0F) == 0 ? (size) : (size) + 0x10 - ((size) & 0x0F))
-#define ut_is_align4(size) (((size) & 0x03) == 0)
-#define ut_is_align8(size) (((size) & 0x07) == 0)
-#define ut_is_align16(size) (((size) & 0x0F) == 0)
+#define ut_align4(size)         (((size) & 0x03) == 0 ? (size) : (size) + 0x04 - ((size) & 0x03))
+#define ut_align8(size)         (((size) & 0x07) == 0 ? (size) : (size) + 0x08 - ((size) & 0x07))
+#define ut_align16(size)        (((size) & 0x0F) == 0 ? (size) : (size) + 0x10 - ((size) & 0x0F))
+#define ut_is_align4(size)      (((size) & 0x03) == 0)
+#define ut_is_align8(size)      (((size) & 0x07) == 0)
+#define ut_is_align16(size)     (((size) & 0x0F) == 0)
 
-
+#define MY_ALIGN(A, L)          (((A) + (L)-1) & ~((L)-1))
 
 /***********************************************************************************************
 *                                      load / store data                                       *
@@ -357,6 +396,160 @@ inline char *store32be(char *ptr, uint32 val) {
   return ptr + sizeof(val);
 }
 
+
+
+inline int8 sint1korr(const uchar *A) { return *A; }
+
+inline uint8 uint1korr(const uchar *A) { return *A; }
+
+inline int16 sint2korr(const uchar *A)
+{
+    return (int16)((uint32)(A[1]) + ((uint32)(A[0]) << 8));
+}
+
+inline int32 sint3korr(const uchar *A)
+{
+    return (int32)((A[0] & 128) ? ((255U << 24) | ((uint32)(A[0]) << 16) |
+        ((uint32)(A[1]) << 8) | ((uint32)A[2]))
+        : (((uint32)(A[0]) << 16) |
+        ((uint32)(A[1]) << 8) | ((uint32)(A[2]))));
+}
+
+inline int32 sint4korr(const uchar *A)
+{
+    return (int32)((uint32)(A[3]) + ((uint32)(A[2]) << 8) +
+        ((uint32)(A[1]) << 16) + ((uint32)(A[0]) << 24));
+}
+
+inline uint16 uint2korr(const uchar *A)
+{
+    return (uint16)((uint16)A[1]) + ((uint16)A[0] << 8);
+}
+
+inline uint32 uint3korr(const uchar *A)
+{
+    return (uint32)((uint32)A[2] + ((uint32)A[1] << 8) + ((uint32)A[0] << 16));
+}
+
+inline uint32 uint4korr(const uchar *A)
+{
+    return (uint32)((uint32)A[3] + ((uint32)A[2] << 8) + ((uint32)A[1] << 16) +
+        ((uint32)A[0] << 24));
+}
+
+inline ulonglong uint5korr(const uchar *A)
+{
+    return (ulonglong)((uint32)A[4] + ((uint32)A[3] << 8) + ((uint32)A[2] << 16) +
+        ((uint32)A[1] << 24)) +
+        ((ulonglong)A[0] << 32);
+}
+
+inline ulonglong uint6korr(const uchar *A)
+{
+    return (ulonglong)((uint32)A[5] + ((uint32)A[4] << 8) + ((uint32)A[3] << 16) +
+        ((uint32)A[2] << 24)) +
+        (((ulonglong)((uint32)A[1] + ((uint32)A[0] << 8))) << 32);
+}
+
+inline ulonglong uint7korr(const uchar *A)
+{
+    return (ulonglong)((uint32)A[6] + ((uint32)A[5] << 8) + ((uint32)A[4] << 16) +
+        ((uint32)A[3] << 24)) +
+        (((ulonglong)((uint32)A[2] + ((uint32)A[1] << 8) +
+        ((uint32)A[0] << 16)))
+            << 32);
+}
+
+inline ulonglong uint8korr(const uchar *A)
+{
+    return (ulonglong)((uint32)A[7] + ((uint32)A[6] << 8) + ((uint32)A[5] << 16) +
+        ((uint32)A[4] << 24)) +
+        (((ulonglong)((uint32)A[3] + ((uint32)A[2] << 8) +
+        ((uint32)A[1] << 16) + ((uint32)A[0] << 24)))
+            << 32);
+}
+
+inline longlong sint8korr(const uchar *A)
+{
+    return (longlong)uint8korr(A);
+}
+
+/* This one is for uniformity */
+#define int1store(T, A) *((uchar *)(T)) = (uchar)(A)
+
+#define int2store(T, A)                      \
+  {                                             \
+    uint def_temp = (uint)(A);                  \
+    ((uchar *)(T))[1] = (uchar)(def_temp);      \
+    ((uchar *)(T))[0] = (uchar)(def_temp >> 8); \
+  }
+#define int3store(T, A)                       \
+  { /*lint -save -e734 */                        \
+    ulong def_temp = (ulong)(A);                 \
+    ((uchar *)(T))[2] = (uchar)(def_temp);       \
+    ((uchar *)(T))[1] = (uchar)(def_temp >> 8);  \
+    ((uchar *)(T))[0] = (uchar)(def_temp >> 16); \
+                              /*lint -restore */}
+#define int4store(T, A)                       \
+  {                                              \
+    ulong def_temp = (ulong)(A);                 \
+    ((uchar *)(T))[3] = (uchar)(def_temp);       \
+    ((uchar *)(T))[2] = (uchar)(def_temp >> 8);  \
+    ((uchar *)(T))[1] = (uchar)(def_temp >> 16); \
+    ((uchar *)(T))[0] = (uchar)(def_temp >> 24); \
+  }
+#define int5store(T, A)                                       \
+  {                                                              \
+    ulong def_temp = (ulong)(A), def_temp2 = (ulong)((A) >> 32); \
+    ((uchar *)(T))[4] = (uchar)(def_temp);                       \
+    ((uchar *)(T))[3] = (uchar)(def_temp >> 8);                  \
+    ((uchar *)(T))[2] = (uchar)(def_temp >> 16);                 \
+    ((uchar *)(T))[1] = (uchar)(def_temp >> 24);                 \
+    ((uchar *)(T))[0] = (uchar)(def_temp2);                      \
+  }
+#define int6store(T, A)                                       \
+  {                                                              \
+    ulong def_temp = (ulong)(A), def_temp2 = (ulong)((A) >> 32); \
+    ((uchar *)(T))[5] = (uchar)(def_temp);                       \
+    ((uchar *)(T))[4] = (uchar)(def_temp >> 8);                  \
+    ((uchar *)(T))[3] = (uchar)(def_temp >> 16);                 \
+    ((uchar *)(T))[2] = (uchar)(def_temp >> 24);                 \
+    ((uchar *)(T))[1] = (uchar)(def_temp2);                      \
+    ((uchar *)(T))[0] = (uchar)(def_temp2 >> 8);                 \
+  }
+#define int7store(T, A)                                       \
+  {                                                              \
+    ulong def_temp = (ulong)(A), def_temp2 = (ulong)((A) >> 32); \
+    ((uchar *)(T))[6] = (uchar)(def_temp);                       \
+    ((uchar *)(T))[5] = (uchar)(def_temp >> 8);                  \
+    ((uchar *)(T))[4] = (uchar)(def_temp >> 16);                 \
+    ((uchar *)(T))[3] = (uchar)(def_temp >> 24);                 \
+    ((uchar *)(T))[2] = (uchar)(def_temp2);                      \
+    ((uchar *)(T))[1] = (uchar)(def_temp2 >> 8);                 \
+    ((uchar *)(T))[0] = (uchar)(def_temp2 >> 16);                \
+  }
+#define int8store(T, A)                                        \
+  {                                                               \
+    ulong def_temp3 = (ulong)(A), def_temp4 = (ulong)((A) >> 32); \
+    mi_int4store((uchar *)(T) + 0, def_temp4);                    \
+    mi_int4store((uchar *)(T) + 4, def_temp3);                    \
+  }
+
+
+/***********************************************************************************************
+*                                      string                                                  *
+***********************************************************************************************/
+
+#ifdef _MSC_VER
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+#endif
+
+#ifdef __WIN__
+
+#define strtok_r strtok_s
+
+#endif
 
 #ifdef __cplusplus
 }
