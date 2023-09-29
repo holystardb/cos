@@ -492,6 +492,7 @@ uint32 mach_ull_write_compressed(
 	return(size + 4);
 }
 
+
 /*********************************************************//**
 Returns the size of a 64-bit integer when written in the compressed form.
 @return	compressed size in bytes */

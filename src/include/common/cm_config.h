@@ -7,6 +7,16 @@
 extern "C" {
 #endif
 
+typedef struct {
+    uint32 num_lines;
+    char** lines;
+} config_lines;
+
+extern config_lines* read_lines_from_config_file(char *config_file);
+extern bool32 parse_key_value_from_config_line(char *line, char **section, char **key, char **value);
+
+//**************************************************************************************************************//
+
 extern int get_private_profile_int(const char *section, const char *entry, int def, char *file_name);
 extern unsigned long long get_private_profile_longlong(const char *section, const char *entry, unsigned long long def, char *file_name);
 extern int get_private_profile_string(const char *section, const char *entry, const char *def, char *buffer, int buffer_len, char *file_name);

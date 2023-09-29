@@ -5,14 +5,16 @@
 #include "cm_memory.h"
 #include "cm_rwlock.h"
 
+typedef void* HASH_NODE_T;
+
 typedef struct ST_HASH_CELL{
     void    *node; /*!< hash chain node, NULL if none */
-} HASH_CELL;
+} HASH_CELL_T;
 
 typedef struct ST_HASH_TABLE {
     enum hash_table_sync_t type; /*!< type of hash_table. */
 
-    HASH_CELL         *array; /* pointer to cell array */
+    HASH_CELL_T         *array; /* pointer to cell array */
     uint32             n_cells; /* number of cells in the hash table */
     uint32 n_sync_obj; /* if sync_objs != NULL, then the number of either the number of mutexes or 
                           the number of rw_locks depending on the type. Must be a power of 2 */
@@ -26,15 +28,15 @@ typedef struct ST_HASH_TABLE {
 } HASH_TABLE;
 
 #define HASH_ASSERT_OWN(TABLE, FOLD)                    \
-    ut_ad((TABLE)->type != HASH_TABLE_SYNC_MUTEX   || (mutex_own(hash_get_mutex((TABLE), FOLD))));
+    ut_ad((TABLE)->type != HASH_TABLE_SYNC_MUTEX   || (mutex_own(HASH_GET_MUTEX((TABLE), FOLD))));
 
 #define HASH_INSERT(TYPE, NAME, TABLE, FOLD, DATA)                         \
     do {                                                                   \
-        HASH_CELL *cell3333;                                               \
+        HASH_CELL_T *cell3333;                                               \
         TYPE *struct3333;                                                  \
         HASH_ASSERT_OWN(TABLE, FOLD)                                       \
         (DATA)->NAME = NULL;                                               \
-        cell3333 = hash_get_nth_cell(TABLE, hash_calc_hash(FOLD, TABLE));  \
+        cell3333 = HASH_GET_NTH_CELL(TABLE, HASH_CALC_HASH(TABLE, FOLD));  \
         if (cell3333->node == NULL) {                                      \
             cell3333->node = DATA;                                         \
         } else {                                                           \
@@ -46,12 +48,25 @@ typedef struct ST_HASH_TABLE {
         }                                                                  \
     } while (0)
 
+#ifdef UNIV_HASH_DEBUG
+#define HASH_ASSERT_VALID(DATA) ut_a((void *)(DATA) != (void *)-1)
+#define HASH_INVALIDATE(DATA, NAME) *(void **)(&DATA->NAME) = (void *)-1
+#else
+#define HASH_ASSERT_VALID(DATA)     \
+  do {                              \
+  } while (0)
+
+#define HASH_INVALIDATE(DATA, NAME) \
+  do {                              \
+  } while (0)
+#endif
+
 #define HASH_DELETE(TYPE, NAME, TABLE, FOLD, DATA)                         \
 do {                                                                       \
-    hash_cell_t *cell3333;                                                 \
+    HASH_CELL_T *cell3333;                                                 \
     TYPE *struct3333;                                                      \
     HASH_ASSERT_OWN(TABLE, FOLD)                                           \
-    cell3333 = hash_get_nth_cell(TABLE, hash_calc_hash(FOLD, TABLE));      \
+    cell3333 = HASH_GET_NTH_CELL(TABLE, HASH_CALC_HASH(TABLE, FOLD));      \
     if (cell3333->node == DATA) {                                          \
         cell3333->node = DATA->NAME;                                       \
     } else {                                                               \
@@ -64,14 +79,14 @@ do {                                                                       \
     }                                                                      \
 } while (0)
 
-#define HASH_GET_FIRST(TABLE, HASH_VAL)   (hash_get_nth_cell(TABLE, HASH_VAL)->node)
+#define HASH_GET_FIRST(TABLE, HASH_VAL)   (HASH_GET_NTH_CELL(TABLE, HASH_VAL)->node)
 
 #define HASH_GET_NEXT(NAME, DATA)         ((DATA)->NAME)
 
 #define HASH_SEARCH(NAME, TABLE, FOLD, TYPE, DATA, ASSERTION, TEST)        \
 {                                                                          \
     HASH_ASSERT_OWN(TABLE, FOLD)                                           \
-    (DATA) = (TYPE) HASH_GET_FIRST(TABLE, hash_calc_hash(TABLE, FOLD));    \
+    (DATA) = (TYPE) HASH_GET_FIRST(TABLE, HASH_CALC_HASH(TABLE, FOLD));    \
     while ((DATA) != NULL) {                                               \
         ASSERTION;                                                         \
         if (TEST) {                                                        \
@@ -104,8 +119,11 @@ do {                                                                       \
 HASH_TABLE* HASH_TABLE_CREATE(uint32 n);
 void HASH_TABLE_FREE(HASH_TABLE *table);
 
-HASH_CELL* hash_get_nth_cell(HASH_TABLE *table, uint32 n);
-uint32 hash_calc_hash(HASH_TABLE *table, uint32 fold);
+HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE *table, uint32 n);
+uint32 HASH_CALC_HASH(HASH_TABLE *table, uint32 fold);
+
+mutex_t* HASH_GET_MUTEX(HASH_TABLE *table, uint32 fold);
+
 
 /* Differnt types of hash_table based on the synchronization method used for it. */
 enum hash_table_sync_t {
@@ -118,7 +136,7 @@ enum hash_table_sync_t {
                             access to this hash_table. */
 };
 
-mutex_t *hash_get_mutex(HASH_TABLE *table, uint32 fold);
+
 
 rw_lock_t *hash_get_lock(HASH_TABLE *table, uint32 fold);
 rw_lock_t *hash_lock_s_confirm(rw_lock_t *hash_lock, HASH_TABLE *table, uint32 fold);

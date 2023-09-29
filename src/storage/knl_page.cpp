@@ -1,4 +1,8 @@
-#include "page.h"
+#include "knl_page.h"
+#include "knl_mtr.h"
+#include "knl_fsp.h"
+
+
 
 /* The data structures in files are defined just as byte strings in C */
 typedef byte    fsp_header_t;
@@ -106,48 +110,4 @@ the extent are free and which contain old tuple version to clean. */
 
 
 
-/**************************************************************************
-Initializes the space header of a new created space and creates also the
-insert buffer tree root. */
-
-void
-fsp_header_init(uint32 space, uint32 size, mtr_t *mtr)
-{
-	fsp_header_t*	header;
-	page_t*		page;
-	
-	ut_ad(mtr);
-
-	mtr_x_lock(fil_space_get_latch(space), mtr);
-
-	page = buf_page_create(space, 0, mtr);
-	buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
-
-	buf_page_get(space, 0, RW_X_LATCH, mtr);
-	buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
-
-	/* The prior contents of the file page should be ignored */
-
-	fsp_init_file_page(page, mtr);
-
-	header = FSP_HEADER_OFFSET + page;
-
-	mlog_write_ulint(header + FSP_SIZE, size, MLOG_4BYTES, mtr); 
-	mlog_write_ulint(header + FSP_FREE_LIMIT, 0, MLOG_4BYTES, mtr); 
-	mlog_write_ulint(header + FSP_LOWEST_NO_WRITE, 0, MLOG_4BYTES, mtr); 
-	mlog_write_ulint(header + FSP_FRAG_N_USED, 0, MLOG_4BYTES, mtr); 
-	
-	flst_init(header + FSP_FREE, mtr);
-	flst_init(header + FSP_FREE_FRAG, mtr);
-	flst_init(header + FSP_FULL_FRAG, mtr);
-	flst_init(header + FSP_SEG_INODES_FULL, mtr);
-	flst_init(header + FSP_SEG_INODES_FREE, mtr);
-
-	mlog_write_dulint(header + FSP_SEG_ID, ut_dulint_create(0, 1),
-							MLOG_8BYTES, mtr); 
-	fsp_fill_free_list(space, header, mtr);
-
-	btr_create(DICT_CLUSTERED | DICT_UNIVERSAL | DICT_IBUF, space,
-				ut_dulint_add(DICT_IBUF_ID_MIN, space), mtr);
-}
 

@@ -156,14 +156,12 @@ The following function is used to fetch data from two consecutive
 bytes. The most significant char is at the lowest address.
 @return uint32 integer, >= 0, < 64k */
 uint32 mach_read_from_2(
-/*=============*/
     const unsigned char*    b); /*!< in: pointer to two bytes */
 
 /*******************************************************//**
 The following function is used to store data in 3 consecutive
 bytes. We store the most significant char to the lowest address. */
 void mach_write_to_3(
-
     unsigned char*  b,  /*!< in: pointer to 3 bytes where to store */
     uint32  n);  /*!< in: uint32 integer to be stored */
 
@@ -172,7 +170,6 @@ The following function is used to fetch data from 3 consecutive
 bytes. The most significant char is at the lowest address.
 @return uint32 integer */
 uint32 mach_read_from_3(
-/*=============*/
     const unsigned char*    b); /*!< in: pointer to 3 bytes */
 
 /*******************************************************//**
@@ -207,7 +204,7 @@ Reads a uint32 in a compressed form.
 @return read integer */
 uint32 mach_read_compressed(
     const unsigned char*    b); /*!< in: pointer to memory from where to read */
-    
+
 /*******************************************************//**
 The following function is used to store data in 6 consecutive
 bytes. We store the most significant char to the lowest address. */
@@ -235,7 +232,7 @@ bytes. The most significant char is at the lowest address.
 @return 56-bit integer */
 uint64 mach_read_from_7(
     const unsigned char*    b); /*!< in: pointer to 7 bytes */
-    
+
 /*******************************************************//**
 The following function is used to store data in 8 consecutive
 bytes. We store the most significant char to the lowest address. */
@@ -275,7 +272,7 @@ Writes a 64-bit integer in a compressed form (1..11 bytes).
 uint32 mach_ull_write_much_compressed(
     unsigned char*  b,  /*!< in: pointer to memory where to store */
     uint64  n); /*!< in: 64-bit integer to be stored */
-    
+
 /*********************************************************//**
 Returns the size of a 64-bit integer when written in the compressed form.
 @return compressed size in bytes */
@@ -359,7 +356,6 @@ void mach_write_to_2_little_endian(
 uint64 ut_ull_create(
   uint32  high, /*!< in: high-order 32 bits */
   uint32  low);  /*!< in: low-order 32 bits */
-
 
 
 /*

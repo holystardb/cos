@@ -5,11 +5,184 @@
 #include "cm_list.h"
 #include "cm_file.h"
 #include "cm_memory.h"
+#include "knl_hash_table.h"
 #include "knl_mtr.h"
+#include "knl_page_size.h"
+#include "knl_server.h"
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* The data structures in files are defined just as byte strings in C */
+typedef byte    fsp_header_t;
+typedef byte    xdes_t;
+typedef byte    page_t;
+
+/* SPACE HEADER
+============
+
+File space header data structure: this data structure is contained in the first page of a space.
+The space for this header is reserved in every extent descriptor page, but used only in the first. */
+
+#define FSP_HEADER_OFFSET   FIL_PAGE_DATA   /* Offset of the space header within a file page */
+/*-------------------------------------*/
+#define FSP_SPACE_ID        0 /* space id */
+
+#define FSP_NOT_USED        0   /* this field contained a value up to
+which we know that the modifications in the database have been flushed to the file space; not used now */
+#define	FSP_SIZE            8   /* Current size of the space in pages */
+#define	FSP_FREE_LIMIT      12  /* Minimum page number for which the free list has not been initialized:
+the pages >= this limit are, by definition free */
+#define	FSP_SPACE_FLAGS		16	/* fsp_space_t.flags, similar to dict_table_t::flags */
+#define	FSP_FRAG_N_USED     20  /* number of used pages in the FSP_FREE_FRAG list */
+#define	FSP_FREE            24  /* list of free extents */
+#define	FSP_FREE_FRAG       (24 + FLST_BASE_NODE_SIZE)
+/* list of partially free extents not belonging to any segment */
+#define	FSP_FULL_FRAG       (24 + 2 * FLST_BASE_NODE_SIZE)
+/* list of full extents not belonging to any segment */
+#define FSP_SEG_ID          (24 + 3 * FLST_BASE_NODE_SIZE)
+/* 8 bytes which give the first unused segment id */
+#define FSP_SEG_INODES_FULL (32 + 3 * FLST_BASE_NODE_SIZE)
+/* list of pages containing segment headers, where all the segment inode slots are reserved */
+#define FSP_SEG_INODES_FREE (32 + 4 * FLST_BASE_NODE_SIZE)
+/* list of pages containing segment headers, where not all the segment header slots are reserved */
+/*-------------------------------------*/
+/* File space header size */
+#define	FSP_HEADER_SIZE     (32 + 5 * FLST_BASE_NODE_SIZE)
+
+#define	FSP_FREE_ADD        4   /* this many free extents are added to the free list from above FSP_FREE_LIMIT at a time */
+
+
+/* FILE SEGMENT INODE
+==================
+
+Segment inode which is created for each segment in a tablespace. NOTE: in
+purge we assume that a segment having only one currently used page can be
+freed in a few steps, so that the freeing cannot fill the file buffer with
+bufferfixed file pages. */
+
+typedef	byte	fseg_inode_t;
+
+#define FSEG_INODE_PAGE_NODE	FSEG_PAGE_DATA
+					/* the list node for linking
+					segment inode pages */
+
+#define FSEG_ARR_OFFSET		(FSEG_PAGE_DATA + FLST_NODE_SIZE)
+/*-------------------------------------*/
+#define	FSEG_ID			0	/* 8 bytes of segment id: if this is
+					ut_dulint_zero, it means that the
+					header is unused */
+#define FSEG_NOT_FULL_N_USED	8
+					/* number of used segment pages in
+					the FSEG_NOT_FULL list */
+#define	FSEG_FREE		12
+					/* list of free extents of this
+					segment */
+#define	FSEG_NOT_FULL		(12 + FLST_BASE_NODE_SIZE)
+					/* list of partially free extents */
+#define	FSEG_FULL		(12 + 2 * FLST_BASE_NODE_SIZE)
+					/* list of full extents */
+#define	FSEG_MAGIC_N		(12 + 3 * FLST_BASE_NODE_SIZE)
+					/* magic number used in debugging */
+#define	FSEG_FRAG_ARR		(16 + 3 * FLST_BASE_NODE_SIZE)
+					/* array of individual pages
+					belonging to this segment in fsp
+					fragment extent lists */
+#define FSEG_FRAG_ARR_N_SLOTS	(FSP_EXTENT_SIZE / 2)
+					/* number of slots in the array for
+					the fragment pages */
+#define	FSEG_FRAG_SLOT_SIZE	4	/* a fragment page slot contains its
+					page number within space, FIL_NULL
+					means that the slot is not in use */
+/*-------------------------------------*/
+#define FSEG_INODE_SIZE	(16 + 3 * FLST_BASE_NODE_SIZE + FSEG_FRAG_ARR_N_SLOTS * FSEG_FRAG_SLOT_SIZE)
+
+#define FSP_SEG_INODES_PER_PAGE	((UNIV_PAGE_SIZE - FSEG_ARR_OFFSET - 10) / FSEG_INODE_SIZE)
+				/* Number of segment inodes which fit on a
+				single page */
+
+#define FSEG_MAGIC_N_VALUE	97937874
+					
+#define	FSEG_FILLFACTOR		8	/* If this value is x, then if
+					the number of unused but reserved
+					pages in a segment is less than
+					reserved pages * 1/x, and there are
+					at least FSEG_FRAG_LIMIT used pages,
+					then we allow a new empty extent to
+					be added to the segment in
+					fseg_alloc_free_page. Otherwise, we
+					use unused pages of the segment. */
+					
+#define FSEG_FRAG_LIMIT		FSEG_FRAG_ARR_N_SLOTS
+					/* If the segment has >= this many
+					used pages, it may be expanded by
+					allocating extents to the segment;
+					until that only individual fragment
+					pages are allocated from the space */
+
+#define	FSEG_FREE_LIST_LIMIT	40	/* If the reserved size of a segment
+					is at least this many extents, we
+					allow extents to be put to the free
+					list of the extent: at most
+					FSEG_FREE_LIST_MAX_LEN many */
+#define	FSEG_FREE_LIST_MAX_LEN	4
+					
+
+/* EXTENT DESCRIPTOR
+=================
+
+File extent descriptor data structure: contains bits to tell which pages in
+the extent are free and which contain old tuple version to clean. */
+
+/*-------------------------------------*/
+#define	XDES_ID			0	/* The identifier of the segment
+					to which this extent belongs */
+#define XDES_FLST_NODE		8	/* The list node data structure
+					for the descriptors */
+#define	XDES_STATE		(FLST_NODE_SIZE + 8)
+					/* contains state information
+					of the extent */
+#define	XDES_BITMAP		(FLST_NODE_SIZE + 12)
+					/* Descriptor bitmap of the pages
+					in the extent */
+/*-------------------------------------*/
+					
+#define	XDES_BITS_PER_PAGE	2	/* How many bits are there per page */
+#define	XDES_FREE_BIT		0	/* Index of the bit which tells if the page is free */
+#define	XDES_CLEAN_BIT		1	/* NOTE: currently not used!
+					Index of the bit which tells if there are old versions of tuples on the page */
+
+/* States of a descriptor */
+#define XDES_FREE           1   /* extent is in free list of space */
+#define XDES_FREE_FRAG      2   /* extent is in free fragment list of space */
+#define XDES_FULL_FRAG      3   /* extent is in full fragment list of space */
+#define XDES_FSEG           4   /* extent belongs to a segment */
+
+/* File extent data structure size in bytes. The "+ 7 ) / 8" part in the
+definition rounds the number of bytes upward. */
+#define	XDES_SIZE	(XDES_BITMAP + (FSP_EXTENT_SIZE * XDES_BITS_PER_PAGE + 7) / 8)
+
+/* Offset of the descriptor array on a descriptor page */
+#define	XDES_ARR_OFFSET		(FSP_HEADER_OFFSET + FSP_HEADER_SIZE)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 /* File space extent size in pages */
@@ -20,6 +193,7 @@ extern "C" {
 
 /* File segment header which points to the inode describing the file segment */
 typedef	byte	fseg_header_t;
+
 
 #define FSEG_HDR_SPACE		0	/* space id of the inode */
 #define FSEG_HDR_PAGE_NO	4	/* page number of the inode */
@@ -44,11 +218,10 @@ typedef byte fil_faddr_t; /* 'type' definition in C: an address stored in a file
 #define	FIL_ADDR_SIZE   6   /* address size is 6 bytes */
 
 /* A struct for storing a space address FIL_ADDR, when it is used in C program data structures. */
-typedef struct fil_addr_struct fil_addr_t;
-struct fil_addr_struct{
-    uint32 page;    /* page number within a space */
-    uint32 boffset; /* byte offset within the page */
-};
+typedef struct fil_addr_struct {
+    uint32      page;    /* page number within a space */
+    uint32      boffset; /* byte offset within the page */
+} fil_addr_t;
 
 /* Null file address */
 extern fil_addr_t   fil_addr_null;
@@ -65,6 +238,10 @@ extern fil_addr_t   fil_addr_null;
 #define FIL_PAGE_ARCH_LOG_NO    34  /* this is only defined for the first page in a data file:
                                        the latest archived log file number when the flush lsn above was written */
 #define FIL_PAGE_DATA           38  /* start of the data on the page */
+
+#define FIL_PAGE_SPACE_ID       34
+
+
 
 /* File page trailer */
 #define FIL_PAGE_END_LSN        8 /* this should be same as FIL_PAGE_LSN */
@@ -112,12 +289,18 @@ typedef struct st_fil_space {
     char        *name;  /* space name */
     uint32       id;  /* space id */
     uint32       purpose;  // Space types
+    uint32       flags;
+
     uint32       page_size;  /* space size in pages */
     /* number of reserved free extents for ongoing operations like B-tree page split */
     uint32       n_reserved_extents;
     uint32       magic_n;
     spinlock_t   lock;
     bool32       io_in_progress;
+    rw_lock_t    latch;
+    HASH_NODE_T  hash;   /*!< hash chain node */
+
+
     UT_LIST_BASE_NODE_T(fil_node_t) fil_nodes;
     UT_LIST_BASE_NODE_T(fil_page_t) free_pages;
     UT_LIST_NODE_T(struct st_fil_space) list_node;
@@ -131,24 +314,35 @@ typedef struct st_fil_system {
     uint32              fil_node_max_count;
     uint32              fil_node_num;
     fil_node_t        **fil_nodes;
+    uint32              space_max_count;
     spinlock_t          lock;
+
     memory_context_t   *mem_context;
+
+
+    HASH_TABLE         *spaces; /*!< The hash table of spaces in the system; they are hashed on the space id */
+    HASH_TABLE         *name_hash; /*!< hash table based on the space name */
+
     UT_LIST_BASE_NODE_T(fil_space_t) fil_spaces;
     UT_LIST_BASE_NODE_T(fil_node_t) fil_node_lru;
 } fil_system_t;
 
-bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 fil_node_max_count);
+bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 space_max_count, uint32 fil_node_max_count);
 fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
 void fil_space_destroy(uint32 space_id);
 fil_node_t* fil_node_create(fil_space_t *space, char *name, uint32 page_max_count, uint32 page_size, bool32 is_extend);
 bool32 fil_node_destroy(fil_space_t *space, fil_node_t *node);
 bool32 fil_node_open(fil_space_t *space, fil_node_t *node);
 bool32 fil_node_close(fil_space_t *space, fil_node_t *node);
+fil_space_t* fil_space_get_by_id(uint32 space_id);
+rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags = NULL);
 
 
 
 bool32 fsp_is_system_temporary(space_id_t space_id);
+fsp_header_t* fsp_get_space_header(uint32 id, const page_size_t& page_size, mtr_t* mtr);
 
+bool fil_addr_is_null(fil_addr_t addr);
 
 #ifdef __cplusplus
 }

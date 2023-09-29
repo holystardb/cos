@@ -185,7 +185,7 @@ void os_mutex_create(os_mutex_t *mutex)
 #endif
 }
 
-void os_mutex_lock(os_mutex_t *mutex)
+void os_mutex_enter(os_mutex_t *mutex)
 {
 #ifdef __WIN__
     EnterCriticalSection((LPCRITICAL_SECTION)mutex);
@@ -194,7 +194,7 @@ void os_mutex_lock(os_mutex_t *mutex)
 #endif
 }
 
-bool32 os_mutex_trylock(os_mutex_t *mutex)
+bool32 os_mutex_tryenter(os_mutex_t *mutex)
 {
 #ifdef __WIN__
     return TryEnterCriticalSection((LPCRITICAL_SECTION)mutex);
@@ -207,7 +207,7 @@ bool32 os_mutex_trylock(os_mutex_t *mutex)
     return FALSE;
 }
 
-void os_mutex_unlock(os_mutex_t *mutex)
+void os_mutex_exit(os_mutex_t *mutex)
 {
 #ifdef __WIN__
     LeaveCriticalSection(mutex);
@@ -224,7 +224,4 @@ void os_mutex_destroy(os_mutex_t *mutex)
     pthread_mutex_destroy(mutex);
 #endif
 }
-
-
-
 

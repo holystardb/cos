@@ -6,28 +6,19 @@
 #include "cm_list.h"
 #include "cm_dbug.h"
 #include "cm_rwlock.h"
-#include "knl_hash_table.h"
 #include "cm_rbt.h"
 #include "cm_mutex.h"
 #include "knl_mtr.h"
+#include "knl_fsp.h"
+#include "knl_hash_table.h"
+#include "knl_page_size.h"
 #include "knl_server.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef uint32              space_id_t;
-typedef uint32              page_no_t;
 
-typedef uint64              ib_uint64_t;
-typedef uint64              ib_id_t;
-typedef uint64              trx_id_t;
-
-typedef byte                page_t;
-typedef uint64              lsn_t;
-typedef uint16              page_type_t;
-
-typedef byte                buf_frame_t;
 
 /** The maximum number of buffer pools that can be defined */
 constexpr uint32 MAX_BUFFER_POOLS = 64;
@@ -35,20 +26,6 @@ constexpr uint32 MAX_BUFFER_POOLS = 64;
 /** Maximum number of concurrent buffer pool watches */
 #define BUF_POOL_WATCH_SIZE (srv_n_purge_threads + 1)
 
-
-/** Minimum Page Size Shift (power of 2) */
-#define PAGE_SIZE_SHIFT_MIN 12
-/** Maximum Page Size Shift (power of 2) */
-#define PAGE_SIZE_SHIFT_MAX 16
-/** Default Page Size Shift (power of 2) */
-#define PAGE_SIZE_SHIFT_DEF 14
-
-/** Minimum page size currently supports. */
-#define PAGE_SIZE_MIN (1 << PAGE_SIZE_SHIFT_MIN)
-/** Maximum page size currently supports. */
-constexpr size_t PAGE_SIZE_MAX = (1 << PAGE_SIZE_SHIFT_MAX);
-/** Default page size for tablespaces. */
-#define PAGE_SIZE_DEF (1 << PAGE_SIZE_SHIFT_DEF)
 
 
 
@@ -63,86 +40,9 @@ constexpr size_t PAGE_SIZE_MAX = (1 << PAGE_SIZE_SHIFT_MAX);
 #define buf_page_hash_lock_x_confirm(hash_lock, buf_pool, page_id) \
   hash_lock_x_confirm(hash_lock, (buf_pool)->page_hash, (page_id).fold())
 
+#define buf_block_get_frame(block) (block)->frame
 
 
-
-
-/* Global counters */
-typedef struct st_srv_stats {
-    typedef counter_t<uint64, 64> uint64_ctr_64_t;
-    typedef counter_t<uint64, 1> uint64_ctr_1_t;
-    typedef counter_t<lsn_t, 1> lsn_ctr_1_t;
-
-    /** Count the amount of data written in total (in bytes) */
-    uint64_ctr_1_t      data_written;
-
-    /** Number of the log write requests done */
-    uint64_ctr_1_t      log_write_requests;
-
-    /** Number of physical writes to the log performed */
-    uint64_ctr_1_t      log_writes;
-
-    /** Amount of data padded for log write ahead */
-    uint64_ctr_1_t      log_padded;
-
-    /** Amount of data written to the log files in bytes */
-    lsn_ctr_1_t         os_log_written;
-
-    /** Number of writes being done to the log files */
-    uint64_ctr_1_t      os_log_pending_writes;
-
-    /** We increase this counter, when we don't have enough
-    space in the log buffer and have to flush it */
-    uint64_ctr_1_t      log_waits;
-
-    /** Count the number of times the doublewrite buffer was flushed */
-    uint64_ctr_1_t      dblwr_writes;
-
-    /** Store the number of pages that have been flushed to the doublewrite buffer */
-    uint64_ctr_1_t      dblwr_pages_written;
-
-    /** Store the number of write requests issued */
-    uint64_ctr_1_t      buf_pool_write_requests;
-
-    /** Store the number of times when we had to wait for a free page in the buffer pool.
-    It happens when the buffer pool is full and we need to make a flush,
-    in order to be able to read or create a page. */
-    uint64_ctr_1_t      buf_pool_wait_free;
-
-    /** Count the number of pages that were written from buffer pool to the disk */
-    uint64_ctr_1_t      buf_pool_flushed;
-
-    /** Number of buffer pool reads that led to the reading of a disk page */
-    uint64_ctr_1_t      buf_pool_reads;
-
-    /** Number of data read in total (in bytes) */
-    uint64_ctr_1_t      data_read;
-
-    /** Wait time of database locks */
-    uint64_ctr_1_t      n_lock_wait_time;
-
-    /** Number of database lock waits */
-    uint64_ctr_1_t      n_lock_wait_count;
-
-    /** Number of threads currently waiting on database locks */
-    uint64_ctr_1_t      n_lock_wait_current_count;
-
-    /** Number of rows read. */
-    uint64_ctr_64_t     n_rows_read;
-
-    /** Number of rows updated */
-    uint64_ctr_64_t     n_rows_updated;
-
-    /** Number of rows deleted */
-    uint64_ctr_64_t     n_rows_deleted;
-
-    /** Number of rows inserted */
-    uint64_ctr_64_t     n_rows_inserted;
-} srv_stats_t;
-
-srv_stats_t          srv_stats;
-
-#define PAGE_SIZE_T_SIZE_BITS 17
 
 enum class Page_fetch {
     /** Get always */
@@ -168,61 +68,6 @@ enum class Page_fetch {
     /** Like Page_fetch::NORMAL, but do not mind if the file page has been freed. */
     POSSIBLY_FREED
 };
-
-class page_size_t {
-public:
-     /** Constructor from (physical, logical, is_compressed).
-     @param[in]    physical    physical (on-disk/zipped) page size
-     @param[in]    logical     logical (in-memory/unzipped) page size
-     @param[in]    is_compressed   whether the page is compressed */
-     page_size_t(uint32 physical, uint32 logical, bool is_compressed) {
-       if (physical == 0) {
-         physical = PAGE_SIZE_DEF;
-       }
-       if (logical == 0) {
-         logical = PAGE_SIZE_DEF;
-       }
-    
-       m_physical = static_cast<unsigned>(physical);
-       m_logical = static_cast<unsigned>(logical);
-       m_is_compressed = static_cast<unsigned>(is_compressed);
-    
-       ut_ad(physical <= (1 << PAGE_SIZE_T_SIZE_BITS));
-       ut_ad(logical <= (1 << PAGE_SIZE_T_SIZE_BITS));
-    
-       ut_ad(ut_is_2pow(physical));
-       ut_ad(ut_is_2pow(logical));
-    
-       ut_ad(logical <= PAGE_SIZE_MAX);
-       ut_ad(logical >= physical);
-     }
-
-    /** Check whether the page is compressed on disk. */
-    inline bool is_compressed() const { return (m_is_compressed); }
-
-private:
-     /* For non compressed tablespaces, physical page size is equal to
-     the logical page size and the data is stored in buf_page_t::frame
-     (and is also always equal to univ_page_size (--innodb-page-size=)).
-    
-     For compressed tablespaces, physical page size is the compressed
-     page size as stored on disk and in buf_page_t::zip::data. The logical
-     page size is the uncompressed page size in memory - the size of
-     buf_page_t::frame (currently also always equal to univ_page_size
-     (--innodb-page-size=)). */
-    
-     /** Physical page size. */
-     unsigned m_physical : PAGE_SIZE_T_SIZE_BITS;
-    
-     /** Logical page size. */
-     unsigned m_logical : PAGE_SIZE_T_SIZE_BITS;
-    
-     /** Flag designating whether the physical page is compressed, which is
-     true IFF the whole tablespace where the page belongs is compressed. */
-     unsigned m_is_compressed : 1;
-
-};
-
 
 /** Page identifier. */
 class page_id_t {
@@ -340,16 +185,149 @@ enum buf_io_fix {
                    the flush_list */
 };
 
+enum latch_level_t {
+  SYNC_UNKNOWN = 0,
+
+  SYNC_MUTEX = 1,
+
+  RW_LOCK_SX,
+  RW_LOCK_X_WAIT,
+  RW_LOCK_S,
+  RW_LOCK_X,
+  //RW_LOCK_NOT_LOCKED,
+
+  SYNC_LOCK_FREE_HASH,
+
+  SYNC_MONITOR_MUTEX,
+
+  SYNC_ANY_LATCH,
+
+  SYNC_FIL_SHARD,
+
+  SYNC_DOUBLEWRITE,
+
+  SYNC_PAGE_ARCH_OPER,
+
+  SYNC_BUF_FLUSH_LIST,
+  SYNC_BUF_FLUSH_STATE,
+  SYNC_BUF_ZIP_HASH,
+  SYNC_BUF_FREE_LIST,
+  SYNC_BUF_ZIP_FREE,
+  SYNC_BUF_BLOCK,
+  SYNC_BUF_PAGE_HASH,
+  SYNC_BUF_LRU_LIST,
+  SYNC_BUF_CHUNKS,
+
+  SYNC_POOL,
+  SYNC_POOL_MANAGER,
+
+  SYNC_SEARCH_SYS,
+
+  SYNC_WORK_QUEUE,
+
+  SYNC_FTS_TOKENIZE,
+  SYNC_FTS_OPTIMIZE,
+  SYNC_FTS_BG_THREADS,
+  SYNC_FTS_CACHE_INIT,
+  SYNC_RECV,
+
+  SYNC_LOG_WRITER,
+  SYNC_LOG_WRITE_NOTIFIER,
+  SYNC_LOG_FLUSH_NOTIFIER,
+  SYNC_LOG_FLUSHER,
+  SYNC_LOG_CLOSER,
+  SYNC_LOG_CHECKPOINTER,
+  SYNC_LOG_SN,
+  SYNC_PAGE_ARCH,
+  SYNC_PAGE_ARCH_CLIENT,
+  SYNC_LOG_ARCH,
+
+  SYNC_PAGE_CLEANER,
+  SYNC_PURGE_QUEUE,
+  SYNC_TRX_SYS_HEADER,
+  SYNC_REC_LOCK,
+  SYNC_THREADS,
+  SYNC_TRX,
+  SYNC_TRX_SYS,
+  SYNC_LOCK_SYS,
+  SYNC_LOCK_WAIT_SYS,
+
+  SYNC_INDEX_ONLINE_LOG,
+
+  SYNC_IBUF_BITMAP,
+  SYNC_IBUF_BITMAP_MUTEX,
+  SYNC_IBUF_TREE_NODE,
+  SYNC_IBUF_TREE_NODE_NEW,
+  SYNC_IBUF_INDEX_TREE,
+
+  SYNC_IBUF_MUTEX,
+
+  SYNC_FSP_PAGE,
+  SYNC_FSP,
+  SYNC_TEMP_POOL_MANAGER,
+  SYNC_EXTERN_STORAGE,
+  SYNC_RSEG_ARRAY_HEADER,
+  SYNC_TRX_UNDO_PAGE,
+  SYNC_RSEG_HEADER,
+  SYNC_RSEG_HEADER_NEW,
+  SYNC_TEMP_SPACE_RSEG,
+  SYNC_UNDO_SPACE_RSEG,
+  SYNC_TRX_SYS_RSEG,
+  SYNC_TRX_UNDO,
+  SYNC_PURGE_LATCH,
+  SYNC_TREE_NODE,
+  SYNC_TREE_NODE_FROM_HASH,
+  SYNC_TREE_NODE_NEW,
+  SYNC_INDEX_TREE,
+  SYNC_RSEGS,
+  SYNC_UNDO_SPACES,
+
+  SYNC_PERSIST_DIRTY_TABLES,
+  SYNC_PERSIST_AUTOINC,
+
+  SYNC_IBUF_PESS_INSERT_MUTEX,
+  SYNC_IBUF_HEADER,
+  SYNC_DICT_HEADER,
+  SYNC_TABLE,
+  SYNC_STATS_AUTO_RECALC,
+  SYNC_DICT_AUTOINC_MUTEX,
+  SYNC_DICT,
+  SYNC_PARSER,
+  SYNC_FTS_CACHE,
+  SYNC_UNDO_DDL,
+
+  SYNC_DICT_OPERATION,
+
+  SYNC_TRX_I_S_LAST_READ,
+
+  SYNC_TRX_I_S_RWLOCK,
+
+  SYNC_RECV_WRITER,
+
+  /** Level is varying. Only used with buffer pool page locks, which
+  do not have a fixed level, but instead have their level set after
+  the page is locked; see e.g.  ibuf_bitmap_get_map_page(). */
+
+  SYNC_LEVEL_VARYING,
+
+  /** This can be used to suppress order checking. */
+  SYNC_NO_ORDER_CHECK,
+
+  /** Maximum level value */
+  SYNC_LEVEL_MAX = SYNC_NO_ORDER_CHECK
+};
+
+
 class buf_page_t {
 public:
     /** Page id. */
     page_id_t id;
 
     /** Page size. */
-    //page_size_t size;
+    page_size_t size;
 
     /** Count of how manyfold this block is currently bufferfixed. */
-    uint32 buf_fix_count;
+    atomic32_t buf_fix_count;
 
     /** type of pending I/O operation. */
     buf_io_fix io_fix;
@@ -387,6 +365,15 @@ public:
     lsn_t oldest_modification;
 
     UT_LIST_NODE_T(buf_page_t) LRU;
+    unsigned old:1; /*!< TRUE if the block is in the old blocks in buf_pool->LRU_old */
+    unsigned freed_page_clock:31;/*!< the value of
+					buf_pool->freed_page_clock
+					when this block was the last
+					time put to the head of the
+					LRU list; a thread is allowed
+					to read this for heuristic
+					purposes without holding any
+					mutex or latch */
 
     unsigned access_time; /*!< time of first access, or 0 if the block was never accessed in the buffer pool.
                                Protected by block mutex */
@@ -442,7 +429,7 @@ struct buf_block_t {
                                indexing */
   unsigned curr_left_side : 1; /*!< TRUE or FALSE in hash indexing */
 
-  spinlock_t lock;
+  mutex_t mutex;
 
   /** Get the page number of the current buffer block.
   @return page number of the current buffer block. */
@@ -490,7 +477,7 @@ struct buf_pool_stat_t {
                                 atomically. */
   uint32 n_pages_written;        /*!< number of write operations. Accessed
                                 atomically. */
-  uint32 n_pages_created;        /*!< number of pages created
+  atomic32_t n_pages_created;        /*!< number of pages created
                                 in the pool with no read. Accessed
                                 atomically. */
   uint32 n_ra_pages_read_rnd;    /*!< number of pages read in
@@ -526,7 +513,7 @@ enum buf_flush_t {
 struct buf_pool_t {
   spinlock_t    lock;      /*!< Buffer pool mutex of this instance */
 
-  os_mutex_t chunks_mutex;    /*!< protects (de)allocation of chunks:
+  spinlock_t chunks_mutex;    /*!< protects (de)allocation of chunks:
                                 - changes to chunks, n_chunks are performed
                                   while holding this latch,
                                 - reading buf_pool_should_madvise requires
@@ -583,7 +570,7 @@ struct buf_pool_t {
   buf_pool_stat_t old_stat; /*!< old statistics */
 
 
-  os_mutex_t flush_list_mutex; /*!< mutex protecting the
+  spinlock_t flush_list_mutex; /*!< mutex protecting the
                                 flush list access. This mutex
                                 protects flush_list, flush_rbt
                                 and bpage::list pointers when
@@ -752,7 +739,7 @@ buf_block_t* buf_page_create(
     @return pointer to the block or NULL */
 buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
     uint32 rw_latch, buf_block_t *guess, Page_fetch mode,
-    const char *file, uint32 line, mtr_t *mtr, bool dirty_with_no_latch);
+    const char *file, uint32 line, mtr_t *mtr);
 
 /** NOTE! The following macros should be used instead of buf_page_get_gen,
  to improve debugging. Only values RW_S_LATCH and RW_X_LATCH are allowed in LA! */
@@ -777,6 +764,9 @@ void buf_page_free_descriptor(buf_page_t *bpage);
 buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, const page_id_t &page_id);
 
 bool32 buf_page_in_file(const buf_page_t *bpage);
+bool32 buf_page_is_old(const buf_page_t* bpage);
+void buf_page_set_old(buf_page_t* bpage, bool32 old);
+
 enum buf_io_fix buf_page_get_io_fix(const buf_page_t *bpage);
 enum buf_page_state buf_page_get_state(const buf_page_t *bpage);
 
@@ -831,6 +821,7 @@ void buf_page_release(
 void buf_ptr_get_fsp_addr(const void *ptr, uint32 *space,  fil_addr_t *addr);
 
 void buf_block_set_state(buf_block_t *block, enum buf_page_state state);
+enum buf_page_state buf_block_get_state(const buf_block_t *block);
 spinlock_t *buf_page_get_mutex(const buf_page_t *bpage);
 
 

@@ -7,5 +7,9 @@
     <ClCompile Include="..\src\main\test.cpp" />
     <ClCompile Include="..\src\main\memory_test.cpp" />
     <ClCompile Include="..\src\main\server.cpp" />
+    <ClCompile Include="..\src\main\guc.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\main\guc.h" />
   </ItemGroup>
 </Project>

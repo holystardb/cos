@@ -46,6 +46,8 @@ date_t current_time();
 int32 get_time_zone();
 
 date_t current_monotonic_time();
+uint64 get_time_us(uint64 *tloc);
+uint32 get_time_ms(void);
 
 
 #ifdef __WIN__

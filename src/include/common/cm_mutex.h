@@ -47,9 +47,9 @@ void os_event_wait(os_event_t event, uint64 reset_sig_count = 0);
 int os_event_wait_time(os_event_t event, uint32 time, uint64 reset_sig_count = 0);
 
 void os_mutex_create(os_mutex_t *mutex);
-void os_mutex_lock(os_mutex_t *mutex);
-bool32 os_mutex_trylock(os_mutex_t *mutex);
-void os_mutex_unlock(os_mutex_t *mutex);
+void os_mutex_enter(os_mutex_t *mutex);
+bool32 os_mutex_tryenter(os_mutex_t *mutex);
+void os_mutex_exit(os_mutex_t *mutex);
 void os_mutex_destroy(os_mutex_t *mutex);
 
 
@@ -59,11 +59,13 @@ void os_mutex_destroy(os_mutex_t *mutex);
 ***********************************************************************************************/
 
 #define mutex_t               spinlock_t
-#define mutex_init            spin_lock_init
+#define mutex_create          spin_lock_init
+#define mutex_destroy         spin_lock_destroy
 #define mutex_own             spin_lock_own
 #define mutex_enter           spin_lock
-#define mutex_try_enter       spin_trylock
+#define mutex_tryenter        spin_trylock
 #define mutex_exit            spin_unlock
+#define mutex_stats_t         spinlock_stats_t
 
 #define SPINLOCK_MAGIC_N      979585UL
 
@@ -96,7 +98,11 @@ inline void spin_lock_init(spinlock_t *lock)
     lock->lock = 0;
 }
 
-inline void spin_lock(spinlock_t *lock, spinlock_stats_t *stats)
+inline void spin_lock_destroy(spinlock_t *lock)
+{
+}
+
+inline void spin_lock(spinlock_t *lock, spinlock_stats_t *stats = NULL)
 {
     uint32 i = 0;
     uint64 thread_yield_count = 0, spin_round_count = 0;

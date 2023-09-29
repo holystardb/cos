@@ -5,41 +5,33 @@ extern "C" {
 #endif
 
 #define MAX_LINE_LENGTH    1024
-    
+
 int read_line(FILE *fp, char *bp)
 {
     char c = '\0';
     int i = 0;
     bool32 isAssgin = 0;
     /* Read one line from the source file */
-    while (1)
-    {
+    while (1) {
         c = getc(fp);
-        if (c == '\n')
-        {
+        if (c == '\n') {
             break;
         }
 
-        if (c == '\r')
-        {
+        if (c == '\r') {
             continue;
         }
 
-        if (c == '=')
-        {
+        if (c == '=') {
             isAssgin = 1;
         }
 
-        if (feof(fp))
-        {
+        if (feof(fp)) {
             /* return FALSE on unexpected EOF */
-            if (isAssgin == 1)
-            {
+            if (isAssgin == 1) {
                 bp[i] = '\0';
                 return(1);
-            }
-            else
-            {
+            } else {
                 return(0);
             }
         }
@@ -416,6 +408,124 @@ unsigned long long write_private_profile_longlong(const char *section, const cha
     memset(valBuf, 0, 16);
     sprintf_s(valBuf, 16, "%llu", data);
     return write_private_profile_string(section, entry, valBuf, file_name);
+}
+
+
+//**************************************************************************************************************//
+
+config_lines* read_lines_from_config_file(char *config_file)
+{
+    errno_t err;
+    FILE *fp;
+    char *ep;;
+    char buff[MAX_LINE_LENGTH];
+    const int max_lines = 1024;
+    int n = 0;
+    config_lines* result;
+
+    result = (config_lines *)malloc(sizeof(config_lines) + max_lines * sizeof(char *));
+    result->num_lines = 0;
+    result->lines = (char **)((char *)result + sizeof(config_lines));
+
+    err = fopen_s(&fp, config_file, "r");
+    if (err != 0) {
+        exit(1);
+    }
+
+    for(;;) {
+        if (!read_line(fp, buff)) {
+            break;
+        }
+
+        ep = buff;
+        while (ep[0] == ' ' && strlen(ep) > 0)
+        {
+            ep++;
+        }
+
+        if (ep[0] != '\0') {
+            size_t len = strlen(ep) + 1;
+            result->lines[result->num_lines] = (char *)malloc(len);
+            strncpy_s(result->lines[result->num_lines], len, ep, len);
+            result->num_lines++;
+        }
+    }
+
+    result->lines[result->num_lines] = NULL;
+
+    fclose(fp);
+
+    return result;
+}
+
+bool32 parse_key_value_from_config_line(char *line, char **section, char **key, char **value)
+{
+    char *end, *tmp_key, *tmp_value;
+
+    *section = NULL;
+    *key = NULL;
+    *value = NULL;
+
+    if (strlen(line) <= 0) {
+        return false;
+    }
+
+    while (line[0] == ' ' && strlen(line) > 0) {
+        line++;
+    }
+
+    if (line[0] == '[') {  // section
+        line++;
+        end = strchr(line, ']');
+        if (end == NULL) {
+            return false;
+        }
+        end[0] = '\0';
+        *section = line;
+        return true;
+    }
+
+    tmp_key = line;
+    end = tmp_value = strchr(line, '=');   /* Parse out the equal sign */
+
+    if (end == NULL) {  // only key
+        end = strchr(line, '#');
+        if (end == NULL) {
+            end = line + strlen(line);
+        }
+        end--;
+        while (end[0] == ' ' && end > tmp_key) {
+            end[0] = '\0';
+            end--;
+        }
+        *key = line;
+        return true;
+    }
+
+    end--;
+    while (end[0] == ' ' && end > tmp_key) {
+        end[0] = '\0';
+        end--;
+    }
+
+    tmp_value[0] = '\0';
+    tmp_value++;
+    while (tmp_value[0] == ' ' && strlen(tmp_value) > 0) {
+        tmp_value++;
+    }
+
+    end = tmp_value;
+    while ((end[0] != '#' && end[0] != ' ') && strlen(end) > 0) {
+        end++;
+    }
+    if (end - tmp_value < strlen(tmp_value)) {
+        end[0] = '\0';
+    }
+
+    *key = tmp_key;
+    *value = tmp_value;
+
+    return true;
 }
 
 #ifdef __cplusplus

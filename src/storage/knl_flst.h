@@ -2,6 +2,7 @@
 #define _KNL_FLIST_H
 
 #include "knl_mtr.h"
+#include "knl_fsp.h"
 
 /* The C 'types' of base node and list node:
 these should be used to write self-documenting code.

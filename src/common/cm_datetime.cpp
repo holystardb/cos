@@ -4,6 +4,41 @@
 extern "C" {
 #endif
 
+
+/**********************************************************//**
+Returns the number of microseconds since epoch.
+Similar to time(3), the return value is also stored in *tloc, provided that tloc is non-NULL.
+@return us since epoch */
+uint64 get_time_us(uint64 *tloc) /*!< out: us since epoch, if non-NULL */
+{
+    struct timeval tv;
+    uint64 us;
+
+    get_time_of_day(&tv);
+
+    us = static_cast<uint64>(tv.tv_sec) * 1000000 + tv.tv_usec;
+
+    if (tloc != NULL) {
+        *tloc = us;
+    }
+
+    return(us);
+}
+
+/**********************************************************//**
+Returns the number of milliseconds since some epoch.
+The value may wrap around.  It should only be used for heuristic purposes.
+@return ms since epoch */
+uint32 get_time_ms(void)
+{
+    struct timeval	tv;
+
+    get_time_of_day(&tv);
+
+    return((uint32) tv.tv_sec * 1000 + tv.tv_usec / 1000);
+}
+
+
 date_t current_utc_time()
 {
     date_t         dt = UNIX_EPOCH;

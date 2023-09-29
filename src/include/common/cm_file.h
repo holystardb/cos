@@ -15,7 +15,7 @@ extern "C" {
 
 /* Options for file_create */
 #define OS_FILE_AIO                         1
-#define OS_FILE_NORMAL                      2
+#define OS_FILE_SYNC                        2
 
 /* Error codes from os_file_get_last_error */
 #define OS_FILE_NOT_FOUND                   1
@@ -26,6 +26,8 @@ extern "C" {
 #define OS_FILE_ACCESS_DENIED               6
 #define OS_FILE_PATH_NOT_FOUND              7
 
+#define OS_FILE_READ                        10
+#define OS_FILE_WRITE                       11
 
 #ifdef __WIN__
 #define os_file_t                           HANDLE
@@ -46,7 +48,7 @@ bool32 os_fdatasync_file(os_file_t file);
 bool32 os_chmod_file(os_file_t file, uint32 perm);
 bool32 os_truncate_file(os_file_t file, uint64 offset);
 uint32 os_file_get_last_error();
-bool32 os_file_handle_error(os_file_t file,         char *name);
+bool32 os_file_handle_error(os_file_t file, char *name);
 bool32 os_file_get_size(os_file_t file, uint64 *size);
 bool32 os_file_extend(char *file_name, os_file_t file, uint64 extend_size);
 

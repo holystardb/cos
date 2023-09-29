@@ -1,5 +1,9 @@
 #include "knl_mtr.h"
 #include "cm_dbug.h"
+#include "cm_util.h"
+#include "knl_buf.h"
+#include "knl_page.h"
+#include "knl_server.h"
 
 #define MTR_POOL_COUNT          16
 memory_pool_t           mtr_pools[MTR_POOL_COUNT];
@@ -206,6 +210,66 @@ void mlog_close(mtr_t *mtr, byte *ptr)
 {
 }
 
+byte* mlog_write_initial_log_record_fast(
+    const byte* ptr,    /*!< in: pointer to (inside) a buffer frame holding the file page where modification is made */
+    mlog_id_t   type,   /*!< in: log item type: MLOG_1BYTE, ... */
+    byte*       log_ptr,/*!< in: pointer to mtr log which has been opened */
+    mtr_t*      mtr)    /*!< in: mtr */
+{
+    return NULL;
+}
+
+/********************************************************//**
+Writes the initial part of a log record consisting of one-byte item
+type and four-byte space and page numbers. Also pushes info
+to the mtr memo that a buffer page has been modified. */
+void mlog_write_initial_log_record(
+	const byte*	ptr,	/*!< in: pointer to (inside) a buffer
+				frame holding the file page where
+				modification is made */
+	mlog_id_t	type,	/*!< in: log item type: MLOG_1BYTE, ... */
+	mtr_t*		mtr)	/*!< in: mini-transaction handle */
+{
+	byte*	log_ptr;
+
+	ut_ad(type <= MLOG_BIGGEST_TYPE);
+	ut_ad(type > MLOG_8BYTES);
+
+	log_ptr = mlog_open(mtr, 11);
+
+	/* If no logging is requested, we may return now */
+	if (log_ptr == NULL) {
+
+		return;
+	}
+
+	log_ptr = mlog_write_initial_log_record_fast(ptr, type, log_ptr, mtr);
+
+	mlog_close(mtr, log_ptr);
+}
+
+
+/** Read 1 to 4 bytes from a file page buffered in the buffer pool.
+@param[in] ptr pointer where to read
+@param[in] type MLOG_1BYTE, MLOG_2BYTES, or MLOG_4BYTES
+@return value read */
+uint32 mlog_read_uint32(const byte* ptr, mlog_id_t type)
+{
+    switch (type) {
+    case MLOG_1BYTE:
+        return(mach_read_from_1(ptr));
+    case MLOG_2BYTES:
+        return(mach_read_from_2(ptr));
+    case MLOG_4BYTES:
+        return(mach_read_from_4(ptr));
+    default:
+        break;
+    }
+
+    ut_error;
+    return(0);
+}
+
 /********************************************************//**
 Writes 1, 2 or 4 bytes to a file page. Writes the corresponding log
 record to the mini-transaction log if mtr is not NULL. */
@@ -266,7 +330,7 @@ void mlog_write_uint64(
 			mach_write_to_2(log_ptr, page_offset(ptr));
 			log_ptr += 2;
 
-			log_ptr += mach_u64_write_compressed(log_ptr, val);
+			log_ptr += mach_ull_write_compressed(log_ptr, val);
 
 			mlog_close(mtr, log_ptr);
 		}
@@ -291,11 +355,25 @@ void mlog_write_string(
 }
 
 /********************************************************//**
+Catenates n bytes to the mtr log. */
+void mlog_catenate_string(
+    mtr_t*      mtr,    /*!< in: mtr */
+    const byte* str,    /*!< in: string to write */
+    uint32      len)    /*!< in: string length */
+{
+//    if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
+//        return;
+//    }
+//    mtr->get_log()->push(str, ib_uint32_t(len));
+}
+
+
+/********************************************************//**
 Logs a write of a string to a file page buffered in the buffer pool.
 Writes the corresponding log record to the mini-transaction log. */
 void mlog_log_string(
 	byte*	ptr,	/*!< in: pointer written to */
-	ulint	len,	/*!< in: string length */
+	uint32	len,	/*!< in: string length */
 	mtr_t*	mtr)	/*!< in: mini-transaction handle */
 {
 	byte*	log_ptr;
@@ -321,4 +399,71 @@ void mlog_log_string(
 
 	mlog_catenate_string(mtr, ptr, len);
 }
+
+
+/***************************************************//**
+Checks if a mini-transaction is dirtying a clean page.
+@return TRUE if the mtr is dirtying a clean page. */
+bool32 mtr_block_dirtied(const buf_block_t *block) /*!< in: block being x-fixed */
+{
+    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
+    ut_ad(block->page.buf_fix_count > 0);
+
+    /* It is OK to read oldest_modification because no
+    other thread can be performing a write of it and it
+    is only during write that the value is reset to 0. */
+    return(block->page.oldest_modification == 0);
+}
+
+void mtr_t::memo_push(void* object, uint32 type) /*!< in: object type: MTR_MEMO_S_LOCK, ... */
+{
+	mtr_memo_slot_t* slot;
+
+	ut_ad(object);
+	ut_ad(type >= MTR_MEMO_PAGE_S_FIX);
+	ut_ad(type <= MTR_MEMO_X_LOCK);
+	ut_ad(magic_n == MTR_MAGIC_N);
+	ut_ad(state == MTR_ACTIVE);
+
+	/* If this mtr has x-fixed a clean page then we set
+	the made_dirty flag. This tells us if we need to
+	grab log_flush_order_mutex at mtr_commit so that we
+	can insert the dirtied page to the flush list. */
+	if (type == MTR_MEMO_PAGE_X_FIX && !made_dirty) {
+		made_dirty = mtr_block_dirtied((const buf_block_t*) object);
+	}
+
+	slot = (mtr_memo_slot_t*) dyn_array_push(&memo, sizeof *slot);
+	slot->object = object;
+	slot->type = type;
+}
+
+
+void mtr_t::s_lock(rw_lock_t* lock, const char* file, uint32 line)
+{
+    rw_lock_s_lock(lock);
+    memo_push(lock, MTR_MEMO_S_LOCK);
+}
+
+void mtr_t::x_lock(rw_lock_t* lock, const char* file, uint32 line)
+{
+    rw_lock_x_lock(lock);
+    memo_push(lock, MTR_MEMO_X_LOCK);
+}
+
+/********************************************************//**
+Reads 1 - 4 bytes from a file page buffered in the buffer pool.
+@return	value read */
+uint32 mtr_read_uint(
+	const byte*	ptr,	/*!< in: pointer from where to read */
+	mlog_id_t	type,	/*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
+	mtr_t*		mtr)    /*!< in: mini-transaction handle */
+{
+	ut_ad(mtr->state == MTR_ACTIVE);
+	ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_S_FIX)
+	      || mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
+
+	return mlog_read_uint32(ptr, type);
+}
+
 

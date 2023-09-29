@@ -46,6 +46,9 @@ typedef struct st_memory_pool {
     UT_LIST_BASE_NODE_T(memory_page_t) context_used_pages;
 } memory_pool_t;
 
+#define MEM_POOL_PAGE_UNLIMITED        0xFFFFFFFF
+
+
 #define MEM_BLOCK_FREE_LIST_SIZE       8
 #define MEM_BLOCK_MIN_SIZE             64
 #define MEM_BLOCK_MAX_SIZE             8192

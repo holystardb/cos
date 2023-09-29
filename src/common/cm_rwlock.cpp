@@ -586,14 +586,14 @@ static void sync_print_wait_info(FILE *file) {
 static void rw_lock_debug_mutex_enter()
 {
     for (;;) {
-        if (os_mutex_trylock(&rw_lock_debug_mutex)) {
+        if (os_mutex_tryenter(&rw_lock_debug_mutex)) {
             return;
         }
 
         os_event_reset(rw_lock_debug_event);
         rw_lock_debug_waiters = TRUE;
 
-        if (os_mutex_trylock(&rw_lock_debug_mutex)) {
+        if (os_mutex_tryenter(&rw_lock_debug_mutex)) {
             return;
         }
 
@@ -603,7 +603,7 @@ static void rw_lock_debug_mutex_enter()
 
 static void rw_lock_debug_mutex_exit()
 {
-    os_mutex_unlock(&rw_lock_debug_mutex);
+    os_mutex_exit(&rw_lock_debug_mutex);
 
     if (rw_lock_debug_waiters) {
         rw_lock_debug_waiters = FALSE;

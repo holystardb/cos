@@ -4,6 +4,7 @@
 #include "cm_type.h"
 #include "cm_list.h"
 #include "cm_memory.h"
+#include "cm_rwlock.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,12 +34,33 @@ typedef struct st_dyn_array{
 
 /* Types for the mlock objects to store in the mtr memo; NOTE that the
 first 3 values must be RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH */
-#define	MTR_MEMO_PAGE_S_FIX	RW_S_LATCH
-#define	MTR_MEMO_PAGE_X_FIX	RW_X_LATCH
-#define	MTR_MEMO_BUF_FIX	RW_NO_LATCH
-#define MTR_MEMO_MODIFY		54
-#define	MTR_MEMO_S_LOCK		55
-#define	MTR_MEMO_X_LOCK		56
+//#define MTR_MEMO_PAGE_S_FIX     RW_S_LATCH
+//#define MTR_MEMO_PAGE_X_FIX     RW_X_LATCH
+//#define MTR_MEMO_PAGE_SX_FIX    RW_SX_LATCH
+//#define MTR_MEMO_BUF_FIX        RW_NO_LATCH
+//#define MTR_MEMO_MODIFY         32
+//#define MTR_MEMO_S_LOCK         64
+//#define MTR_MEMO_X_LOCK         128
+
+enum mtr_memo_type_t {
+  MTR_MEMO_PAGE_S_FIX = RW_S_LATCH,
+
+  MTR_MEMO_PAGE_X_FIX = RW_X_LATCH,
+
+  MTR_MEMO_PAGE_SX_FIX = RW_SX_LATCH,
+
+  MTR_MEMO_BUF_FIX = RW_NO_LATCH,
+
+#ifdef UNIV_DEBUG
+  MTR_MEMO_MODIFY = 32,
+#endif /* UNIV_DEBUG */
+
+  MTR_MEMO_S_LOCK = 64,
+
+  MTR_MEMO_X_LOCK = 128,
+
+  MTR_MEMO_SX_LOCK = 256
+};
 
 
 
@@ -248,22 +270,43 @@ enum mtr_state_t {
 
 /* Mini-transaction handle and buffer */
 typedef struct st_mtr{
-    uint32 state; /* MTR_ACTIVE, MTR_COMMITTING, MTR_COMMITTED */
+
     dyn_array_t memo; /* memo stack for locks etc. */
     dyn_array_t log; /* mini-transaction log */
-    bool32 modifications; /* TRUE if the mtr made modifications to buffer pool pages */
+    unsigned inside_ibuf:1; /*!< TRUE if inside ibuf changes */
+    unsigned modifications:1; /*!< TRUE if the mini-transaction modified buffer pool pages */
+    unsigned made_dirty:1; /*!< TRUE if mtr has made at least one buffer pool page dirty */
     uint32 n_log_recs; /* count of how many page initial log records have been written to the mtr log */
     uint32 log_mode; /* specifies which operations should be logged; default value MTR_LOG_ALL */
     uint64 start_lsn; /* start lsn of the possible log entry for this mtr */
     uint64 end_lsn; /* end lsn of the possible log entry for this mtr */
     uint32 magic_n;
+    uint32 state; /* MTR_ACTIVE, MTR_COMMITTING, MTR_COMMITTED */
 
     // return true if the mini-transaction is active */
     bool32 is_active()
     {
         return (state == MTR_STATE_ACTIVE);
     }
+
+    void memo_push(void* object, uint32 type);
+
+    void s_lock(rw_lock_t* lock, const char* file, uint32 line);
+    void x_lock(rw_lock_t* lock, const char* file, uint32 line);
+
 } mtr_t;
+
+#define MTR_MAGIC_N      54551
+#define MTR_ACTIVE       12231
+
+/** Mini-transaction memo stack slot. */
+typedef struct mtr_memo_slot_t{
+    uint32 type;  /*!< type of the stored object (MTR_MEMO_S_LOCK, ...) */
+    void* object;  /*!< pointer to the object */
+} mtr_memo_slot_t;
+
+
+
 
 mtr_t* mtr_start(mtr_t *mtr);
 void mtr_commit(mtr_t *mtr);
@@ -290,8 +333,33 @@ void mlog_write_string(
 
 void mlog_log_string(
     byte*   ptr,    /*!< in: pointer written to */
-    ulint   len,    /*!< in: string length */
+    uint32   len,    /*!< in: string length */
     mtr_t*  mtr);    /*!< in: mini-transaction handle */
+
+uint32 mlog_read_uint32(const byte* ptr, mlog_id_t type);
+
+/********************************************************//**
+Writes initial part of a log record consisting of one-byte item
+type and four-byte space and page numbers. */
+void mlog_write_initial_log_record(
+	const byte*	ptr,	/*!< in: pointer to (inside) a buffer
+				frame holding the file page where
+				modification is made */
+	mlog_id_t	type,	/*!< in: log item type: MLOG_1BYTE, ... */
+	mtr_t*		mtr);	/*!< in: mini-transaction handle */
+
+uint32 mtr_read_uint(
+	const byte*	ptr,	/*!< in: pointer from where to read */
+	mlog_id_t	type,	/*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
+	mtr_t*		mtr);
+				/*!< in: mini-transaction handle */
+
+
+/** Check if memo contains the given page.
+@return TRUE if contains */
+#define mtr_memo_contains_page(m, p, t)     FALSE
+//        (m)->memo_contains_page_flagged((p), (t))
+
 
 #ifdef __cplusplus
 }

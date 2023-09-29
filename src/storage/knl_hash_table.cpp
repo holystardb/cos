@@ -6,8 +6,8 @@ HASH_TABLE* HASH_TABLE_CREATE(uint32 n) /*!< in: number of array cells */
 {
     HASH_TABLE *table;
 
-    table = (HASH_TABLE*)malloc(sizeof(HASH_TABLE) + sizeof(HASH_CELL) * n);
-    table->array = (HASH_CELL*)((char *)table + sizeof(HASH_TABLE));
+    table = (HASH_TABLE*)malloc(sizeof(HASH_TABLE) + sizeof(HASH_CELL_T) * n);
+    table->array = (HASH_CELL_T*)((char *)table + sizeof(HASH_TABLE));
     table->n_cells = n;
 
     table->magic_n = HASH_TABLE_MAGIC_N;
@@ -21,15 +21,15 @@ void HASH_TABLE_FREE(HASH_TABLE *table)
     free(table);
 }
 
-HASH_CELL* hash_get_nth_cell(HASH_TABLE *table, uint32 n)
+HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE *table, uint32 n)
 {
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
     ut_ad(n < table->n_cells);
 
-    return(table->array + n);
+    return (table->array + n);
 }
 
-uint32 hash_calc_hash(HASH_TABLE *table, uint32 fold)
+uint32 HASH_CALC_HASH(HASH_TABLE *table, uint32 fold)
 {
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
 #define UT_HASH_RANDOM_MASK2       1653893711
@@ -44,7 +44,7 @@ uint32 hash_get_sync_obj_index(HASH_TABLE *table, uint32 fold)
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
     ut_ad(table->type != HASH_TABLE_SYNC_NONE);
     ut_ad(ut_is_2pow(table->n_sync_obj));
-    return (ut_2pow_remainder(hash_calc_hash(table, fold), table->n_sync_obj));
+    return (ut_2pow_remainder(HASH_CALC_HASH(table, fold), table->n_sync_obj));
 }
 
 /** Gets the nth mutex in a hash table. */
@@ -59,7 +59,7 @@ mutex_t *hash_get_nth_mutex(HASH_TABLE *table, uint32 i)
 }
 
 /** Gets the mutex for a fold value in a hash table. */
-mutex_t *hash_get_mutex(HASH_TABLE *table, uint32 fold)
+mutex_t *HASH_GET_MUTEX(HASH_TABLE *table, uint32 fold)
 {
     uint32 i;
 

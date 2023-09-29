@@ -1,4 +1,5 @@
 #include "knl_buf_flush.h"
+#include "knl_buf.h"
 
 /** This function picks up a single page from the tail of the LRU list,
 flushes it (if it is dirty), removes it from page_hash and LRU list and puts it on the free list.

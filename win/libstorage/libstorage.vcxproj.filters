@@ -10,6 +10,9 @@
     <ClCompile Include="..\..\src\storage\knl_hash_table.cpp" />
     <ClCompile Include="..\..\src\storage\knl_fsp.cpp" />
     <ClCompile Include="..\..\src\storage\knl_flst.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_page.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_lock_rec_hash.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_dict.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\storage\knl_server.h" />
@@ -21,5 +24,9 @@
     <ClInclude Include="..\..\src\storage\knl_hash_table.h" />
     <ClInclude Include="..\..\src\storage\knl_fsp.h" />
     <ClInclude Include="..\..\src\storage\knl_flst.h" />
+    <ClInclude Include="..\..\src\storage\knl_page.h" />
+    <ClInclude Include="..\..\src\storage\knl_page_size.h" />
+    <ClInclude Include="..\..\src\storage\knl_lock_rec_hash.h" />
+    <ClInclude Include="..\..\src\storage\knl_dict.h" />
   </ItemGroup>
 </Project>

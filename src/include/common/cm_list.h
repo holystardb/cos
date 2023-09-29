@@ -54,6 +54,36 @@ struct {\
 	}\
 }\
 
+#define UT_LIST_ADD_AFTER(NAME, BASE, POS_ELEM, ELEM)\
+{\
+    ut_ad((POS_ELEM) != NULL);\
+    ut_ad((ELEM) != NULL);\
+    ut_ad((POS_ELEM) != (ELEM));\
+    ((ELEM)->NAME).next = ((POS_ELEM)->NAME).next;\
+    ((POS_ELEM)->NAME).next = (ELEM);\
+    ((ELEM)->NAME).prev = (POS_ELEM);\
+    if ((BASE).end == (POS_ELEM)) {\
+        (BASE).end = (ELEM);\
+    }\
+    ((BASE).count)++;\
+}\
+
+#define UT_LIST_ADD_BEFORE(NAME, BASE, POS_ELEM, ELEM)\
+{\
+    ut_ad((POS_ELEM) != NULL);\
+    ut_ad((ELEM) != NULL);\
+    ut_ad((POS_ELEM) != (ELEM));\
+    ((ELEM)->NAME).next = (POS_ELEM);\
+    ((ELEM)->NAME).prev = ((POS_ELEM)->NAME).prev;\
+    if ((BASE).start != (POS_ELEM)) {\
+        ((((POS_ELEM)->NAME).prev)->NAME).next = (ELEM);\
+        ((POS_ELEM)->NAME).prev = (ELEM);\
+    } else {\
+        (BASE).start = (ELEM);\
+    }\
+    ((BASE).count)++;\
+}\
+
 #define UT_LIST_REMOVE(NAME, BASE, N)\
 {\
 	((BASE).count)--;\
