@@ -10,8 +10,6 @@
 extern "C" {
 #endif
 
-#define MEM_PAGE_DATA_PTR(page)    ((char *)page + ut_align8(sizeof(memory_page_t)))
-
 typedef struct st_memory_page {
     UT_LIST_NODE_T(struct st_memory_page) list_node;
 } memory_page_t;
@@ -48,7 +46,6 @@ typedef struct st_memory_pool {
 
 #define MEM_POOL_PAGE_UNLIMITED        0xFFFFFFFF
 
-
 #define MEM_BLOCK_FREE_LIST_SIZE       8
 #define MEM_BLOCK_MIN_SIZE             64
 #define MEM_BLOCK_MAX_SIZE             8192
@@ -79,31 +76,43 @@ struct st_memory_context {
     UT_LIST_BASE_NODE_T(memory_page_t) used_block_pages;
 };
 
-memory_area_t* marea_create(uint64 mem_size, bool32 is_extend);
-void marea_destroy(memory_area_t* area);
-memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size);
-void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size);
+extern memory_area_t* marea_create(uint64 mem_size, bool32 is_extend);
+extern void marea_destroy(memory_area_t* area);
+extern memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size);
+extern void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size);
 
-memory_pool_t* mpool_create(memory_area_t *area, uint32 local_page_count, uint32 max_page_count, uint32 page_size);
-void mpool_destroy(memory_pool_t *pool);
-memory_page_t* mpool_alloc_page(memory_pool_t *pool);
-void mpool_free_page(memory_pool_t *pool, memory_page_t *page);
+extern memory_pool_t* mpool_create(memory_area_t *area, uint32 local_page_count, uint32 max_page_count, uint32 page_size);
+extern void mpool_destroy(memory_pool_t *pool);
+extern memory_page_t* mpool_alloc_page(memory_pool_t *pool);
+extern void mpool_free_page(memory_pool_t *pool, memory_page_t *page);
 
-memory_context_t* mcontext_create(memory_pool_t *pool);
-void mcontext_destroy(memory_context_t *context);
-bool32 mcontext_clean(memory_context_t *context);
-void* mcontext_push(memory_context_t *context, uint32 size);
-void mcontext_pop(memory_context_t *context, void *ptr, uint32 size);
-void mcontext_pop2(memory_context_t *context, void *ptr);
-void* mcontext_alloc(memory_context_t *context, uint32 size);
-void* mcontext_realloc(memory_context_t *context, void *old_ptr, uint32 size);
-void mcontext_free(memory_context_t *context, void *ptr);
+extern memory_context_t* mcontext_create(memory_pool_t *pool);
+extern void mcontext_destroy(memory_context_t *context);
+extern bool32 mcontext_clean(memory_context_t *context);
+extern void* mcontext_push(memory_context_t *context, uint32 size);
+extern void mcontext_pop(memory_context_t *context, void *ptr, uint32 size);
+extern void mcontext_pop2(memory_context_t *context, void *ptr);
+extern void* mcontext_alloc(memory_context_t *context, uint32 size);
+extern void* mcontext_realloc(memory_context_t *context, void *old_ptr, uint32 size);
+extern void mcontext_free(memory_context_t *context, void *ptr);
+
+extern void *os_mem_alloc_large(uint64 *n);
+extern void os_mem_free_large(void *ptr, uint64 size);
+
+/* Advices the OS that this chunk should (not) be dumped to a core file. */
+extern bool32 madvise_dump(char *mem_ptr, uint64 mem_size);
+extern bool32 madvise_dont_dump(char *mem_ptr, uint64 mem_size);
+
+
 
 //-------------------------------------------------------------------
 
-extern memory_area_t* system_memory_area;
-extern memory_pool_t* system_memory_pool;
-extern memory_context_t* system_memory_context;
+#define MEM_PAGE_DATA_PTR(page)  ((char *)page + MemoryPageHeaderSize)
+
+extern uint32 MemoryContextHeaderSize;
+extern uint32 MemoryPageHeaderSize;
+extern uint32 MemoryBlockHeaderSize;
+extern uint32 MemoryBufHeaderSize;
 
 #define ut_malloc(size)         malloc(size)
 #define ut_free(size)           free(size)
@@ -119,18 +128,16 @@ extern memory_context_t* system_memory_context;
 #endif
 #define my_alloca(size)         alloca((size_t)(size))
 
+/*-------------------------------------------------------------------*/
 
-void *os_mem_alloc_large(uint64 *n);
-void os_mem_free_large(void *ptr, uint64 size);
-
-/* Advices the OS that this chunk should (not) be dumped to a core file. */
-bool32 madvise_dump(char *mem_ptr, uint64 mem_size);
-bool32 madvise_dont_dump(char *mem_ptr, uint64 mem_size);
-
-
-extern THREAD_LOCAL memory_pool_t     *current_memory_pool;
 extern THREAD_LOCAL memory_context_t  *current_memory_context;
 
+inline memory_context_t* memory_context_switch_to(memory_context_t *context)
+{
+    memory_context_t *old = current_memory_context;
+    current_memory_context = context;
+    return old;
+}
 
 #ifdef __cplusplus
 }

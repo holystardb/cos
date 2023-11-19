@@ -109,6 +109,14 @@ void* ut_align_down(
     void* ptr,            /* in: pointer */
     uint32 align_no);     /* in: align by this number */
 
+uint64 ut_uint64_align_down(
+    uint64 n, //in: number to be rounded
+    uint32 align_no); //in: align by this number which must be a power of 2
+
+uint64 ut_uint64_align_up(
+    uint64 n, //in: number to be rounded
+    uint32 align_no); //in: align by this number which must be a power of 2
+
 bool32 ut_bit_get_nth(
     uint32 a,    /* in: uint32 */
     uint32 n);   /* in: nth bit requested */

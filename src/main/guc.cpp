@@ -114,7 +114,7 @@ static config_int ConfigureNamesInt[] =
          "thread count of thread pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT
         },
-        &g_thread_pool_size, 16, 1, 1024,
+        &g_thread_pool_size, 16, 1, 4096,
         NULL, NULL, NULL
     },
     {
@@ -226,7 +226,7 @@ static config_int ConfigureNamesInt[] =
          "count of data buffer pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT, 0
         },
-        &g_buffer_pool_instances, 4, 1, 128,
+        &g_buffer_pool_instances, 1, 1, 512,
         NULL, NULL, NULL
     },
     {

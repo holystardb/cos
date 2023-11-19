@@ -353,3 +353,96 @@ void buf_LRU_old_adjust_len(buf_pool_t* buf_pool)
 	}
 }
 
+
+/******************************************************************//**
+Returns a free block from the buf_pool. The block is taken off the free list.
+If free list is empty, blocks are moved from the end of the LRU list to the free list. */
+buf_block_t* buf_LRU_get_free_block(buf_pool_t *buf_pool)
+{
+    buf_block_t *block = NULL;
+    bool         freed = false;
+    uint32       n_iterations = 0;
+    uint32       flush_failures = 0;
+
+    //MONITOR_INC(MONITOR_LRU_GET_FREE_SEARCH);
+
+loop:
+
+    /* If there is a block in the free list, take it */
+    block = buf_LRU_get_free_only(buf_pool);
+    if (block != NULL) {
+        ut_ad(buf_pool_from_block(block) == buf_pool);
+        //block->skip_flush_check = false;
+        //block->page.flush_observer = NULL;
+        return(block);
+    }
+
+    //MONITOR_INC(MONITOR_LRU_GET_FREE_LOOPS );
+
+    freed = false;
+    os_rmb;
+    if (buf_pool->try_LRU_scan || n_iterations > 0) {
+        /* If no block was in the free list,
+         * search from the end of the LRU list and try to free a block there.
+         * If we are doing for the first time we'll scan only tail of the LRU list
+         * otherwise we scan the whole LRU list.
+         */
+        freed = buf_LRU_scan_and_free_block(buf_pool, n_iterations > 0);
+        if (!freed && n_iterations == 0) {
+            /* Tell other threads that there is no point in scanning the LRU list.
+               This flag is set to TRUE again when we flush a batch from this buffer pool. */
+            buf_pool->try_LRU_scan = FALSE;
+            os_rmb;
+        }
+    }
+
+    if (freed) {
+        goto loop;
+    }
+    /*
+    if (n_iterations > 20 && srv_buf_pool_old_size == srv_buf_pool_size) {
+        LOG_PRINT_WARNING("Difficult to find free blocks in the buffer pool(%lu search iterations)! "
+            "%lu failed attempts to flush a page! Consider increasing the buffer pool size."
+            "It is also possible that in your fsync is very slow."
+            "Look at the number of fsyncs in diagnostic info below."
+            " Pending flushes (fsync) log: %lu "
+            " buffer pool: %lu "
+            " OS file reads: %lu "
+            " OS file writes: %lu "
+            " OS fsyncs: %lu",
+            n_iterations, flush_failures,
+            fil_n_pending_log_flushes, fil_n_pending_tablespace_flushes,
+            os_n_file_reads, os_n_file_writes, os_n_fsyncs);
+
+        os_event_set(lock_sys->timeout_event);
+    }
+    */
+    /* If we have scanned the whole LRU and still are unable to find a free block
+       then we should sleep here to let the page_cleaner do an LRU batch for us. */
+
+    //if (!srv_read_only_mode) {
+    //    os_event_set(buf_flush_event);
+    //}
+
+    if (n_iterations > 1) {
+        //MONITOR_INC( MONITOR_LRU_GET_FREE_WAITS );
+        os_thread_sleep(10000);
+    }
+
+    /* No free block was found: try to flush the LRU list.
+     * This call will flush one page from the LRU and put it on the free list.
+     * That means that the free block is up for grabs for all user threads.
+     */
+
+    //if (!buf_flush_single_page_from_LRU(buf_pool)) {
+        //MONITOR_INC(MONITOR_LRU_SINGLE_FLUSH_FAILURE_COUNT);
+    //    ++flush_failures;
+    //}
+
+    srv_stats.buf_pool_wait_free.add(n_iterations, 1);
+
+    n_iterations++;
+
+    goto loop;
+}
+

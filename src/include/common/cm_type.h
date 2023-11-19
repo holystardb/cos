@@ -47,6 +47,9 @@ extern "C" {
 
 #define likely(x)           __builtin_expect((x),1)
 #define unlikely(x)         __builtin_expect((x),0)
+#define LIKELY(x)           __builtin_expect((x),1)
+#define UNLIKELY(x)         __builtin_expect((x),0)
+
 
 /* Compile-time constant of the given array's size. */
 #define UT_ARR_SIZE(a)      (sizeof(a) / sizeof((a)[0]))
@@ -228,6 +231,13 @@ typedef unsigned char*          PUCHAR;
 // Definition of the null string (a null pointer of type char *), used in some of our string handling code.
 // New code should use nullptr instead.
 #define NullS                  (char *)0
+
+#ifdef __WIN__
+#define SRV_PATH_SEPARATOR     '\\'
+#else
+#define SRV_PATH_SEPARATOR     '/'
+#endif
+
 
 /***********************************************************************************************
 *                                      callback function                                       *

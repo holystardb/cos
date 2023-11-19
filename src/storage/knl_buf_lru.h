@@ -9,6 +9,7 @@
 
 
 buf_block_t* buf_LRU_get_free_only(buf_pool_t *buf_pool);
+buf_block_t* buf_LRU_get_free_block(buf_pool_t *buf_pool);
 
 
 

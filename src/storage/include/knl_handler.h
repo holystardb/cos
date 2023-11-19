@@ -2,6 +2,7 @@
 #define _KNL_HANDLER_H
 
 #include "cm_type.h"
+#include "cm_memory.h"
 
 enum ha_rkey_function {
   HA_READ_KEY_EXACT,			/* Find first record else error */
@@ -70,8 +71,8 @@ public:
 };
 
 
-bool32 knl_server_init(void);
-
+extern bool32 knl_server_init(void);
+extern bool32 knl_server_start(memory_area_t* marea);
 
 
 #endif  /* _KNL_HANDLER_H */

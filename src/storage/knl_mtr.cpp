@@ -4,23 +4,27 @@
 #include "knl_buf.h"
 #include "knl_page.h"
 #include "knl_server.h"
+#include "knl_log.h"
+#include "knl_fsp.h"
+#include "knl_dblwrite.h"
 
-#define MTR_POOL_COUNT          16
-memory_pool_t           mtr_pools[MTR_POOL_COUNT];
 
-static volatile uint32  n_mtr_pools_index = 0;
+#define MTR_MEM_POOL_COUNT    32
+memory_pool_t    *mtr_mem_pools[MTR_MEM_POOL_COUNT];
+
+static atomic32_t  n_mtr_mem_pools_index = 0;
 
 bool32 mtr_init(memory_area_t *area)
 {
-    uint32 local_page_count = 128;  // 1MB
+    uint32 page_size = DYN_ARRAY_DATA_SIZE * 16; // 8KB
+    uint32 local_page_count = 1024 * 1024 / page_size;  // 1MB
     uint32 max_page_count = -1;  // unlimited
-    uint32 page_size = DYN_ARRAY_BLOCK_SIZE * 16;
 
-    for (uint32 i = 0; i < MTR_POOL_COUNT; i++) {
-        //mtr_pools[i] = mpool_create(area, local_page_count, max_page_count, page_size);
-        //if (mtr_pools[i] == NULL) {
-        //    return FALSE;
-        //}
+    for (uint32 i = 0; i < MTR_MEM_POOL_COUNT; i++) {
+        mtr_mem_pools[i] = mpool_create(area, local_page_count, max_page_count, page_size);
+        if (mtr_mem_pools[i] == NULL) {
+            return FALSE;
+        }
     }
 
     return TRUE;
@@ -28,11 +32,21 @@ bool32 mtr_init(memory_area_t *area)
 
 dyn_array_t* dyn_array_create(dyn_array_t *arr)	/* in: pointer to a memory buffer of size sizeof(dyn_array_t) */
 {
-    uint32 idx = n_mtr_pools_index++;
-    arr->pool = &mtr_pools[idx & 0x0F];
+    uint32 idx = atomic32_inc(&n_mtr_mem_pools_index);
+    arr->pool = mtr_mem_pools[idx / MTR_MEM_POOL_COUNT];
     UT_LIST_INIT(arr->pages);
-    UT_LIST_INIT(arr->blocks);
     arr->current_page_used = 0;
+
+    UT_LIST_INIT(arr->used_blocks);
+    UT_LIST_INIT(arr->free_blocks);
+
+    // init for first block
+    arr->first_block.data = arr->first_block_data;
+    arr->first_block.used = 0;
+    UT_LIST_ADD_FIRST(list_node, arr->used_blocks, &arr->first_block);
+
+    ut_d(arr->buf_end = 0);
+    ut_d(arr->magic_n = DYN_BLOCK_MAGIC_N);
 
     return arr;
 }
@@ -44,20 +58,19 @@ void dyn_array_free(dyn_array_t *arr)
     page = UT_LIST_GET_FIRST(arr->pages);
     while (page) {
         UT_LIST_REMOVE(list_node, arr->pages, page);
-        //mpool_free_page(pool, page);
+        mpool_free_page(arr->pool, page);
         page = UT_LIST_GET_FIRST(arr->pages);
     }
-
     arr->current_page_used = 0;
 }
 
-dyn_block_t* dyn_array_add_block(dyn_array_t *arr)
+static char* dyn_array_alloc_block_data(dyn_array_t *arr)
 {
-    dyn_block_t *block;
+    char *data;
     memory_page_t *page;
 
     page = UT_LIST_GET_LAST(arr->pages);
-    if (page == NULL || arr->current_page_used + DYN_ARRAY_BLOCK_SIZE > arr->pool->page_size) {
+    if (page == NULL || arr->current_page_used + DYN_ARRAY_DATA_SIZE > arr->pool->page_size) {
         page = mpool_alloc_page(arr->pool);
         if (page == NULL) {
             return NULL;
@@ -66,23 +79,81 @@ dyn_block_t* dyn_array_add_block(dyn_array_t *arr)
         UT_LIST_ADD_LAST(list_node, arr->pages, page);
     }
 
-    block = (dyn_block_t *)((char *)page + ut_align8(sizeof(memory_page_t)) + arr->current_page_used);
-    arr->current_page_used += DYN_ARRAY_BLOCK_SIZE;
+    data = MEM_PAGE_DATA_PTR(page) + arr->current_page_used;
+    arr->current_page_used += DYN_ARRAY_DATA_SIZE;
+
+    return data;
+}
+
+//Gets pointer to the start of data in a dyn array block.
+static byte* dyn_block_get_data(dyn_block_t *block)
+{
+    ut_ad(block);
+    return(const_cast<byte*>(block->data));
+}
+
+//Gets the number of used bytes in a dyn array block.
+uint32 dyn_block_get_used(const dyn_block_t *block)
+{
+    ut_ad(block);
+    return((block->used) & ~DYN_BLOCK_FULL_FLAG);
+}
+
+dyn_block_t* dyn_array_add_block(dyn_array_t *arr)
+{
+    dyn_block_t *block;
+
+    ut_ad(arr);
+    ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
+
+    // old block
+    block = dyn_array_get_last_block(arr);
+    if (block) {
+        block->used = block->used | DYN_BLOCK_FULL_FLAG;
+    }
+
+    // alloc a new block
+    block = UT_LIST_GET_FIRST(arr->free_blocks);
+    if (block) {
+        UT_LIST_REMOVE(list_node, arr->free_blocks, block);
+    } else {
+        char *data = dyn_array_alloc_block_data(arr);
+        if (data == NULL) {
+            return NULL;
+        }
+        uint32 used = 0;
+        const uint32 block_size = ut_align8(sizeof(dyn_block_t));
+        while (used + block_size <= DYN_ARRAY_DATA_SIZE) {
+            block = (dyn_block_t *)((char *)data + used);
+            UT_LIST_ADD_LAST(list_node, arr->free_blocks, block);
+            used += block_size;
+        }
+        block = UT_LIST_GET_FIRST(arr->free_blocks);
+        UT_LIST_REMOVE(list_node, arr->free_blocks, block);
+    }
+
+    // set data for new block
+    block->data = (byte *)dyn_array_alloc_block_data(arr);
+    if (block->data == NULL) {
+        UT_LIST_ADD_LAST(list_node, arr->free_blocks, block);
+        return NULL;
+    }
     block->used = 0;
-    UT_LIST_ADD_LAST(list_node, arr->blocks, block);
+    UT_LIST_ADD_LAST(list_node, arr->used_blocks, block);
 
     return block;
 }
-
 
 byte* dyn_array_open(dyn_array_t *arr, uint32 size)
 {
     dyn_block_t *block;
 
+    ut_ad(arr);
+    ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
     ut_ad(size <= DYN_ARRAY_DATA_SIZE);
     ut_ad(size);
 
-    block = UT_LIST_GET_LAST(arr->blocks);
+    block = dyn_array_get_last_block(arr);
     if (block == NULL || block->used + size > DYN_ARRAY_DATA_SIZE) {
         block = dyn_array_add_block(arr);
         if (block == NULL) {
@@ -91,6 +162,8 @@ byte* dyn_array_open(dyn_array_t *arr, uint32 size)
     }
 
     ut_ad(block->used <= DYN_ARRAY_DATA_SIZE);
+    ut_ad(arr->buf_end == 0);
+    ut_d(arr->buf_end = block->used + size);
 
     return block->data + block->used;
 }
@@ -99,10 +172,17 @@ void dyn_array_close(dyn_array_t *arr, byte *ptr)
 {
     dyn_block_t *block;
 
-    block = UT_LIST_GET_LAST(arr->blocks);
+    ut_ad(arr);
+    ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
+
+    block = dyn_array_get_last_block(arr);
+
+    ut_ad(arr->buf_end + block->data >= ptr);
+
     block->used = ptr - block->data;
 
     ut_ad(block->used <= DYN_ARRAY_DATA_SIZE);
+    ut_d(arr->buf_end = 0);
 }
 
 void* dyn_array_push(dyn_array_t *arr, uint32 size)
@@ -110,10 +190,12 @@ void* dyn_array_push(dyn_array_t *arr, uint32 size)
     dyn_block_t *block;
     uint32 used;
 
+    ut_ad(arr);
+    ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
     ut_ad(size <= DYN_ARRAY_DATA_SIZE);
     ut_ad(size);
 
-    block = UT_LIST_GET_LAST(arr->blocks);
+    block = dyn_array_get_last_block(arr);
     if (block == NULL || block->used + size > DYN_ARRAY_DATA_SIZE) {
         block = dyn_array_add_block(arr);
         if (block == NULL) {
@@ -152,19 +234,23 @@ void* dyn_array_get_element(dyn_array_t *arr, uint32 pos)
     dyn_block_t *block;
     uint32 used;
 
+    ut_ad(arr);
+    ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
+
     /* Get the first array block */
-    block = UT_LIST_GET_FIRST(arr->blocks);
+    block = dyn_array_get_first_block(arr);
     ut_ad(block);
     used = block->used;
 
     while (pos >= used) {
         pos -= used;
-        block = UT_LIST_GET_NEXT(list_node, block);
+        block = dyn_array_get_next_block(arr, block);
         ut_ad(block);
         used = block->used;
     }
 
-    ut_ad(block->used >= pos);
+    ut_ad(block);
+    ut_ad(dyn_block_get_used(block) >= pos);
 
     return block->data + pos;
 }
@@ -174,78 +260,366 @@ uint32 dyn_array_get_data_size(dyn_array_t *arr)
     dyn_block_t *block;
     uint32 sum = 0;
 
+    ut_ad(arr);
+    ut_ad(arr->magic_n == DYN_BLOCK_MAGIC_N);
+
     /* Get the first array block */
-    block = UT_LIST_GET_FIRST(arr->blocks);
+    block = dyn_array_get_first_block(arr);
     while (block != NULL) {
         sum += block->used;
-        block = UT_LIST_GET_NEXT(list_node, block);
+        block = dyn_array_get_next_block(arr, block);
     }
 
     return sum;
 }
 
-
-mtr_t* mtr_start(mtr_t *mtr)
+// Checks if memo contains the given item.
+static bool32 mtr_memo_contains(mtr_t *mtr,
+    const void *object, /*!< in: object to search */
+    uint32 type) /*!< in: type of object */
 {
-    dyn_array_create(&(mtr->memo));
-    dyn_array_create(&(mtr->log));
+    mtr_memo_slot_t *slot;
+    dyn_array_t *memo;
+    uint32 offset;
 
-    mtr->log_mode = MTR_LOG_ALL;
-    mtr->modifications = FALSE;
-    mtr->n_log_recs = 0;
+    ut_ad(mtr);
+    ut_ad(mtr->magic_n == MTR_MAGIC_N);
+    ut_ad(mtr->state == MTR_ACTIVE || mtr->state == MTR_COMMITTING);
 
-    return(mtr);
+    memo = &(mtr->memo);
+    offset = dyn_array_get_data_size(memo);
+
+    while (offset > 0) {
+        offset -= sizeof(mtr_memo_slot_t);
+        slot = (mtr_memo_slot_t*) dyn_array_get_element(memo, offset);
+        if ((object == slot->object) && (type == slot->type)) {
+            return(TRUE);
+        }
+    }
+
+    return(FALSE);
 }
 
-void mtr_commit(mtr_t *mtr)
+bool32 mtr_memo_contains_page(mtr_t* mtr, /*!< in: mtr */
+    const byte* ptr, /*!< in: pointer to buffer frame */
+    uint32 type) /*!< in: type of object */
 {
+    return(mtr_memo_contains(mtr, buf_block_align(ptr), type));
 }
 
-byte* mlog_open(mtr_t *mtr, uint32 size)
+
+// Releases the item in the slot given. */
+static void mtr_memo_slot_release(mtr_t *mtr, mtr_memo_slot_t *slot)
 {
-    return NULL;
+    void *object = slot->object;
+    slot->object = NULL;
+
+    /* slot release is a local operation for the current mtr.
+       We must not be holding the flush_order mutex while doing this. */
+    //ut_ad(!mutex_own(&log_sys->log_flush_order_mutex));
+
+    switch (slot->type) {
+        case MTR_MEMO_PAGE_S_FIX:
+        case MTR_MEMO_PAGE_X_FIX:
+        case MTR_MEMO_BUF_FIX:
+            buf_page_release((buf_block_t*) object, slot->type);
+            break;
+        case MTR_MEMO_S_LOCK:
+            rw_lock_s_unlock((rw_lock_t*) object);
+            break;
+        case MTR_MEMO_X_LOCK:
+            rw_lock_x_unlock((rw_lock_t*) object);
+            break;
+#ifdef UNIV_DEBUG
+        default:
+            ut_ad(slot->type == MTR_MEMO_MODIFY);
+            ut_ad(mtr_memo_contains(mtr, object, MTR_MEMO_PAGE_X_FIX));
+#endif /* UNIV_DEBUG */
+    }
 }
 
-void mlog_close(mtr_t *mtr, byte *ptr)
+/***************************************************//**
+Checks if a mini-transaction is dirtying a clean page.
+@return TRUE if the mtr is dirtying a clean page. */
+static bool32 mtr_block_dirtied(const buf_block_t *block) /*!< in: block being x-fixed */
 {
+    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
+    ut_ad(block->page.buf_fix_count > 0);
+
+    /* It is OK to read oldest_modification because no
+    other thread can be performing a write of it and it
+    is only during write that the value is reset to 0. */
+    return(block->page.oldest_modification == 0);
 }
 
+
+// Pushes an object to an mtr memo stack
+void mtr_memo_push(mtr_t *mtr,	/*!< in: mtr */
+    void *object, /*!< in: object */
+    uint32 type)  /*!< in: object type: MTR_MEMO_S_LOCK, ... */
+{
+    dyn_array_t *memo;
+    mtr_memo_slot_t *slot;
+
+    ut_ad(object);
+    ut_ad(type >= MTR_MEMO_PAGE_S_FIX);
+    ut_ad(type <= MTR_MEMO_X_LOCK);
+    ut_ad(mtr);
+    ut_ad(mtr->magic_n == MTR_MAGIC_N);
+    ut_ad(mtr->state == MTR_ACTIVE);
+
+    /* If this mtr has x-fixed a clean page then we set the made_dirty flag.
+       This tells us if we need to grab log_flush_order_mutex at mtr_commit
+       so that we can insert the dirtied page to the flush list. */
+    if (type == MTR_MEMO_PAGE_X_FIX && !mtr->made_dirty) {
+        mtr->made_dirty = mtr_block_dirtied((const buf_block_t*) object);
+    }
+
+    memo = &(mtr->memo);
+    slot = (mtr_memo_slot_t*) dyn_array_push(memo, sizeof(mtr_memo_slot_t));
+    slot->object = object;
+    slot->type = type;
+}
+
+
+/* Releases the mlocks and other objects stored in an mtr memo.
+   They are released in the order opposite to which they were pushed to the memo. */
+static void mtr_memo_pop_all(mtr_t *mtr)
+{
+    ut_ad(mtr->magic_n == MTR_MAGIC_N);
+    ut_ad(mtr->state == MTR_COMMITTING); /* Currently only used in commit */
+
+    for (dyn_block_t* block = dyn_array_get_last_block(&mtr->memo);
+         block;
+         block = dyn_array_get_prev_block(&mtr->memo, block)) {
+        const mtr_memo_slot_t *start = (mtr_memo_slot_t*)dyn_block_get_data(block);
+        mtr_memo_slot_t *slot = (mtr_memo_slot_t*)(dyn_block_get_data(block) + dyn_block_get_used(block));
+
+        ut_ad(!(dyn_block_get_used(block) % sizeof(mtr_memo_slot_t)));
+
+        while (slot-- != start) {
+            if (slot->object != NULL) {
+                mtr_memo_slot_release(mtr, slot);
+            }
+        }
+    }
+}
+
+uint32 mtr_get_log_mode(mtr_t *mtr)
+{
+    ut_ad(mtr);
+    ut_ad(mtr->log_mode >= MTR_LOG_ALL);
+    ut_ad(mtr->log_mode <= MTR_LOG_SHORT_INSERTS);
+
+    return(mtr->log_mode);
+}
+
+
+// Releases the item in the slot given
+static void mtr_memo_slot_note_modification(mtr_t *mtr, mtr_memo_slot_t *slot)
+{
+    ut_ad(mtr->modifications);
+    //ut_ad(!srv_read_only_mode);
+    ut_ad(mtr->magic_n == MTR_MAGIC_N);
+
+    if (slot->object != NULL && slot->type == MTR_MEMO_PAGE_X_FIX) {
+        buf_block_t *block = (buf_block_t*) slot->object;
+
+        ut_ad(!mtr->made_dirty || log_flush_order_mutex_own());
+        //buf_flush_note_modification(block, mtr);
+    }
+}
+
+/**********************************************************//**
+Add the modified pages to the buffer flush list.
+They are released in the order opposite to which they were pushed to the memo.
+NOTE! It is essential that the x-rw-lock on a modified buffer page is not released
+before buf_page_note_modification is called for that page! 
+Otherwise, some thread might race to modify it, and the flush list sort order on lsn would be destroyed. */
+static void mtr_memo_note_modifications(mtr_t *mtr)
+{
+    dyn_array_t *memo;
+    uint32 offset;
+
+    //ut_ad(!srv_read_only_mode);
+    ut_ad(mtr->magic_n == MTR_MAGIC_N);
+    ut_ad(mtr->state == MTR_COMMITTING); /* Currently only used in commit */
+
+    memo = &mtr->memo;
+    offset = dyn_array_get_data_size(memo);
+
+    while (offset > 0) {
+        mtr_memo_slot_t* slot;
+        offset -= sizeof(mtr_memo_slot_t);
+        slot = static_cast<mtr_memo_slot_t*>(dyn_array_get_element(memo, offset));
+        mtr_memo_slot_note_modification(mtr, slot);
+    }
+}
+
+// Append the dirty pages to the flush list
+static void mtr_add_dirtied_pages_to_flush_list(mtr_t *mtr)
+{
+    //ut_ad(!srv_read_only_mode);
+
+    /* No need to acquire log_flush_order_mutex if this mtr has not dirtied a clean page.
+       log_flush_order_mutex is used to ensure ordered insertions in the flush_list.
+       We need to insert in the flush_list iff the page in question was clean before modifications. */
+    if (mtr->made_dirty) {
+        log_flush_order_mutex_enter();
+    }
+
+    /* It is now safe to release the log mutex,
+       because the flush_order mutex will ensure that we are the first one to insert into the flush list. */
+    log_release();
+
+    if (mtr->modifications) {
+        mtr_memo_note_modifications(mtr);
+    }
+
+    if (mtr->made_dirty) {
+        log_flush_order_mutex_exit();
+    }
+}
+
+//Writes the contents of a mini-transaction log, if any, to the database log. */
+static void mtr_log_reserve_and_write(mtr_t *mtr)
+{
+    dyn_array_t *mlog;
+    dyn_block_t *first_block;
+    uint32 data_size;
+    byte *first_data;
+
+    //ut_ad(!srv_read_only_mode);
+
+    mlog = &(mtr->log);
+    first_block = dyn_array_get_first_block(mlog);
+    first_data = dyn_block_get_data(first_block);
+
+    if (mtr->n_log_recs > 1) {
+        mlog_catenate_uint32(mtr, MLOG_MULTI_REC_END, MLOG_1BYTE);
+    } else {
+        *first_data = (byte)((uint32)*first_data | MLOG_SINGLE_REC_FLAG);
+    }
+
+    if (UT_LIST_GET_LEN(mlog->used_blocks) == 1) {
+        uint32 len;
+        len = mtr->log_mode != MTR_LOG_NO_REDO ? dyn_block_get_used(first_block) : 0;
+        mtr->end_lsn = log_reserve_and_write_fast(first_data, len, &mtr->start_lsn);
+        if (mtr->end_lsn) {
+            /* Success. We have the log mutex. Add pages to flush list and exit */
+            mtr_add_dirtied_pages_to_flush_list(mtr);
+            return;
+        }
+    }
+
+    data_size = dyn_array_get_data_size(mlog);
+    /* Open the database log for log_write_low */
+    mtr->start_lsn = log_reserve_and_open(data_size);
+
+    if (mtr->log_mode == MTR_LOG_ALL) {
+        for (dyn_block_t* block = first_block;
+             block != 0;
+             block = dyn_array_get_next_block(mlog, block)) {
+            log_write_low(dyn_block_get_data(block), dyn_block_get_used(block));
+        }
+    } else {
+        ut_ad(mtr->log_mode == MTR_LOG_NONE || mtr->log_mode == MTR_LOG_NO_REDO);
+        /* Do nothing */
+    }
+
+    mtr->end_lsn = log_close();
+    mtr_add_dirtied_pages_to_flush_list(mtr);
+}
+
+/*
+ * Writes the initial part of a log record (3..11 bytes).
+ * If the implementation of this function is changed,
+ * all size parameters to mlog_open() should be adjusted accordingly!
+ * return: new value of log_ptr
+ */
 byte* mlog_write_initial_log_record_fast(
     const byte* ptr,    /*!< in: pointer to (inside) a buffer frame holding the file page where modification is made */
     mlog_id_t   type,   /*!< in: log item type: MLOG_1BYTE, ... */
     byte*       log_ptr,/*!< in: pointer to mtr log which has been opened */
     mtr_t*      mtr)    /*!< in: mtr */
 {
-    return NULL;
+#ifdef UNIV_DEBUG
+    buf_block_t* block;
+#endif
+    const byte*  page;
+    uint32       space;
+    uint32       offset;
+
+    ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
+    ut_ad(type <= MLOG_BIGGEST_TYPE);
+    ut_ad(ptr && log_ptr);
+
+    page = (const byte*) ut_align_down((void *)ptr, UNIV_PAGE_SIZE);
+    space = mach_read_from_4(page + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
+    offset = mach_read_from_4(page + FIL_PAGE_OFFSET);
+
+    /* check whether the page is in the doublewrite buffer;
+    the doublewrite buffer is located in pages FSP_EXTENT_SIZE, ..., 3 * FSP_EXTENT_SIZE - 1 in the system tablespace */
+    if (space == FIL_SYSTEM_SPACE_ID && offset >= FSP_EXTENT_SIZE && offset < 3 * FSP_EXTENT_SIZE) {
+        if (buf_dblwr_being_created) {
+            /* Do nothing: we only come to this branch in an InnoDB database creation.
+               We do not redo log anything for the doublewrite buffer pages. */
+            return(log_ptr);
+        } else {
+            fprintf(stderr,
+                "Error: trying to redo log a record of type "
+                "%d on page %lu of space %lu in the doublewrite buffer, continuing anyway.\n"
+                "Please post a bug report to bugs.mysql.com.\n",
+                type, offset, space);
+            ut_ad(0);
+        }
+    }
+
+    mach_write_to_1(log_ptr, type);
+    log_ptr++;
+    log_ptr += mach_write_compressed(log_ptr, space);
+    log_ptr += mach_write_compressed(log_ptr, offset);
+
+    mtr->n_log_recs++;
+
+#ifdef UNIV_LOG_DEBUG
+    fprintf(stderr, "Adding to mtr log record type %lu space %lu page no %lu\n", (ulong) type, space, offset);
+#endif
+
+#ifdef UNIV_DEBUG
+    /* We now assume that all x-latched pages have been modified! */
+    block = (buf_block_t*) buf_block_align(ptr);
+    if (!mtr_memo_contains(mtr, block, MTR_MEMO_MODIFY)) {
+        mtr_memo_push(mtr, block, MTR_MEMO_MODIFY);
+    }
+#endif
+    return log_ptr;
 }
 
-/********************************************************//**
-Writes the initial part of a log record consisting of one-byte item
-type and four-byte space and page numbers. Also pushes info
-to the mtr memo that a buffer page has been modified. */
+/*
+ * Writes the initial part of a log record consisting of one-byte item
+ * type and four-byte space and page numbers.
+ * Also pushes info to the mtr memo that a buffer page has been modified. */
 void mlog_write_initial_log_record(
-	const byte*	ptr,	/*!< in: pointer to (inside) a buffer
-				frame holding the file page where
-				modification is made */
-	mlog_id_t	type,	/*!< in: log item type: MLOG_1BYTE, ... */
-	mtr_t*		mtr)	/*!< in: mini-transaction handle */
+    const byte *ptr, /*!< in: pointer to (inside) a buffer frame holding the file page where modification is made */
+    mlog_id_t type, /*!< in: log item type: MLOG_1BYTE, ... */
+    mtr_t *mtr) /*!< in: mini-transaction handle */
 {
-	byte*	log_ptr;
+    byte*	log_ptr;
 
-	ut_ad(type <= MLOG_BIGGEST_TYPE);
-	ut_ad(type > MLOG_8BYTES);
+    ut_ad(type <= MLOG_BIGGEST_TYPE);
+    ut_ad(type > MLOG_8BYTES);
 
-	log_ptr = mlog_open(mtr, 11);
+    log_ptr = mlog_open(mtr, 11);
 
-	/* If no logging is requested, we may return now */
-	if (log_ptr == NULL) {
+    /* If no logging is requested, we may return now */
+    if (log_ptr == NULL) {
+        return;
+    }
 
-		return;
-	}
+    log_ptr = mlog_write_initial_log_record_fast(ptr, type, log_ptr, mtr);
 
-	log_ptr = mlog_write_initial_log_record_fast(ptr, type, log_ptr, mtr);
-
-	mlog_close(mtr, log_ptr);
+    mlog_close(mtr, log_ptr);
 }
 
 
@@ -354,17 +728,47 @@ void mlog_write_string(
 	mlog_log_string(ptr, len, mtr);
 }
 
-/********************************************************//**
-Catenates n bytes to the mtr log. */
+// Catenates n bytes to the mtr log.
 void mlog_catenate_string(
-    mtr_t*      mtr,    /*!< in: mtr */
-    const byte* str,    /*!< in: string to write */
+    mtr_t      *mtr,    /*!< in: mtr */
+    byte       *str,    /*!< in: string to write */
     uint32      len)    /*!< in: string length */
 {
-//    if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
-//        return;
-//    }
-//    mtr->get_log()->push(str, ib_uint32_t(len));
+    dyn_array_t*    mlog;
+
+    if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
+        return;
+    }
+
+    mlog = &(mtr->log);
+
+    dyn_push_string(mlog, str, len);
+}
+
+/********************************************************//**
+Catenates 1 - 4 bytes to the mtr log. The value is not compressed. */
+void mlog_catenate_uint32(mtr_t *mtr,
+    uint32 val, /*!< in: value to write */
+    uint32 type) /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
+{
+    dyn_array_t *mlog;
+    byte *ptr;
+
+    if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
+        return;
+    }
+
+    mlog = &(mtr->log);
+    ptr = (byte*) dyn_array_push(mlog, type);
+
+    if (type == MLOG_4BYTES) {
+        mach_write_to_4(ptr, val);
+    } else if (type == MLOG_2BYTES) {
+        mach_write_to_2(ptr, val);
+    } else {
+        ut_ad(type == MLOG_1BYTE);
+        mach_write_to_1(ptr, val);
+    }
 }
 
 
@@ -372,89 +776,38 @@ void mlog_catenate_string(
 Logs a write of a string to a file page buffered in the buffer pool.
 Writes the corresponding log record to the mini-transaction log. */
 void mlog_log_string(
-	byte*	ptr,	/*!< in: pointer written to */
-	uint32	len,	/*!< in: string length */
-	mtr_t*	mtr)	/*!< in: mini-transaction handle */
+    byte *ptr, /*!< in: pointer written to */
+    uint32 len, /*!< in: string length */
+    mtr_t *mtr) /*!< in: mini-transaction handle */
 {
-	byte*	log_ptr;
+    byte *log_ptr;
 
-	ut_ad(ptr && mtr);
-	ut_ad(len <= UNIV_PAGE_SIZE);
+    ut_ad(ptr && mtr);
+    ut_ad(len <= UNIV_PAGE_SIZE);
 
-	log_ptr = mlog_open(mtr, 30);
+    log_ptr = mlog_open(mtr, 30);
 
-	/* If no logging is requested, we may return now */
-	if (log_ptr == NULL) {
-		return;
-	}
+    /* If no logging is requested, we may return now */
+    if (log_ptr == NULL) {
+        return;
+    }
 
-	log_ptr = mlog_write_initial_log_record_fast(ptr, MLOG_WRITE_STRING, log_ptr, mtr);
-	mach_write_to_2(log_ptr, page_offset(ptr));
-	log_ptr += 2;
+    log_ptr = mlog_write_initial_log_record_fast(ptr, MLOG_WRITE_STRING, log_ptr, mtr);
+    mach_write_to_2(log_ptr, page_offset(ptr));
+    log_ptr += 2;
 
-	mach_write_to_2(log_ptr, len);
-	log_ptr += 2;
+    mach_write_to_2(log_ptr, len);
+    log_ptr += 2;
 
-	mlog_close(mtr, log_ptr);
+    mlog_close(mtr, log_ptr);
 
-	mlog_catenate_string(mtr, ptr, len);
-}
-
-
-/***************************************************//**
-Checks if a mini-transaction is dirtying a clean page.
-@return TRUE if the mtr is dirtying a clean page. */
-bool32 mtr_block_dirtied(const buf_block_t *block) /*!< in: block being x-fixed */
-{
-    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad(block->page.buf_fix_count > 0);
-
-    /* It is OK to read oldest_modification because no
-    other thread can be performing a write of it and it
-    is only during write that the value is reset to 0. */
-    return(block->page.oldest_modification == 0);
-}
-
-void mtr_t::memo_push(void* object, uint32 type) /*!< in: object type: MTR_MEMO_S_LOCK, ... */
-{
-	mtr_memo_slot_t* slot;
-
-	ut_ad(object);
-	ut_ad(type >= MTR_MEMO_PAGE_S_FIX);
-	ut_ad(type <= MTR_MEMO_X_LOCK);
-	ut_ad(magic_n == MTR_MAGIC_N);
-	ut_ad(state == MTR_ACTIVE);
-
-	/* If this mtr has x-fixed a clean page then we set
-	the made_dirty flag. This tells us if we need to
-	grab log_flush_order_mutex at mtr_commit so that we
-	can insert the dirtied page to the flush list. */
-	if (type == MTR_MEMO_PAGE_X_FIX && !made_dirty) {
-		made_dirty = mtr_block_dirtied((const buf_block_t*) object);
-	}
-
-	slot = (mtr_memo_slot_t*) dyn_array_push(&memo, sizeof *slot);
-	slot->object = object;
-	slot->type = type;
-}
-
-
-void mtr_t::s_lock(rw_lock_t* lock, const char* file, uint32 line)
-{
-    rw_lock_s_lock(lock);
-    memo_push(lock, MTR_MEMO_S_LOCK);
-}
-
-void mtr_t::x_lock(rw_lock_t* lock, const char* file, uint32 line)
-{
-    rw_lock_x_lock(lock);
-    memo_push(lock, MTR_MEMO_X_LOCK);
+    mlog_catenate_string(mtr, ptr, len);
 }
 
 /********************************************************//**
 Reads 1 - 4 bytes from a file page buffered in the buffer pool.
 @return	value read */
-uint32 mtr_read_uint(
+uint32 mtr_read_uint32(
 	const byte*	ptr,	/*!< in: pointer from where to read */
 	mlog_id_t	type,	/*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
 	mtr_t*		mtr)    /*!< in: mini-transaction handle */
@@ -464,6 +817,100 @@ uint32 mtr_read_uint(
 	      || mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
 
 	return mlog_read_uint32(ptr, type);
+}
+
+mtr_t* mtr_start(mtr_t *mtr)
+{
+    dyn_array_create(&(mtr->memo));
+    dyn_array_create(&(mtr->log));
+
+    mtr->log_mode = MTR_LOG_ALL;
+    mtr->modifications = FALSE;
+    mtr->n_log_recs = 0;
+    mtr->inside_ibuf = FALSE;
+    mtr->made_dirty = FALSE;
+    //mtr->n_freed_pages = 0;
+
+    ut_d(mtr->state = MTR_ACTIVE);
+    ut_d(mtr->magic_n = MTR_MAGIC_N);
+
+    return(mtr);
+}
+
+void mtr_commit(mtr_t *mtr)
+{
+    ut_ad(mtr);
+    ut_ad(mtr->magic_n == MTR_MAGIC_N);
+    ut_ad(mtr->state == MTR_ACTIVE);
+    ut_ad(!mtr->inside_ibuf);
+    ut_d(mtr->state = MTR_COMMITTING);
+
+#ifndef UNIV_HOTBACKUP
+    /* This is a dirty read, for debugging. */
+    //ut_ad(!recv_no_log_write);
+
+    if (mtr->modifications && mtr->n_log_recs) {
+        //ut_ad(!srv_read_only_mode);
+        mtr_log_reserve_and_write(mtr);
+    }
+
+    mtr_memo_pop_all(mtr);
+#endif /* !UNIV_HOTBACKUP */
+
+    dyn_array_free(&(mtr->memo));
+    dyn_array_free(&(mtr->log));
+
+    ut_d(mtr->state = MTR_COMMITTED);
+}
+
+byte* mlog_open(mtr_t *mtr, uint32 size)
+{
+    dyn_array_t *mlog;
+
+    mtr->modifications = TRUE;
+
+    if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
+        return(NULL);
+    }
+
+    mlog = &(mtr->log);
+
+    return(dyn_array_open(mlog, size));
+}
+
+void mlog_close(mtr_t *mtr, byte *ptr)
+{
+    dyn_array_t *mlog;
+
+    ut_ad(mtr_get_log_mode(mtr) != MTR_LOG_NONE);
+
+    mlog = &(mtr->log);
+
+    dyn_array_close(mlog, ptr);
+}
+
+void mtr_s_lock_func(rw_lock_t* lock, /*!< in: rw-lock */
+    const char* file, /*!< in: file name */
+    uint32 line, /*!< in: line number */
+    mtr_t* mtr) /*!< in: mtr */
+{
+    ut_ad(mtr);
+    ut_ad(lock);
+
+    rw_lock_s_lock(lock, 0, file, line);
+    mtr_memo_push(mtr, lock, MTR_MEMO_S_LOCK);
+}
+
+void mtr_x_lock_func(rw_lock_t* lock, /*!< in: rw-lock */
+    const char* file, /*!< in: file name */
+    uint32 line, /*!< in: line number */
+    mtr_t* mtr) /*!< in: mtr */
+{
+    ut_ad(mtr);
+    ut_ad(lock);
+
+    rw_lock_x_lock(lock, 0, file, line);
+    mtr_memo_push(mtr, lock, MTR_MEMO_X_LOCK);
 }
 
 

@@ -9,6 +9,9 @@
 /* The file system. This variable is NULL before the module is initialized. */
 fil_system_t* fil_system = NULL;
 
+/** The null file address */
+fil_addr_t	fil_addr_null = {FIL_NULL, 0};
+
 
 
 uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset);
@@ -437,6 +440,7 @@ fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose)
         space->n_reserved_extents = 0;
         space->magic_n = M_FIL_SPACE_MAGIC_N;
         spin_lock_init(&space->lock);
+        rw_lock_create(&space->latch);
         space->io_in_progress = 0;
         UT_LIST_INIT(space->fil_nodes);
         UT_LIST_INIT(space->free_pages);
@@ -452,6 +456,9 @@ fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose)
         if (tmp == NULL) {
             UT_LIST_ADD_LAST(list_node, fil_system->fil_spaces, space);
         }
+        HASH_INSERT(fil_space_t, hash, fil_system->spaces, space_id, space);
+        //HASH_INSERT(fil_space_t, name_hash, fil_system->name_hash, ut_fold_string(name), space);
+
         spin_unlock(&fil_system->lock);
 
         if (tmp) { // name or spaceid already exists
@@ -521,7 +528,7 @@ fil_node_t* fil_node_create(fil_space_t *space, char *name, uint32 page_max_coun
     node = (fil_node_t *)mcontext_alloc(fil_system->mem_context, ut_align8(sizeof(fil_node_t)) + strlen(name) + 1);
     if (node) {
         node->name = (char *)node + ut_align8(sizeof(fil_node_t));
-        strcpy_s(node->name, strlen(node->name), name);
+        strcpy_s(node->name, strlen(name) + 1, name);
         node->name[strlen(name) + 1] = 0;
 
         node->page_max_count = page_max_count;
@@ -538,6 +545,7 @@ fil_node_t* fil_node_create(fil_space_t *space, char *name, uint32 page_max_coun
             if (fil_system->fil_nodes[i] == NULL) {
                 node->id = i;
                 fil_system->fil_nodes[i] = node;
+                break;
             }
         }
         spin_unlock(&fil_system->lock);
@@ -709,6 +717,19 @@ retry:
     return TRUE;
 }
 
+// Tries to extend the last data file of a tablespace if it is auto-extending.
+static bool32 fsp_try_extend_data_file(
+	uint32*		actual_increase,/*!< out: actual increase in pages, where
+					we measure the tablespace size from
+					what the header field says; it may be
+					the actual file size rounded down to
+					megabyte */
+	uint32		space,		/*!< in: space */
+	fsp_header_t*	header,		/*!< in/out: space header */
+	mtr_t*		mtr)
+{
+}
+
 fil_space_t* fil_space_get_by_id(uint32 space_id)
 {
     fil_space_t*	space;
@@ -753,6 +774,41 @@ bool fil_addr_is_null(fil_addr_t addr) /*!< in: address */
     return(addr.page == FIL_NULL);
 }
 
+static void fsp_space_modify_check(uint32 id, const mtr_t* mtr)
+{
+	switch (mtr_get_log_mode(mtr)) {
+	case MTR_LOG_SHORT_INSERTS:
+	case MTR_LOG_NONE:
+		/* These modes are only allowed within a non-bitmap page
+		when there is a higher-level redo log record written. */
+		break;
+	case MTR_LOG_NO_REDO:
+#ifdef UNIV_DEBUG
+		{
+			const fil_type_t	type = fil_space_get_type(id);
+			ut_a(id == srv_tmp_space.space_id()
+			     || srv_is_tablespace_truncated(id)
+			     || fil_space_is_being_truncated(id)
+			     || fil_space_get_flags(id) == ULINT_UNDEFINED
+			     || type == FIL_TYPE_TEMPORARY
+			     || type == FIL_TYPE_IMPORT
+			     || fil_space_is_redo_skipped(id));
+		}
+#endif /* UNIV_DEBUG */
+		return;
+	case MTR_LOG_ALL:
+		/* We must not write redo log for the shared temporary tablespace. */
+		//ut_ad(id != srv_tmp_space.space_id());
+		/* If we write redo log, the tablespace must exist. */
+		//ut_ad(fil_space_get_type(id) == FIL_TYPE_TABLESPACE);
+		//ut_ad(mtr->is_named_space(id));
+		return;
+	}
+
+	ut_ad(0);
+}
+
+
 /** Put new extents to the free list if there are free extents above the free
 limit. If an extent happens to contain an extent descriptor page, the extent
 is put to the FSP_FREE_FRAG list with the page marked as used.
@@ -762,26 +818,131 @@ then we will not allocate more extents
 @param[in,out]	space		tablespace
 @param[in,out]	header		tablespace header
 @param[in,out]	mtr		mini-transaction */
-static void fsp_fill_free_list(bool init_space, fil_space_t *space,
-                               fsp_header_t *header, mtr_t *mtr) {
+static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header_t* header, mtr_t* mtr)
+{
+    uint32 limit;
+    uint32 size;
+    uint32 flags;
+    xdes_t* descr;
+    uint32 count = 0;
+    uint32 frag_n_used;
+    uint32 actual_increase;
+    uint32 i;
+
+    ut_ad(page_offset(header) == FSP_HEADER_OFFSET);
+    ut_d(fsp_space_modify_check(space->id, mtr));
+
+    /* Check if we can fill free list from above the free list limit */
+    size = mach_read_from_4(header + FSP_SIZE);
+    limit = mach_read_from_4(header + FSP_FREE_LIMIT);
+    flags = mach_read_from_4(header + FSP_SPACE_FLAGS);
+
+    ut_ad(size == space->size_in_header);
+    ut_ad(limit == space->free_limit);
+    ut_ad(flags == space->flags);
+
+    const page_size_t page_size(flags);
+
+    if (space == 0 && srv_auto_extend_last_data_file && size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD) {
+        /* Try to increase the last data file size */
+        fsp_try_extend_data_file(&actual_increase, space, header, mtr);
+        size = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, mtr);
+    }
+
+    if (space != 0 && !init_space && size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD) {
+        /* Try to increase the .ibd file size */
+        fsp_try_extend_data_file(&actual_increase, space, header, mtr);
+        size = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, mtr);
+    }
+
+    i = limit;
+    while ((init_space && i < 1) || ((i + FSP_EXTENT_SIZE <= size) && (count < FSP_FREE_ADD))) {
+        bool32 init_xdes = (ut_2pow_remainder(i, page_size.physical()) == 0);
+        space->free_limit = i + FSP_EXTENT_SIZE;
+        mlog_write_uint32(header + FSP_FREE_LIMIT, i + FSP_EXTENT_SIZE, MLOG_4BYTES, mtr);
+
+        if (init_xdes) {
+            buf_block_t* block;
+
+            /* We are going to initialize a new descriptor page 
+            and a new ibuf bitmap page: the prior contents of the pages should be ignored. */
+
+            if (i > 0) {
+                const page_id_t page_id(space->id, i);
+                block = buf_page_create(page_id, page_size, mtr);
+                buf_page_get(page_id, page_size, RW_SX_LATCH, mtr);
+                //buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
+                fsp_init_file_page(block, mtr);
+                mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_TYPE_XDES, MLOG_2BYTES, mtr);
+            }
+
+            /* Initialize the ibuf bitmap page in a separate
+            mini-transaction because it is low in the latching
+            order, and we must be able to release its latch.
+            Note: Insert-Buffering is disabled for tables that
+            reside in the temp-tablespace. */
+            if (space->id != srv_tmp_space.space_id()) {
+                mtr_t ibuf_mtr;
+
+                mtr_start(&ibuf_mtr);
+                ibuf_mtr.set_named_space(space);
+                /* Avoid logging while truncate table fix-up is active. */
+                if (space->purpose == FIL_TYPE_TEMPORARY || srv_is_tablespace_truncated(space->id)) {
+                    mtr_set_log_mode(&ibuf_mtr, MTR_LOG_NO_REDO);
+                }
+                const page_id_t page_id(space->id, i + FSP_IBUF_BITMAP_OFFSET);
+                block = buf_page_create(page_id, page_size, &ibuf_mtr);
+                buf_page_get(page_id, page_size, RW_SX_LATCH, &ibuf_mtr);
+                buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
+                fsp_init_file_page(block, &ibuf_mtr);
+                ibuf_bitmap_page_init(block, &ibuf_mtr);
+                mtr_commit(&ibuf_mtr);
+            }
+        }
+
+        buf_block_t* desc_block = NULL;
+        descr = xdes_get_descriptor_with_space_hdr(header, space->id, i, mtr, init_space, &desc_block);
+        if (desc_block != NULL) {
+            fil_block_check_type(desc_block, FIL_PAGE_TYPE_XDES, mtr);
+        }
+        xdes_init(descr, mtr);
+
+        if (UNLIKELY(init_xdes)) {
+            /* The first page in the extent is a descriptor page
+               and the second is an ibuf bitmap page: mark them used */
+            xdes_set_bit(descr, XDES_FREE_BIT, 0, FALSE, mtr);
+            xdes_set_bit(descr, XDES_FREE_BIT, FSP_IBUF_BITMAP_OFFSET, FALSE, mtr);
+            xdes_set_state(descr, XDES_FREE_FRAG, mtr);
+
+            flst_add_last(header + FSP_FREE_FRAG, descr + XDES_FLST_NODE, mtr);
+            frag_n_used = mach_read_from_4(header + FSP_FRAG_N_USED);
+            mlog_write_uint32(header + FSP_FRAG_N_USED, frag_n_used + 2, MLOG_4BYTES, mtr);
+        } else {
+            flst_add_last(header + FSP_FREE, descr + XDES_FLST_NODE, mtr);
+            count++;
+        }
+
+        i += FSP_EXTENT_SIZE;
+    }
+
+    //space->free_len += count;
 }
+
 
 static void fsp_init_file_page_low(buf_block_t* block)	/*!< in: pointer to a page */
 {
-	page_t*		page	= buf_block_get_frame(block);
+    page_t* page = buf_block_get_frame(block);
 
-	if (!fsp_is_system_temporary(block->page.id.space())) {
-		memset(page, 0, UNIV_PAGE_SIZE);
-	}
+    if (!fsp_is_system_temporary(block->page.id.space())) {
+        memset(page, 0, UNIV_PAGE_SIZE);
+    }
 
-	mach_write_to_4(page + FIL_PAGE_OFFSET, block->page.id.page_no());
-	mach_write_to_4(page + FIL_PAGE_SPACE_ID, block->page.id.space());
+    mach_write_to_4(page + FIL_PAGE_OFFSET, block->page.id.page_no());
+    mach_write_to_4(page + FIL_PAGE_SPACE_ID, block->page.id.space());
 }
 
 
-/** Initialize a file page.
-@param[in,out]	block	file page
-@param[in,out]	mtr	mini-transaction */
+// Initialize a file page.
 static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr)
 {
     fsp_init_file_page_low(block);
@@ -902,7 +1063,7 @@ static uint32 fsp_alloc_free_page(
 
     /* Initialize the allocated page to the buffer pool,
        so that it can be obtained immediately with buf_page_get without need for a disk read. */
-    buf_page_create(space, page_no, 0, mtr);
+    buf_page_create(page_id_t(space, page_no), page_size, RW_X_LATCH, mtr);
     buf_block_t* block;
     block = buf_page_get(page_id_t(space, page_no), page_size, RW_X_LATCH, mtr);
     //page = buf_block_get_frame(block);
@@ -979,66 +1140,6 @@ static void fsp_free_page(
 }
 
 
-/** Check if tablespace is dd tablespace.
-@param[in]      space_id        tablespace ID
-@return true if tablespace is dd tablespace. */
-bool32 fsp_is_dd_tablespace(space_id_t space_id)
-{
-    //return (space_id == dict_sys_t::s_space_id);
-    return FALSE;
-}
-
-/** Check whether a space id is an undo tablespace ID
-Undo tablespaces have space_id's starting 1 less than the redo logs.
-They are numbered down from this.  Since rseg_id=0 always refers to the
-system tablespace, undo_space_num values start at 1.  The current limit
-is 127. The translation from an undo_space_num is:
-   undo space_id = log_first_space_id - undo_space_num
-@param[in]	space_id	space id to check
-@return true if it is undo tablespace else false. */
-bool32 fsp_is_undo_tablespace(space_id_t space_id)
-{
-  /* Starting with v8, undo space_ids have a unique range. */
-  if (space_id >= UNDO_SPACE_MIN_ID &&
-      space_id <= UNDO_SPACE_MAX_ID) {
-    return (true);
-  }
-
-  /* If upgrading from 5.7, there may be a list of old-style
-  undo tablespaces.  Search them. */
-  //if (trx_sys_undo_spaces != nullptr) {
-  //  return (trx_sys_undo_spaces->contains(space_id));
-  //}
-
-  return (false);
-}
-
-/** Check if tablespace is global temporary.
-@param[in]	space_id	tablespace ID
-@return true if tablespace is global temporary. */
-bool32 fsp_is_global_temporary(space_id_t space_id)
-{
-    //return (space_id == srv_tmp_space.space_id());
-    return false;
-}
-
-/** Check if the tablespace is session temporary.
-@param[in]      space_id        tablespace ID
-@return true if tablespace is a session temporary tablespace. */
-bool32 fsp_is_session_temporary(space_id_t space_id)
-{
-    return (space_id > TEMP_SPACE_MIN_ID &&
-            space_id <= TEMP_SPACE_MAX_ID);
-}
-
-/** Check if tablespace is system temporary.
-@param[in]	space_id	tablespace ID
-@return true if tablespace is system temporary. */
-bool32 fsp_is_system_temporary(space_id_t space_id)
-{
-    return (fsp_is_global_temporary(space_id) ||
-            fsp_is_session_temporary(space_id));
-}
 
 /** Gets a pointer to the space header and x-locks its page.
 @param[in]  id          space id
@@ -1070,45 +1171,50 @@ fsp_header_t* fsp_get_space_header(
 //Initializes the space header of a new created space and creates also the insert buffer tree root. */
 void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr)
 {
-	fsp_header_t*	header;
+    fsp_header_t* header;
     buf_block_t *block;
-	page_t*		page;
-	
-	ut_ad(mtr);
+    page_t* page;
 
-	mtr->x_lock(fil_space_get_latch(space_id), __FILE__, __LINE__);
+    ut_ad(mtr);
 
-    block = buf_page_create(space_id, 0, size, mtr);
-	//buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
+    mtr_x_lock(fil_space_get_latch(space_id), mtr);
+
+    const page_id_t page_id(space_id, 0);
+    const page_size_t page_size(0);
+    block = buf_page_create(page_id, page_size, RW_X_LATCH, mtr);
+    //buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
     //const page_id_t page_id(space_id, 0);
-	//page = buf_page_get(page_id, size, RW_X_LATCH, mtr);
-	//buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
+    //page = buf_page_get(page_id, size, RW_X_LATCH, mtr);
+    //buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
 
-	/* The prior contents of the file page should be ignored */
+    /* The prior contents of the file page should be ignored */
 
-	fsp_init_file_page(block, mtr);
+    fsp_init_file_page(block, mtr);
     page = buf_block_get_frame(block);
 
-	header = FSP_HEADER_OFFSET + page;
+    header = FSP_HEADER_OFFSET + page;
 
     mlog_write_uint32(header + FSP_SIZE, size, MLOG_4BYTES, mtr);
     mlog_write_uint32(header + FSP_FREE_LIMIT, 0, MLOG_4BYTES, mtr);
     //mlog_write_uint32(header + FSP_LOWEST_NO_WRITE, 0, MLOG_4BYTES, mtr);
     mlog_write_uint32(header + FSP_FRAG_N_USED, 0, MLOG_4BYTES, mtr);
-	
-	flst_init(header + FSP_FREE, mtr);
-	flst_init(header + FSP_FREE_FRAG, mtr);
-	flst_init(header + FSP_FULL_FRAG, mtr);
-	flst_init(header + FSP_SEG_INODES_FULL, mtr);
-	flst_init(header + FSP_SEG_INODES_FREE, mtr);
+
+    flst_init(header + FSP_FREE, mtr);
+    flst_init(header + FSP_FREE_FRAG, mtr);
+    flst_init(header + FSP_FULL_FRAG, mtr);
+    flst_init(header + FSP_SEG_INODES_FULL, mtr);
+    flst_init(header + FSP_SEG_INODES_FREE, mtr);
 
     mlog_write_uint64(header + FSP_SEG_ID, ut_ull_create(0, 1), mtr);
+
+    mutex_enter(&fil_system->mutex);
     fil_space_t *space = fil_space_get_by_id(space_id);
     ut_a(space != NULL);
-	fsp_fill_free_list(false, space, header, mtr);
+    fsp_fill_free_list(false, space, header, mtr);
+    mutex_exit(&fil_system->mutex);
 
-	//btr_create(DICT_CLUSTERED | DICT_UNIVERSAL | DICT_IBUF, space,
-	//			ut_dulint_add(DICT_IBUF_ID_MIN, space), mtr);
+    //btr_create(DICT_CLUSTERED | DICT_UNIVERSAL | DICT_IBUF, space,
+    //			ut_dulint_add(DICT_IBUF_ID_MIN, space), mtr);
 }
 
 

@@ -47,8 +47,8 @@ fil_addr_t flst_read_addr(
 
     ut_ad(faddr && mtr);
 
-    addr.page = mtr_read_uint(faddr + FIL_ADDR_PAGE, MLOG_4BYTES, mtr);
-    addr.boffset = mtr_read_uint(faddr + FIL_ADDR_BYTE, MLOG_2BYTES, mtr);
+    addr.page = mtr_read_uint32(faddr + FIL_ADDR_PAGE, MLOG_4BYTES, mtr);
+    addr.boffset = mtr_read_uint32(faddr + FIL_ADDR_BYTE, MLOG_2BYTES, mtr);
     ut_a(addr.page == FIL_NULL || addr.boffset >= FIL_PAGE_DATA);
     ut_a(ut_align_offset(faddr, UNIV_PAGE_SIZE) >= FIL_PAGE_DATA);
     return(addr);

@@ -52,6 +52,7 @@ enum dberr_t {
 
     DB_TOO_BIG_RECORD,        /*!< a record in an index would not fit on a compressed page,
                      or it would become bigger than 1/2 free space in an uncompressed page frame */
+    DB_READ_ONLY, /*!< Update operation attempted in a read-only transaction */    
     DB_RECORD_NOT_FOUND = 1500,
     DB_END_OF_INDEX,
 

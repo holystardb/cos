@@ -26,6 +26,9 @@ constexpr uint32 MAX_BUFFER_POOLS = 64;
 /** Maximum number of concurrent buffer pool watches */
 #define BUF_POOL_WATCH_SIZE (srv_n_purge_threads + 1)
 
+/*!< The maximum number of page_hash locks */
+#define MAX_PAGE_HASH_LOCKS 1024
+
 
 
 
@@ -185,137 +188,6 @@ enum buf_io_fix {
                    the flush_list */
 };
 
-enum latch_level_t {
-  SYNC_UNKNOWN = 0,
-
-  SYNC_MUTEX = 1,
-
-  RW_LOCK_SX,
-  RW_LOCK_X_WAIT,
-  RW_LOCK_S,
-  RW_LOCK_X,
-  //RW_LOCK_NOT_LOCKED,
-
-  SYNC_LOCK_FREE_HASH,
-
-  SYNC_MONITOR_MUTEX,
-
-  SYNC_ANY_LATCH,
-
-  SYNC_FIL_SHARD,
-
-  SYNC_DOUBLEWRITE,
-
-  SYNC_PAGE_ARCH_OPER,
-
-  SYNC_BUF_FLUSH_LIST,
-  SYNC_BUF_FLUSH_STATE,
-  SYNC_BUF_ZIP_HASH,
-  SYNC_BUF_FREE_LIST,
-  SYNC_BUF_ZIP_FREE,
-  SYNC_BUF_BLOCK,
-  SYNC_BUF_PAGE_HASH,
-  SYNC_BUF_LRU_LIST,
-  SYNC_BUF_CHUNKS,
-
-  SYNC_POOL,
-  SYNC_POOL_MANAGER,
-
-  SYNC_SEARCH_SYS,
-
-  SYNC_WORK_QUEUE,
-
-  SYNC_FTS_TOKENIZE,
-  SYNC_FTS_OPTIMIZE,
-  SYNC_FTS_BG_THREADS,
-  SYNC_FTS_CACHE_INIT,
-  SYNC_RECV,
-
-  SYNC_LOG_WRITER,
-  SYNC_LOG_WRITE_NOTIFIER,
-  SYNC_LOG_FLUSH_NOTIFIER,
-  SYNC_LOG_FLUSHER,
-  SYNC_LOG_CLOSER,
-  SYNC_LOG_CHECKPOINTER,
-  SYNC_LOG_SN,
-  SYNC_PAGE_ARCH,
-  SYNC_PAGE_ARCH_CLIENT,
-  SYNC_LOG_ARCH,
-
-  SYNC_PAGE_CLEANER,
-  SYNC_PURGE_QUEUE,
-  SYNC_TRX_SYS_HEADER,
-  SYNC_REC_LOCK,
-  SYNC_THREADS,
-  SYNC_TRX,
-  SYNC_TRX_SYS,
-  SYNC_LOCK_SYS,
-  SYNC_LOCK_WAIT_SYS,
-
-  SYNC_INDEX_ONLINE_LOG,
-
-  SYNC_IBUF_BITMAP,
-  SYNC_IBUF_BITMAP_MUTEX,
-  SYNC_IBUF_TREE_NODE,
-  SYNC_IBUF_TREE_NODE_NEW,
-  SYNC_IBUF_INDEX_TREE,
-
-  SYNC_IBUF_MUTEX,
-
-  SYNC_FSP_PAGE,
-  SYNC_FSP,
-  SYNC_TEMP_POOL_MANAGER,
-  SYNC_EXTERN_STORAGE,
-  SYNC_RSEG_ARRAY_HEADER,
-  SYNC_TRX_UNDO_PAGE,
-  SYNC_RSEG_HEADER,
-  SYNC_RSEG_HEADER_NEW,
-  SYNC_TEMP_SPACE_RSEG,
-  SYNC_UNDO_SPACE_RSEG,
-  SYNC_TRX_SYS_RSEG,
-  SYNC_TRX_UNDO,
-  SYNC_PURGE_LATCH,
-  SYNC_TREE_NODE,
-  SYNC_TREE_NODE_FROM_HASH,
-  SYNC_TREE_NODE_NEW,
-  SYNC_INDEX_TREE,
-  SYNC_RSEGS,
-  SYNC_UNDO_SPACES,
-
-  SYNC_PERSIST_DIRTY_TABLES,
-  SYNC_PERSIST_AUTOINC,
-
-  SYNC_IBUF_PESS_INSERT_MUTEX,
-  SYNC_IBUF_HEADER,
-  SYNC_DICT_HEADER,
-  SYNC_TABLE,
-  SYNC_STATS_AUTO_RECALC,
-  SYNC_DICT_AUTOINC_MUTEX,
-  SYNC_DICT,
-  SYNC_PARSER,
-  SYNC_FTS_CACHE,
-  SYNC_UNDO_DDL,
-
-  SYNC_DICT_OPERATION,
-
-  SYNC_TRX_I_S_LAST_READ,
-
-  SYNC_TRX_I_S_RWLOCK,
-
-  SYNC_RECV_WRITER,
-
-  /** Level is varying. Only used with buffer pool page locks, which
-  do not have a fixed level, but instead have their level set after
-  the page is locked; see e.g.  ibuf_bitmap_get_map_page(). */
-
-  SYNC_LEVEL_VARYING,
-
-  /** This can be used to suppress order checking. */
-  SYNC_NO_ORDER_CHECK,
-
-  /** Maximum level value */
-  SYNC_LEVEL_MAX = SYNC_NO_ORDER_CHECK
-};
 
 
 class buf_page_t {
@@ -361,8 +233,8 @@ public:
 
     UT_LIST_NODE_T(buf_page_t) list_node;
 
-    lsn_t newest_modification;
-    lsn_t oldest_modification;
+    uint64 newest_modification;
+    uint64 oldest_modification;
 
     UT_LIST_NODE_T(buf_page_t) LRU;
     unsigned old:1; /*!< TRUE if the block is in the old blocks in buf_pool->LRU_old */
@@ -384,18 +256,14 @@ public:
 };
 
 struct buf_block_t {
-  buf_page_t page; /*!< page information; this must
-                   be the first field, so that
-                   buf_pool->page_hash can point
-                   to buf_page_t or buf_block_t */
+  buf_page_t page; /*!< page information; this must be the first field,
+                     so that buf_pool->page_hash can point to buf_page_t or buf_block_t */
   byte *frame;     /*!< pointer to buffer frame which
                    is of size UNIV_PAGE_SIZE, and aligned to an address divisible by UNIV_PAGE_SIZE */
 
   rw_lock_t        rw_lock; /*!< read-write lock of the buffer frame */
 
   UT_LIST_NODE_T(buf_block_t) unzip_LRU;  /* node of the decompressed LRU list */
-
-  unsigned lock_hash_val : 32; /*!< hashed value of the page address in the record lock hash table; protected by buf_block_t::lock */
 
   uint64 modify_clock; /*!< this clock is incremented every
                             time a pointer to a record on the
@@ -468,52 +336,35 @@ typedef struct st_buf_chunk {
 /** @brief The buffer pool statistics structure. */
 struct buf_pool_stat_t {
   uint32 n_page_gets;            /*!< number of page gets performed;
-                                also successful searches through
-                                the adaptive hash index are
-                                counted as page gets; this field
-                                is NOT protected by the buffer
-                                pool mutex */
-  uint32 n_pages_read;           /*!< number of read operations. Accessed
-                                atomically. */
-  uint32 n_pages_written;        /*!< number of write operations. Accessed
-                                atomically. */
-  atomic32_t n_pages_created;        /*!< number of pages created
-                                in the pool with no read. Accessed
-                                atomically. */
-  uint32 n_ra_pages_read_rnd;    /*!< number of pages read in
-                            as part of random read ahead. Not protected. */
-  uint32 n_ra_pages_read;        /*!< number of pages read in
-                                as part of read ahead. Not protected. */
-  uint32 n_ra_pages_evicted;     /*!< number of read ahead
-                             pages that are evicted without
+                                also successful searches through the adaptive hash index are
+                                counted as page gets; this field is NOT protected by the buffer pool mutex */
+  uint32 n_pages_read;           /*!< number of read operations. Accessed atomically. */
+  uint32 n_pages_written;        /*!< number of write operations. Accessed atomically. */
+  atomic32_t n_pages_created;        /*!< number of pages created in the pool with no read. Accessed atomically. */
+  uint32 n_ra_pages_read_rnd;    /*!< number of pages read in as part of random read ahead. Not protected. */
+  uint32 n_ra_pages_read;        /*!< number of pages read in as part of read ahead. Not protected. */
+  uint32 n_ra_pages_evicted;     /*!< number of read ahead pages that are evicted without
                              being accessed. Protected by LRU_list_mutex. */
   uint32 n_pages_made_young;     /*!< number of pages made young, in
-                            calls to buf_LRU_make_block_young(). Protected
-                            by LRU_list_mutex. */
-  uint32 n_pages_not_made_young; /*!< number of pages not made
-                        young because the first access
-                        was not long enough ago, in
-                        buf_page_peek_if_too_old(). Not protected. */
-  uint32 LRU_bytes;              /*!< LRU size in bytes. Protected by
-                                LRU_list_mutex. */
-  uint32 flush_list_bytes;       /*!< flush_list size in bytes.
-                               Protected by flush_list_mutex */
+                            calls to buf_LRU_make_block_young(). Protected by LRU_list_mutex. */
+  uint32 n_pages_not_made_young; /*!< number of pages not made young because the first access
+                        was not long enough ago, in buf_page_peek_if_too_old(). Not protected. */
+  uint32 LRU_bytes;              /*!< LRU size in bytes. Protected by LRU_list_mutex. */
+  uint32 flush_list_bytes;       /*!< flush_list size in bytes. Protected by flush_list_mutex */
 };
 
 /** Flags for flush types */
 enum buf_flush_t {
     BUF_FLUSH_LRU = 0,     /*!< flush via the LRU list */
-    BUF_FLUSH_LIST,        /*!< flush via the flush list
-                           of dirty blocks */
-    BUF_FLUSH_SINGLE_PAGE, /*!< flush via the LRU list
-                           but only a single page */
+    BUF_FLUSH_LIST,        /*!< flush via the flush list of dirty blocks */
+    BUF_FLUSH_SINGLE_PAGE, /*!< flush via the LRU list but only a single page */
     BUF_FLUSH_N_TYPES      /*!< index of last element + 1  */
 };
 
 struct buf_pool_t {
   spinlock_t    lock;      /*!< Buffer pool mutex of this instance */
 
-  spinlock_t chunks_mutex;    /*!< protects (de)allocation of chunks:
+  mutex_t chunks_mutex;    /*!< protects (de)allocation of chunks:
                                 - changes to chunks, n_chunks are performed
                                   while holding this latch,
                                 - reading buf_pool_should_madvise requires
@@ -521,56 +372,41 @@ struct buf_pool_t {
                                 - writing to buf_pool_should_madvise requires
                                   holding these latches for all buf_pool_t-s
                                 */
-  spinlock_t LRU_list_mutex;  /*!< LRU list mutex */
-  spinlock_t free_list_mutex; /*!< free and withdraw list mutex */
-  spinlock_t flush_state_mutex; /*!< Flush state protection mutex */
+  mutex_t LRU_list_mutex;  /*!< LRU list mutex */
+  mutex_t free_list_mutex; /*!< free and withdraw list mutex */
+  mutex_t flush_state_mutex; /*!< Flush state protection mutex */
 
-  uint32 instance_no;            /*!< Array index of this buffer
-                                pool instance */
+  uint32 instance_no;            /*!< Array index of this buffer pool instance */
   uint32 curr_pool_size;         /*!< Current pool size in bytes */
   uint32 LRU_old_ratio;          /*!< Reserve this much of the buffer pool for "old" blocks */
 
-  volatile uint32 n_chunks;               /*!< number of buffer pool chunks */
+  volatile uint32 n_chunks;     /*!< number of buffer pool chunks */
   volatile uint32 n_chunks_new; /*!< new number of buffer pool chunks */
   buf_chunk_t *chunks;         /*!< buffer pool chunks */
-  buf_chunk_t *chunks_old;     /*!< old buffer pool chunks to be freed
-                               after resizing buffer pool */
+  buf_chunk_t *chunks_old;     /*!< old buffer pool chunks to be freed after resizing buffer pool */
   uint32 curr_size;             /*!< current pool size in pages */
   uint32 old_size;              /*!< previous pool size in pages */
   page_no_t read_ahead_area;   /*!< size in pages of the area which
-                               the read-ahead algorithms read if
-                               invoked */
-  HASH_TABLE *page_hash;     /*!< hash table of buf_page_t or
-                               buf_block_t file pages,
-                               buf_page_in_file() == TRUE,
-                               indexed by (space_id, offset).
-                               page_hash is protected by an
-                               array of mutexes. */
-  HASH_TABLE *page_hash_old; /*!< old pointer to page_hash to be
-                               freed after resizing buffer pool */
+                               the read-ahead algorithms read if invoked */
+  HASH_TABLE *page_hash;     /*!< hash table of buf_page_t or buf_block_t file pages,
+                               buf_page_in_file() == TRUE, indexed by (space_id, offset).
+                               page_hash is protected by an array of mutexes. */
+  HASH_TABLE *page_hash_old; /*!< old pointer to page_hash to be freed after resizing buffer pool */
   HASH_TABLE *zip_hash;      /*!< hash table of buf_block_t blocks
-                               whose frames are allocated to the
-                               zip buddy system,
-                               indexed by block->frame */
-  uint32 n_pend_reads;          /*!< number of pending read
-                               operations. Accessed atomically */
-  uint32 n_pend_unzip;          /*!< number of pending decompressions.
-                               Accessed atomically. */
+                               whose frames are allocated to the zip buddy system, indexed by block->frame */
+  uint32 n_pend_reads;          /*!< number of pending read operations. Accessed atomically */
+  uint32 n_pend_unzip;          /*!< number of pending decompressions. Accessed atomically. */
 
   uint64 last_printout_time;
-  /*!< when buf_print_io was last time
-  called. Accesses not protected. */
+  /*!< when buf_print_io was last time called. Accesses not protected. */
   //buf_buddy_stat_t buddy_stat[BUF_BUDDY_SIZES_MAX + 1];
   /*!< Statistics of buddy system,
-  indexed by block size. Protected by
-  zip_free mutex, except for the used
-  field, which is also accessed
-  atomically */
+  indexed by block size. Protected by zip_free mutex, except for the used field, which is also accessed atomically */
   buf_pool_stat_t stat;     /*!< current statistics */
   buf_pool_stat_t old_stat; /*!< old statistics */
 
 
-  spinlock_t flush_list_mutex; /*!< mutex protecting the
+  mutex_t flush_list_mutex; /*!< mutex protecting the
                                 flush list access. This mutex
                                 protects flush_list, flush_rbt
                                 and bpage::list pointers when
@@ -578,35 +414,21 @@ struct buf_pool_t {
                                 also protects writes to
                                 bpage::oldest_modification and
                                 flush_list_hp */
-  UT_LIST_BASE_NODE_T(buf_page_t) flush_list;
-  /*!< base node of the modified block
-  list */
+  UT_LIST_BASE_NODE_T(buf_page_t) flush_list; /*!< base node of the modified block list */
   bool32 init_flush[BUF_FLUSH_N_TYPES];
-  /*!< this is TRUE when a flush of the
-  given type is being initialized.
+  /*!< this is TRUE when a flush of the given type is being initialized.
   Protected by flush_state_mutex. */
   uint32 n_flush[BUF_FLUSH_N_TYPES];
-  /*!< this is the number of pending
-  writes in the given flush type.
+  /*!< this is the number of pending writes in the given flush type.
   Protected by flush_state_mutex. */
   os_event_t no_flush[BUF_FLUSH_N_TYPES];
-  /*!< this is in the set state
-  when there is no flush batch
-  of the given type running. Protected by
-  flush_state_mutex. */
-  ib_rbt_t *flush_rbt;    /*!< a red-black tree is used
-                          exclusively during recovery to
-                          speed up insertions in the
-                          flush_list. This tree contains
-                          blocks in order of
-                          oldest_modification LSN and is
-                          kept in sync with the
-                          flush_list.
-                          Each member of the tree MUST
-                          also be on the flush_list.
-                          This tree is relevant only in
-                          recovery and is set to NULL
-                          once the recovery is over.
+  /*!< this is in the set state when there is no flush batch
+  of the given type running. Protected by flush_state_mutex. */
+  ib_rbt_t *flush_rbt;    /*!< a red-black tree is used exclusively during recovery to
+                          speed up insertions in the flush_list. This tree contains
+                          blocks in order of oldest_modification LSN and is kept in sync with the flush_list.
+                          Each member of the tree MUST also be on the flush_list.
+                          This tree is relevant only in recovery and is set to NULL once the recovery is over.
                           Protected by flush_list_mutex */
   uint32 freed_page_clock; /*!< a sequence number used
                          to count the number of buffer
@@ -629,19 +451,11 @@ struct buf_pool_t {
                           buffer pool. Accessed protected by
                           memory barriers. */
 
-  lsn_t track_page_lsn; /* Pagge Tracking start LSN. */
+  uint64 track_page_lsn; /* Pagge Tracking start LSN. */
 
-  lsn_t max_lsn_io; /* Maximum LSN for which write io
-                    has already started. */
+  uint64 max_lsn_io; /* Maximum LSN for which write io has already started. */
 
-  /* @} */
-
-  /** @name LRU replacement algorithm fields */
-  /* @{ */
-
-  UT_LIST_BASE_NODE_T(buf_page_t) free;
-  /*!< base node of the free
-  block list */
+  UT_LIST_BASE_NODE_T(buf_page_t) free; /*!< base node of the free block list */
 
   UT_LIST_BASE_NODE_T(buf_page_t) withdraw;
   /*!< base node of the withdraw
@@ -650,8 +464,7 @@ struct buf_pool_t {
   reuse the blocks will be removed.
   Protected by free_list_mutex */
 
-  uint32 withdraw_target; /*!< target length of withdraw
-                         block list, when withdrawing */
+  uint32 withdraw_target; /*!< target length of withdraw block list, when withdrawing */
 
   UT_LIST_BASE_NODE_T(buf_page_t) LRU;  /*!< base node of the LRU list */
 
@@ -702,18 +515,21 @@ struct buf_pool_t {
 
 
 dberr_t buf_pool_init(uint64 total_size, uint32 n_instances);
-buf_pool_t *buf_pool_get(const page_id_t &page_id);
-buf_pool_t *buf_pool_from_bpage(const buf_page_t *bpage);
+buf_pool_t* buf_pool_get(const page_id_t &page_id);
+buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
+buf_pool_t* buf_pool_from_block(const buf_block_t *block);
 
 
 
 
-/*!< in: buffer pool instance, or NULL for round-robin selection of the buffer pool */
+// in: buffer pool instance, or NULL for round-robin selection of the buffer pool
 buf_block_t* buf_block_alloc(buf_pool_t *buf_pool);
 
-/********************************************************************//**
-Frees a buffer block which does not contain a file page. */
+// Frees a buffer block which does not contain a file page
 void buf_block_free(buf_block_t *    block);
+
+buf_block_t* buf_block_align(const byte* ptr);
+
 
 /********************************************************************//**
 Initializes a page to the buffer buf_pool.
@@ -721,10 +537,11 @@ The page is usually not read from a file even if it cannot be found in the buffe
 This is one of the functions which perform to a block a state transition NOT_USED => FILE_PAGE (the other is buf_page_get_gen).
 @return pointer to the block, page bufferfixed */
 buf_block_t* buf_page_create(
-    uint32   space,  /*!< in: space id */
-    uint32   offset, /*!< in: offset of the page within space in units of a page */
-    uint32   zip_size,/*!< in: compressed page size, or 0 */
-    mtr_t*  mtr);    /*!< in: mini-transaction handle */
+    const page_id_t &page_id,
+    const page_size_t &page_size,
+    rw_lock_type_t rw_latch,
+    mtr_t *mtr);
+
 
 /** This is the general function used to get access to a database page.
     @param[in] page_id      page id
@@ -739,7 +556,8 @@ buf_block_t* buf_page_create(
     @return pointer to the block or NULL */
 buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
     uint32 rw_latch, buf_block_t *guess, Page_fetch mode,
-    const char *file, uint32 line, mtr_t *mtr);
+    const char *file, uint32 line, mtr_t *mtr, bool32 dirty_with_no_latch = FALSE);
+
 
 /** NOTE! The following macros should be used instead of buf_page_get_gen,
  to improve debugging. Only values RW_S_LATCH and RW_X_LATCH are allowed in LA! */

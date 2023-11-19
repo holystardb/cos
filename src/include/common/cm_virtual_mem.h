@@ -4,8 +4,12 @@
 #include "cm_type.h"
 #include "cm_list.h"
 #include "cm_mutex.h"
+#include "cm_file.h"
 
 #define VM_PAGE_SIZE              (128 * 1024)
+#define VM_PAGE_HEADER_SIZE       16
+#define VM_GET_PAGE_DATA(page)    ((byte *)page + VM_PAGE_HEADER_SIZE)
+
 #define VM_CTRLS_PER_PAGE         (uint32)(VM_PAGE_SIZE / ut_align8(sizeof(vm_ctrl_t)))
 #define VM_CTRL_PAGE_MAX_COUNT    (32 * 1024)  //32K, max memory is 1TB
 #define VM_MAX_CTRLS              (uint32)(VM_CTRLS_PER_PAGE * VM_CTRL_PAGE_MAX_COUNT)
@@ -49,19 +53,46 @@ typedef struct st_vm_page_pool {
 #define VM_CTRL_POOL_COUNT            16
 #define VM_PAGE_POOL_COUNT            16
 
+
+#define VM_FILE_COUNT                 16
+
+typedef struct st_vm_page_slot {
+    union {
+        uint64  bitmaps;  // total 8MB per page slot
+        byte    byte_bitmap[8];
+    } val;
+    struct st_vm_page_slot *next;
+} vm_page_slot_t;
+
+typedef struct st_vm_file {
+    char               *name;
+    uint32              id;
+    os_file_t           handle;
+    uint32              page_max_count;
+    //uint32             page_hwm;
+    mutex_t             mutex;
+    vm_page_slot_t     *free_slots;
+    vm_page_slot_t     *full_slots;
+    UT_LIST_BASE_NODE_T(vm_page_t) slot_pages;
+} vm_file_t;
+
 typedef struct st_vm_pool {
     spinlock_t       lock;
     vm_swapper_t    *swapper;
     char            *buf;
+    uint64           memory_size;
     uint32           page_count;
     uint32           page_hwm;
     uint32           ctrl_page_count;
 
-    //vm_file_t        files[10];
+    atomic32_t       vm_file_index;
+    vm_file_t        vm_files[VM_FILE_COUNT];
     uint8            ctrl_pool_index;
     uint8            page_pool_index;
     vm_ctrl_pool_t   free_ctrl_pool[VM_CTRL_POOL_COUNT];
     vm_page_pool_t   free_page_pool[VM_PAGE_POOL_COUNT];
+
+    os_aio_array_t  *aio_array;
 
     UT_LIST_BASE_NODE_T(vm_page_t) free_pages;
     UT_LIST_BASE_NODE_T(vm_ctrl_t) free_ctrls;
@@ -74,6 +105,9 @@ vm_ctrl_t* vm_alloc(vm_pool_t *pool);
 void vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl);
 bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl);
 void vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl);
+
+
+
 
 
 

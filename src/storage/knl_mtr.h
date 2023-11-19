@@ -12,25 +12,59 @@ extern "C" {
 
 /* Initial 'payload' size in bytes in a dynamic array block */
 #define DYN_ARRAY_DATA_SIZE             512
-#define DYN_ARRAY_BLOCK_SIZE            (DYN_ARRAY_DATA_SIZE + ut_align8(sizeof(dyn_block_t)))
+
+/** Value of dyn_block_t::magic_n */
+#define DYN_BLOCK_MAGIC_N     375767
+/** Flag for dyn_block_t::used that indicates a full block */
+#define DYN_BLOCK_FULL_FLAG   0x1000000UL
+
+
+//Gets the first block in a dyn array.
+#define dyn_array_get_first_block(arr) UT_LIST_GET_FIRST((arr)->used_blocks)
+
+//Gets the last block in a dyn array.
+#define dyn_array_get_last_block(arr) UT_LIST_GET_LAST((arr)->used_blocks)
+
+//Gets the next block in a dyn array.
+#define dyn_array_get_next_block(arr, block) UT_LIST_GET_NEXT(list_node, block)
+
+//Gets the previous block in a dyn array.
+#define dyn_array_get_prev_block(arr, block) UT_LIST_GET_PREV(list_node, block)
+
 
 typedef struct st_dyn_block{
     uint32      used; /* number of data bytes used in this block */
-    byte        data[DYN_ARRAY_DATA_SIZE]; /* storage for array elements */	
+    byte       *data; /* storage for array elements */	
     UT_LIST_NODE_T(struct st_dyn_block) list_node; /* linear list node: used in all blocks */
 } dyn_block_t;
 
 typedef struct st_dyn_array{
     memory_pool_t           *pool;
     uint32                   current_page_used; // number of data bytes used in last memory_page_t
+    //
+    dyn_block_t              first_block;
+    byte                     first_block_data[DYN_ARRAY_DATA_SIZE];
+    //
     UT_LIST_BASE_NODE_T(memory_page_t) pages;
-    UT_LIST_BASE_NODE_T(dyn_block_t) blocks;
+    UT_LIST_BASE_NODE_T(dyn_block_t)   used_blocks;
+    UT_LIST_BASE_NODE_T(dyn_block_t)   free_blocks;
+
+    uint32 buf_end; /*!< only in the debug version: if dyn array is opened, this is the buffer end offset, else this is 0 */
+    uint32 magic_n; /*!< magic number (DYN_BLOCK_MAGIC_N) */
 } dyn_array_t;
 
 
 /* Logging modes for a mini-transaction */
-#define MTR_LOG_ALL         21 /* default mode: log all operations modifying disk-based data */
-#define MTR_LOG_NONE        22 /* log no operations */
+#define MTR_LOG_ALL            21 /* default mode: log all operations modifying disk-based data */
+#define MTR_LOG_NONE           22 /* log no operations */
+#define	MTR_LOG_NO_REDO        23 /* Don't generate REDO */
+/*#define	MTR_LOG_SPACE      23 */ /* log only operations modifying file space page allocation data (operations in fsp0fsp.* ) */
+#define MTR_LOG_SHORT_INSERTS  24 /* inserts are logged in a shorter form */
+
+#define MTR_ACTIVE             12231
+#define MTR_COMMITTING         56456
+#define MTR_COMMITTED          34676
+
 
 /* Types for the mlock objects to store in the mtr memo; NOTE that the
 first 3 values must be RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH */
@@ -288,12 +322,6 @@ typedef struct st_mtr{
     {
         return (state == MTR_STATE_ACTIVE);
     }
-
-    void memo_push(void* object, uint32 type);
-
-    void s_lock(rw_lock_t* lock, const char* file, uint32 line);
-    void x_lock(rw_lock_t* lock, const char* file, uint32 line);
-
 } mtr_t;
 
 #define MTR_MAGIC_N      54551
@@ -307,9 +335,12 @@ typedef struct mtr_memo_slot_t{
 
 
 
+bool32 mtr_init(memory_area_t *area);
 
 mtr_t* mtr_start(mtr_t *mtr);
 void mtr_commit(mtr_t *mtr);
+
+
 
 byte* mlog_open(mtr_t *mtr, uint32 size);
 void mlog_close(mtr_t *mtr, byte *ptr);
@@ -348,17 +379,36 @@ void mlog_write_initial_log_record(
 	mlog_id_t	type,	/*!< in: log item type: MLOG_1BYTE, ... */
 	mtr_t*		mtr);	/*!< in: mini-transaction handle */
 
-uint32 mtr_read_uint(
+uint32 mtr_read_uint32(
 	const byte*	ptr,	/*!< in: pointer from where to read */
 	mlog_id_t	type,	/*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
 	mtr_t*		mtr);
 				/*!< in: mini-transaction handle */
 
+void mlog_catenate_uint32(mtr_t *mtr,
+    uint32 val, /*!< in: value to write */
+    uint32 type); /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
 
-/** Check if memo contains the given page.
-@return TRUE if contains */
-#define mtr_memo_contains_page(m, p, t)     FALSE
-//        (m)->memo_contains_page_flagged((p), (t))
+uint32 mtr_get_log_mode(mtr_t *mtr);
+
+void mtr_memo_push(mtr_t *mtr,  /*!< in: mtr */
+    void *object, /*!< in: object */
+    uint32 type);  /*!< in: object type: MTR_MEMO_S_LOCK, ... */
+
+// Check if memo contains the given page
+bool32 mtr_memo_contains_page(mtr_t* mtr, /*!< in: mtr */
+    const byte* ptr, /*!< in: pointer to buffer frame */
+    uint32 type); /*!< in: type of object */
+
+
+void mtr_s_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
+void mtr_x_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
+
+
+// This macro locks an rw-lock in s-mode
+#define mtr_s_lock(B, MTR) mtr_s_lock_func((B), __FILE__, __LINE__, (MTR))
+// This macro locks an rw-lock in x-mode
+#define mtr_x_lock(B, MTR) mtr_x_lock_func((B), __FILE__, __LINE__, (MTR))
 
 
 #ifdef __cplusplus

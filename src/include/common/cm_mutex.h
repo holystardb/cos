@@ -92,9 +92,8 @@ inline void spin_lock_init(spinlock_t *lock)
 {
     os_wmb;
 
-    ut_ad(lock->thread_id = 0);
-    ut_ad(lock->magic_n = SPINLOCK_MAGIC_N);
-
+    lock->thread_id = 0;
+    lock->magic_n = SPINLOCK_MAGIC_N;
     lock->lock = 0;
 }
 

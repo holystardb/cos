@@ -186,13 +186,13 @@ definition rounds the number of bytes upward. */
 
 
 /* File space extent size in pages */
-#define	FSP_EXTENT_SIZE		64
+#define FSP_EXTENT_SIZE 64
 
 /* On a page of any file segment, data may be put starting from this offset: */
-#define FSEG_PAGE_DATA		FIL_PAGE_DATA
+#define FSEG_PAGE_DATA FIL_PAGE_DATA
 
 /* File segment header which points to the inode describing the file segment */
-typedef	byte	fseg_header_t;
+typedef byte fseg_header_t;
 
 
 #define FSEG_HDR_SPACE		0	/* space id of the inode */
@@ -202,11 +202,24 @@ typedef	byte	fseg_header_t;
 #define FSEG_HEADER_SIZE	10
 
 
+#define FSP_XDES_OFFSET             0   /* !< extent descriptor */
+#define FSP_IBUF_BITMAP_OFFSET      1   /* !< insert buffer bitmap */
+                                        /* The ibuf bitmap pages are the ones whose page number is the number
+                                           above plus a multiple of XDES_DESCRIBED_PER_PAGE */
+#define FSP_FIRST_INODE_PAGE_NO     2   /*!< in every tablespace */
+                                        /* The following pages exist in the system tablespace (space 0). */
+#define FSP_IBUF_HEADER_PAGE_NO     3   /*!< insert buffer header page, in tablespace 0 */
+#define FSP_IBUF_TREE_ROOT_PAGE_NO  4   /*!< insert buffer B-tree root page in tablespace 0 */
+                                        /* The ibuf tree root page number in tablespace 0;
+                                           its fseg inode is on the page number FSP_FIRST_INODE_PAGE_NO */
+#define FSP_TRX_SYS_PAGE_NO         5   /*!< transaction system header, in tablespace 0 */
+#define	FSP_FIRST_RSEG_PAGE_NO      6   /*!< first rollback segment page, in tablespace 0 */
+#define FSP_DICT_HDR_PAGE_NO        7   /*!< data dictionary header page, in tablespace 0 */
 
 
 
 /* 'null' (undefined) page offset in the context of file spaces */
-#define	FIL_NULL        0xFFFFFFFF
+#define FIL_NULL        0xFFFFFFFF
 
 /* Space address data type; this is intended to be used when
 addresses accurate to a byte are stored in file pages. If the page part
@@ -214,8 +227,8 @@ of the address is FIL_NULL, the address is considered undefined. */
 
 typedef byte fil_faddr_t; /* 'type' definition in C: an address stored in a file page is a string of bytes */
 #define FIL_ADDR_PAGE   0   /* first in address is the page offset */
-#define	FIL_ADDR_BYTE   4   /* then comes 2-byte byte offset within page*/
-#define	FIL_ADDR_SIZE   6   /* address size is 6 bytes */
+#define FIL_ADDR_BYTE   4   /* then comes 2-byte byte offset within page*/
+#define FIL_ADDR_SIZE   6   /* address size is 6 bytes */
 
 /* A struct for storing a space address FIL_ADDR, when it is used in C program data structures. */
 typedef struct fil_addr_struct {
@@ -237,6 +250,7 @@ extern fil_addr_t   fil_addr_null;
                                        the file has been flushed to disk at least up to this lsn */
 #define FIL_PAGE_ARCH_LOG_NO    34  /* this is only defined for the first page in a data file:
                                        the latest archived log file number when the flush lsn above was written */
+#define FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID  34 /*!< starting from 4.1.x this contains the space id of the page */
 #define FIL_PAGE_DATA           38  /* start of the data on the page */
 
 #define FIL_PAGE_SPACE_ID       34
@@ -269,13 +283,32 @@ typedef struct st_fil_node {
     UT_LIST_NODE_T(struct st_fil_node) lru_list_node; /* link field for the LRU list */
 } fil_node_t;
 
+/** Space types */
+#define FIL_TABLESPACE   501  // tablespace
+#define FIL_LOG          502  // redo log
+
 /* Space types */
 #define FIL_SYSTEM_SPACE_ID           0
 #define FIL_REDO_SPACE_ID             1
 #define FIL_ARCH_LOG_SPACE_ID         2
 #define FIL_UNDO_SPACE_ID             3
 #define FIL_TEMP_SPACE_ID             4
+#define FIL_DICT_SPACE_ID             5
 #define FIL_USER_SPACE_ID             100
+
+/** Use maximum UINT value to indicate invalid space ID. */
+#define FIL_INVALID_SPACE_ID          0xFFFFFFFF
+
+
+
+
+#define SRV_INVALID_SPACE_ID          0xFFFFFFFF
+#define SRV_DICT_SPACE_ID             0xFFFFFFFE
+#define SRV_TEMP_SPACE_ID             0xFFFFFFFD
+#define SRV_REDO_SPACE_ID             0xFFFFFFFC
+#define SRV_UNDO_SPACE_ID             0xFFFFFFFB
+#define SRV_SYSTEM_SPACE_ID           0x00000000
+
 
 #define M_FIL_SPACE_NAME_LEN            64
 
@@ -290,6 +323,10 @@ typedef struct st_fil_space {
     uint32       id;  /* space id */
     uint32       purpose;  // Space types
     uint32       flags;
+
+    uint32       size_in_header; /* FSP_SIZE in the tablespace header; 0 if not known yet */
+    uint32       free_limit; /*!< contents of FSP_FREE_LIMIT */
+    uint32       flags; /*!< tablespace flags; see fsp_flags_is_valid(), page_size_t(ulint) (constructor) */
 
     uint32       page_size;  /* space size in pages */
     /* number of reserved free extents for ongoing operations like B-tree page split */
@@ -327,6 +364,69 @@ typedef struct st_fil_system {
     UT_LIST_BASE_NODE_T(fil_node_t) fil_node_lru;
 } fil_system_t;
 
+
+// Check if the space_id is for a system-tablespace (shared + temp).
+inline bool32 is_system_tablespace(uint32 id)
+{
+    return(id == FIL_SYSTEM_SPACE_ID || id == FIL_TEMP_SPACE_ID);
+}
+
+// Check if shared-system or undo tablespace.
+inline bool32 is_system_or_undo_tablespace(uint32     id)
+{
+    return(id == FIL_SYSTEM_SPACE_ID || id <= FIL_UNDO_SPACE_ID);
+}
+
+
+// Check if tablespace is dd tablespace.
+inline bool32 fsp_is_dd_tablespace(space_id_t space_id)
+{
+    //return (space_id == dict_sys_t::s_space_id);
+    return FALSE;
+}
+
+/* Check whether a space id is an undo tablespace ID Undo tablespaces
+   have space_id's starting 1 less than the redo logs.
+   They are numbered down from this.  Since rseg_id=0 always refers to the system tablespace,
+   undo_space_num values start at 1.  The current limit is 127.
+   The translation from an undo_space_num is: undo space_id = log_first_space_id - undo_space_num
+*/
+inline bool32 fsp_is_undo_tablespace(space_id_t space_id)
+{
+  /* Starting with v8, undo space_ids have a unique range. */
+  if (space_id >= UNDO_SPACE_MIN_ID && space_id <= UNDO_SPACE_MAX_ID) {
+    return (true);
+  }
+
+  /* If upgrading from 5.7, there may be a list of old-style
+  undo tablespaces.  Search them. */
+  //if (trx_sys_undo_spaces != nullptr) {
+  //  return (trx_sys_undo_spaces->contains(space_id));
+  //}
+
+  return (false);
+}
+
+// Check if tablespace is global temporary.
+inline bool32 fsp_is_global_temporary(space_id_t space_id)
+{
+    //return (space_id == srv_tmp_space.space_id());
+    return false;
+}
+
+// Check if the tablespace is session temporary.
+inline bool32 fsp_is_session_temporary(space_id_t space_id)
+{
+    return (space_id > TEMP_SPACE_MIN_ID && space_id <= TEMP_SPACE_MAX_ID);
+}
+
+// Check if tablespace is system temporary.
+inline bool32 fsp_is_system_temporary(space_id_t space_id)
+{
+    return (fsp_is_global_temporary(space_id) || fsp_is_session_temporary(space_id));
+}
+
+
 bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 space_max_count, uint32 fil_node_max_count);
 fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
 void fil_space_destroy(uint32 space_id);
@@ -341,6 +441,7 @@ rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags = NULL);
 
 bool32 fsp_is_system_temporary(space_id_t space_id);
 fsp_header_t* fsp_get_space_header(uint32 id, const page_size_t& page_size, mtr_t* mtr);
+void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr);
 
 bool fil_addr_is_null(fil_addr_t addr);
 

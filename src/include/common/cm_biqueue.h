@@ -29,7 +29,7 @@ typedef struct
     uint32            node_size;
     uint32            slot_count;
     char            **slot;
-    uint32	          slot_index;
+    uint32            slot_index;
     spinlock_t        lock;
     UT_LIST_BASE_NODE_T(biqueue_node_t) free_list;
 } biqueue_t;

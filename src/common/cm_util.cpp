@@ -73,7 +73,7 @@ void* ut_align(
     ut_ad(((align_no - 1) & align_no) == 0);
     ut_ad(ptr);
 
-    ut_ad(sizeof(void*) == sizeof(uint32));
+    //ut_ad(sizeof(void*) == sizeof(uint32));
 
     return((void*)((((uint64)ptr) + align_no - 1) & ~((uint64)(align_no - 1))));
 }
@@ -86,7 +86,7 @@ uint32 ut_align_offset(
     ut_ad(((align_no - 1) & align_no) == 0);
     ut_ad(ptr);
 
-    ut_ad(sizeof(void*) == sizeof(uint32));
+    //ut_ad(sizeof(void*) == sizeof(uint32));
 
     return (((uint64)ptr) & (align_no - 1));
 }
@@ -114,9 +114,35 @@ void* ut_align_down(
     ut_ad(((align_no - 1) & align_no) == 0);
     ut_ad(ptr);
 
-    ut_ad(sizeof(void*) == sizeof(uint32));
+    //ut_ad(sizeof(void*) == sizeof(uint32));
 
     return((void*)((((uint64)ptr)) & ~((uint64)(align_no - 1))));
+}
+
+//Rounds a 64-bit integer downward to a multiple of a power of 2.
+//return: rounded value
+uint64 ut_uint64_align_down(
+    uint64 n, //in: number to be rounded
+    uint32 align_no) //in: align by this number which must be a power of 2
+{
+    ut_ad(align_no > 0);
+    ut_ad(ut_is_2pow(align_no));
+
+    return(n & ~((uint64) align_no - 1));
+}
+
+//Rounds ib_uint64_t upward to a multiple of a power of 2.
+//return: rounded value
+uint64 ut_uint64_align_up(
+    uint64 n, //in: number to be rounded
+    uint32 align_no) //in: align by this number which must be a power of 2
+{
+    uint64 align_1 = (uint64) align_no - 1;
+
+    ut_ad(align_no > 0);
+    ut_ad(ut_is_2pow(align_no));
+
+    return((n + align_1) & ~align_1);
 }
 
 // Gets the nth bit of a uint32. */

@@ -1,11 +1,12 @@
 #include "cm_type.h"
 #include "cm_memory.h"
 #include "cm_log.h"
-#include "knl_handler.h"
 #include "cm_dbug.h"
 #include "cm_config.h"
+#include "cm_file.h"
 #include "cm_thread.h"
-
+#include "knl_handler.h"
+#include "knl_server.h"
 #include "guc.h"
 
 /*
@@ -118,6 +119,32 @@ void initialize_guc_options(char *config_file)
     }
 }
 
+bool32 knl_server_init(void)
+{
+    dberr_t err;
+
+    srv_buf_pool_size = (g_buffer_pool_size * 1024 * 1024) / g_buffer_pool_instances;
+    srv_buf_pool_size = srv_buf_pool_size * g_buffer_pool_instances;
+    srv_buf_pool_instances = g_buffer_pool_instances;
+
+    srv_data_home = g_base_directory;
+    srv_system_file_size = 1024 * 1024;
+    srv_system_file_max_size = 10 * 1024 * 1024;
+    srv_system_file_auto_extend_size = 1024 * 1024;
+
+    srv_redo_log_buffer_size = g_redo_log_buffer_size * 1024 * 1024;
+    srv_redo_log_file_size = g_redo_log_file_size * 1024 * 1024;
+    srv_redo_log_file_count = g_redo_log_files;
+
+    srv_undo_buffer_size = g_undo_buffer_size * 1024 * 1024;
+
+    srv_max_n_open = g_open_files_limit;
+    srv_space_max_count = 10;
+    srv_fil_node_max_count = 10;
+
+
+    return DB_SUCCESS;
+}
 
 int main(int argc, const char *argv[])
 {
@@ -125,8 +152,27 @@ int main(int argc, const char *argv[])
 
     initialize_guc_options(config_file);
 
+    os_file_init();
+
+
+    memory_area_t* marea;
+    uint64 total_memory_size = 1024 * 1024;
+    bool32 is_extend = FALSE;
+    marea = marea_create(total_memory_size, is_extend);
+
+
     knl_server_init();
+    knl_server_initialize(marea);
 
     return 0;
+}
+
+
+void aio_test()
+{
+    file->handle =
+        os_file_create(innodb_log_file_key, file->name, OS_FILE_OPEN,
+                       OS_FILE_AIO, OS_LOG_FILE, read_only_mode, &success);
+
 }
 

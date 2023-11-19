@@ -1,4 +1,4 @@
-//#include <my_global.h>
+#include "cm_type.h"
 #include "m_string.h"
 #include "m_ctype.h"
 //#include "my_sys.h"  /* Needed for MY_ERRNO_ERANGE */

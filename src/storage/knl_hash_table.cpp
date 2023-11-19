@@ -9,8 +9,11 @@ HASH_TABLE* HASH_TABLE_CREATE(uint32 n) /*!< in: number of array cells */
     table = (HASH_TABLE*)malloc(sizeof(HASH_TABLE) + sizeof(HASH_CELL_T) * n);
     table->array = (HASH_CELL_T*)((char *)table + sizeof(HASH_TABLE));
     table->n_cells = n;
-
+    table->type = HASH_TABLE_SYNC_NONE;
     table->magic_n = HASH_TABLE_MAGIC_N;
+
+    /* Initialize the cell array */
+    memset(table->array, 0x0, table->n_cells * sizeof(*table->array));
 
     return table;
 }

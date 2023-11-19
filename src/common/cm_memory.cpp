@@ -3,12 +3,10 @@
 #include "cm_util.h"
 #include "cm_log.h"
 
-THREAD_LOCAL memory_pool_t     *current_memory_pool = NULL;
 THREAD_LOCAL memory_context_t  *current_memory_context = NULL;
 
 
 #define M_CONTEXT_PAGE_SIZE       8192 // 8KB
-#define PageData(page)            ((char *)page + MemoryPageHeaderSize)
 
 uint32 MemoryContextHeaderSize = ut_align8(sizeof(memory_context_t));
 uint32 MemoryPageHeaderSize = ut_align8(sizeof(memory_page_t));
@@ -193,7 +191,7 @@ static void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
 {
     memory_context_t *ctx = NULL;
     uint32 num = pool->page_size / MemoryContextHeaderSize;
-    char *buf = PageData(page);
+    char *buf = MEM_PAGE_DATA_PTR(page);
 
     for (uint32 i = 0; i < num; i++) {
         ctx = (memory_context_t *)(buf + i * MemoryContextHeaderSize);
@@ -264,7 +262,7 @@ static bool32 mcontext_page_extend(memory_context_t *context)
     }
 
     spin_lock(&context->lock, NULL);
-    mem_buf_t *buf = (mem_buf_t *)PageData(page);
+    mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
     buf->offset = 0;
     buf->buf = (char *)buf + MemoryBufHeaderSize;
     UT_LIST_ADD_LAST(list_node, context->used_buf_pages, page);
@@ -287,7 +285,7 @@ void* mcontext_push(memory_context_t *context, uint32 size)
         spin_lock(&context->lock, NULL);
         page = UT_LIST_GET_LAST(context->used_buf_pages);
         if (page) {
-            mem_buf_t *mem_buf = (mem_buf_t *)PageData(page);
+            mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
             if (context->pool->page_size - mem_buf->offset >= align_size) {
                 ptr = mem_buf->buf + mem_buf->offset;
                 mem_buf->offset += align_size;
@@ -316,7 +314,7 @@ void mcontext_pop(memory_context_t *context, void *ptr, uint32 size)
     spin_lock(&context->lock, NULL);
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     if (page) {
-        mem_buf_t *buf = (mem_buf_t *)PageData(page);
+        mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
         if (buf->offset >= align_size && (ptr == NULL || ptr == buf->buf + buf->offset - align_size)) {
             buf->offset -= align_size;
             if (buf->offset == 0) {
@@ -342,7 +340,7 @@ void mcontext_pop2(memory_context_t *context, void *ptr)
     spin_lock(&context->lock, NULL);
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     while (page) {
-        mem_buf_t *mem_buf = (mem_buf_t *)PageData(page);
+        mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
         if ((char *)mem_buf < (char *)ptr && ((uint32)((char *)ptr - mem_buf->buf) < context->pool->page_size)) {
             if ((char *)ptr != mem_buf->buf) {
                 page = UT_LIST_GET_NEXT(list_node, page);
@@ -470,7 +468,7 @@ static bool32 mcontext_block_alloc_page(memory_context_t *context)
     UT_LIST_ADD_LAST(list_node, context->used_block_pages, page);
 
     //
-    char *curr_ptr = PageData(page);
+    char *curr_ptr = MEM_PAGE_DATA_PTR(page);
     uint32 used = 0;
     uint32 mem_block_min_size = 2 * MemoryBlockHeaderSize;
     while (context->pool->page_size - used >= MEM_BLOCK_MIN_SIZE) {
@@ -494,7 +492,7 @@ static bool32 mcontext_block_alloc_page(memory_context_t *context)
 
 static mem_block_t* mcontext_block_get_buddy(memory_context_t *context, mem_block_t* block)
 {
-    char *data_ptr = PageData(block->page);
+    char *data_ptr = MEM_PAGE_DATA_PTR(block->page);
     mem_block_t *buddy;
 
     if ((((char *)block - data_ptr) % (2 * block->size)) == 0) {

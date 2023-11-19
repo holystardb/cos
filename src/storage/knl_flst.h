@@ -91,22 +91,22 @@ uint32 flst_get_len(
 
 /* Gets list first node address. */
 fil_addr_t flst_get_first(
-    flst_base_node_t* base, /* in: pointer to base node */
+    const flst_base_node_t* base, /* in: pointer to base node */
     mtr_t*   mtr); /* in: mini-transaction handle */
 
 /* Gets list last node address. */
 fil_addr_t flst_get_last(
-    flst_base_node_t* base, /* in: pointer to base node */
+    const flst_base_node_t* base, /* in: pointer to base node */
     mtr_t*   mtr); /* in: mini-transaction handle */
 
 /* Gets list next node address. */
 fil_addr_t flst_get_next_addr(
-    flst_node_t* node, /* in: pointer to node */
+    const flst_node_t* node, /* in: pointer to node */
     mtr_t*  mtr); /* in: mini-transaction handle */
 
 /* Gets list prev node address. */
 fil_addr_t flst_get_prev_addr(
-    flst_node_t* node, /* in: pointer to node */
+    const flst_node_t* node, /* in: pointer to node */
     mtr_t*  mtr); /* in: mini-transaction handle */
 
 /* Writes a file address. */

@@ -196,7 +196,6 @@ struct st_rw_lock
 #define RW_LOCK_MAGIC_N 22643
     /** For checking memory corruption. */
     uint32 magic_n;
-
 };
 
 void sync_init(void);
