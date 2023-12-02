@@ -5,9 +5,11 @@
 #include "cm_config.h"
 #include "cm_file.h"
 #include "cm_thread.h"
+/*
 #include "knl_handler.h"
 #include "knl_server.h"
 #include "guc.h"
+*/
 
 /*
 static int get_options(int argc, char **argv)
@@ -92,6 +94,7 @@ static bool32 load_config(int argc, char **argv)
 }
 */
 
+/*
 
 void initialize_guc_options(char *config_file)
 {
@@ -146,11 +149,11 @@ bool32 knl_server_init(void)
     return DB_SUCCESS;
 }
 
-int main(int argc, const char *argv[])
+int main11111(int argc, const char *argv[])
 {
     char *config_file = "D:\\MyWork\\cos\\etc\\server.ini";
 
-    initialize_guc_options(config_file);
+    //initialize_guc_options(config_file);
 
     os_file_init();
 
@@ -161,8 +164,8 @@ int main(int argc, const char *argv[])
     marea = marea_create(total_memory_size, is_extend);
 
 
-    knl_server_init();
-    knl_server_initialize(marea);
+    //knl_server_init();
+    //knl_server_initialize(marea);
 
     return 0;
 }
@@ -170,9 +173,9 @@ int main(int argc, const char *argv[])
 
 void aio_test()
 {
-    file->handle =
-        os_file_create(innodb_log_file_key, file->name, OS_FILE_OPEN,
-                       OS_FILE_AIO, OS_LOG_FILE, read_only_mode, &success);
+    //file->handle =  os_file_create(innodb_log_file_key, file->name, OS_FILE_OPEN,
+    //                   OS_FILE_AIO, OS_LOG_FILE, read_only_mode, &success);
 
 }
 
+*/

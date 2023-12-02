@@ -38,9 +38,6 @@ bool32 dbug_init(const char *filename, int level)
             return FALSE;
         }
     }
-    else {
-        //debug_outfile = fdopen(STDERR_FILENO, "a");
-    }
 
     return TRUE;
 }
@@ -68,7 +65,7 @@ void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, co
     }
 
     current_clock(&clock);
-    len = snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [thread: %lu] [%s : %d] [function: %s] ",
+    len = snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [%lu] [%s : %d] [%s] ",
         clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second, clock.milliseconds,
         os_thread_get_curr_id(), filename, _line_, _stack_frame_->func);
 
@@ -100,7 +97,7 @@ void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, ch
     _stack_frame_->func = func;
 
     current_clock(&clock);
-    snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [thread: %lu] [%s : %d] enter %s",
+    snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [%lu] [%s : %d] enter %s",
         clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second, clock.milliseconds,
         os_thread_get_curr_id(), filename, _line_, func);
 
@@ -126,7 +123,7 @@ void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_)
     }
 
     current_clock(&clock);
-    snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [thread: %lu] [%s : %d] leave %s",
+    snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [%lu] [%s : %d] leave %s",
        clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second, clock.milliseconds,
        os_thread_get_curr_id(), filename, _line_, _stack_frame_->func);
 

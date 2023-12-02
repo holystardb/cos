@@ -92,7 +92,8 @@ void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size)
     spin_unlock(&area->lock);
 }
 
-memory_pool_t* mpool_create(memory_area_t *area, uint32 local_page_count, uint32 max_page_count, uint32 page_size)
+memory_pool_t* mpool_create(memory_area_t *area,
+    uint32 local_page_count, uint32 max_page_count, uint32 page_size)
 {
     if (page_size == 0 || page_size % 1024 != 0 || page_size > MEM_AREA_PAGE_MAX_SIZE ||
         local_page_count == 0 || max_page_count < local_page_count) {
@@ -271,7 +272,7 @@ static bool32 mcontext_page_extend(memory_context_t *context)
     return TRUE;
 }
 
-void* mcontext_push(memory_context_t *context, uint32 size)
+void* mcontext_stack_push(memory_context_t *context, uint32 size)
 {
     void *ptr = NULL;
     memory_page_t *page;
@@ -305,7 +306,7 @@ void* mcontext_push(memory_context_t *context, uint32 size)
     return ptr;
 }
 
-void mcontext_pop(memory_context_t *context, void *ptr, uint32 size)
+void mcontext_stack_pop(memory_context_t *context, void *ptr, uint32 size)
 {
     bool32 is_need_free = FALSE;
     memory_page_t *page;
@@ -315,7 +316,8 @@ void mcontext_pop(memory_context_t *context, void *ptr, uint32 size)
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     if (page) {
         mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
-        if (buf->offset >= align_size && (ptr == NULL || ptr == buf->buf + buf->offset - align_size)) {
+        if ((buf->offset >= align_size) &&
+            (ptr == NULL || ptr == buf->buf + buf->offset - align_size)) {
             buf->offset -= align_size;
             if (buf->offset == 0) {
                 UT_LIST_REMOVE(list_node, context->used_buf_pages, page);
@@ -330,7 +332,7 @@ void mcontext_pop(memory_context_t *context, void *ptr, uint32 size)
     }
 }
 
-void mcontext_pop2(memory_context_t *context, void *ptr)
+void mcontext_stack_pop2(memory_context_t *context, void *ptr)
 {
     memory_page_t *page, *tmp;
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
@@ -341,7 +343,8 @@ void mcontext_pop2(memory_context_t *context, void *ptr)
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     while (page) {
         mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
-        if ((char *)mem_buf < (char *)ptr && ((uint32)((char *)ptr - mem_buf->buf) < context->pool->page_size)) {
+        if ((char *)mem_buf < (char *)ptr &&
+             ((uint32)((char *)ptr - mem_buf->buf) < context->pool->page_size)) {
             if ((char *)ptr != mem_buf->buf) {
                 page = UT_LIST_GET_NEXT(list_node, page);
             }

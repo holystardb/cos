@@ -157,7 +157,7 @@ inline void spin_unlock(spinlock_t *lock)
 
 inline bool32 spin_lock_own(spinlock_t *lock)
 {
-    ut_a(lock->magic_n == SPINLOCK_MAGIC_N);
+    ut_ad(lock->magic_n == SPINLOCK_MAGIC_N);
 
     return(lock->lock == 1 && os_thread_eq(lock->thread_id, os_thread_get_curr_id()));
 }

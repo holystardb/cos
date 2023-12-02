@@ -89,9 +89,11 @@ extern void mpool_free_page(memory_pool_t *pool, memory_page_t *page);
 extern memory_context_t* mcontext_create(memory_pool_t *pool);
 extern void mcontext_destroy(memory_context_t *context);
 extern bool32 mcontext_clean(memory_context_t *context);
-extern void* mcontext_push(memory_context_t *context, uint32 size);
-extern void mcontext_pop(memory_context_t *context, void *ptr, uint32 size);
-extern void mcontext_pop2(memory_context_t *context, void *ptr);
+
+extern void* mcontext_stack_push(memory_context_t *context, uint32 size);
+extern void mcontext_stack_pop(memory_context_t *context, void *ptr, uint32 size);
+extern void mcontext_stack_pop2(memory_context_t *context, void *ptr);
+
 extern void* mcontext_alloc(memory_context_t *context, uint32 size);
 extern void* mcontext_realloc(memory_context_t *context, void *old_ptr, uint32 size);
 extern void mcontext_free(memory_context_t *context, void *ptr);

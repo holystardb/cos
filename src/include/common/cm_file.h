@@ -111,24 +111,20 @@ typedef struct st_os_aio_context {
 
 /** The asynchronous i/o array structure */
 typedef struct st_os_aio_array {
-    mutex_t           mutex;  /* the mutex protecting the aio array */
-    os_event_t        aio_slot_event;
-    os_event_t        aio_context_event;
-    uint32            slot_count;
-    uint32            io_context_count;
+    mutex_t            mutex;  /* the mutex protecting the aio array */
+    os_event_t         aio_slot_event;
+    os_event_t         aio_context_event;
+    uint32             slot_count;
+    uint32             io_context_count;
     os_aio_slot_t     *aio_slots;  /* Pointer to the slots in the array */
     os_aio_context_t  *aio_contexts;
+#ifdef __WIN__
+#else
+    io_context_t      *aio_ctxs; /* completion queue for IO */
+#endif /* __WIN__ */
     UT_LIST_BASE_NODE_T(os_aio_slot_t) free_slots;
     UT_LIST_BASE_NODE_T(os_aio_context_t) free_contexts;
     UT_LIST_BASE_NODE_T(os_aio_context_t) used_contexts;
-
-#ifdef __WIN__
-    //HANDLE*           handles; /* Pointer to an array of OS native event handles where we copied the handles from slots, 
-    //                        in the same order. This can be used in WaitForMultipleObjects; used only in Windows */
-#else
-    io_context_t     *aio_ctxs; /* completion queue for IO */
-    //struct io_event  *aio_events;
-#endif /* __WIN__ */
 } os_aio_array_t;
 
 

@@ -117,14 +117,34 @@ uint64 ut_uint64_align_up(
     uint64 n, //in: number to be rounded
     uint32 align_no); //in: align by this number which must be a power of 2
 
-bool32 ut_bit_get_nth(
+
+bool32 ut_bit8_get_nth(
+    uint8 a,    /* in: uint8 */
+    uint32 n);   /* in: nth bit requested */
+
+uint8 ut_bit8_set_nth(
+    uint8 a,    /* in: uint8 */
+    uint32 n,    /* in: nth bit requested */
+    bool32 val); /* in: value for the bit to set */
+
+bool32 ut_bit32_get_nth(
     uint32 a,    /* in: uint32 */
     uint32 n);   /* in: nth bit requested */
 
-uint32 ut_bit_set_nth(
+uint32 ut_bit32_set_nth(
     uint32 a,    /* in: uint32 */
     uint32 n,    /* in: nth bit requested */
     bool32 val); /* in: value for the bit to set */
+
+bool32 ut_bit64_get_nth(
+    uint64 a,    /* in: uint64 */
+    uint32 n);   /* in: nth bit requested */
+
+uint64 ut_bit64_set_nth(
+    uint64 a,    /* in: uint64 */
+    uint32 n,    /* in: nth bit requested */
+    bool32 val); /* in: value for the bit to set */
+
 
 #define ut_align4(size)         (((size) & 0x03) == 0 ? (size) : (size) + 0x04 - ((size) & 0x03))
 #define ut_align8(size)         (((size) & 0x07) == 0 ? (size) : (size) + 0x08 - ((size) & 0x07))

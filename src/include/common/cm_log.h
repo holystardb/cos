@@ -81,8 +81,7 @@ void log_to_file(log_level_t log_level, const char *fmt, ...);
         log_to_file(LOG_FATAL, format, ##__VA_ARGS__);          \
     } while (0);
 
-
-extern log_level_t      g_log_level;
+extern log_level_t    g_log_level;
 
 #ifdef __cplusplus
 }

@@ -106,7 +106,7 @@ extern int do_debug;
 #define DBUG_TRACE
 #endif
 
-bool32 dbug_init(const char *file, int level);
+bool32 dbug_init(const char *filename, int level);
 void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...);
 void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, char *func);
 void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_);

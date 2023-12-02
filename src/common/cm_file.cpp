@@ -11,10 +11,16 @@
 /* We use these mutexes to protect lseek + file i/o operation, if the OS does not provide an atomic pread or pwrite, or similar */
 #define OS_FILE_N_SEEK_MUTEXES          16
 os_mutex_t os_file_seek_mutexes[OS_FILE_N_SEEK_MUTEXES];
+bool32     is_os_file_mutexs_inited = FALSE;
 
 void os_file_init()
 {
 #ifdef __WIN__
+    if (is_os_file_mutexs_inited) {
+        return;
+    }
+    is_os_file_mutexs_inited = TRUE;
+
     for (uint32 i = 0; i < OS_FILE_N_SEEK_MUTEXES; i++) {
         os_mutex_create(&os_file_seek_mutexes[i]);
     }
@@ -177,7 +183,7 @@ try_again:
         return TRUE;
     }
 
-#endif
+#endif // __WIN__
 
 #ifdef __WIN__
 error_handling:
@@ -352,10 +358,8 @@ uint32 os_file_get_last_error()
     err = (uint32) errno;
     if (err == ENOSPC ) {
         return(OS_FILE_DISK_FULL);
-#ifdef POSIX_ASYNC_IO
     } else if (err == EAGAIN) {
         return(OS_FILE_AIO_RESOURCES_RESERVED);
-#endif
     } else if (err == ENOENT) {
         return(OS_FILE_NOT_FOUND);
     } else if (err == EEXIST) {
@@ -568,16 +572,16 @@ loop:
     UT_LIST_REMOVE(list_node, aio_array->free_slots, slot);
     mutex_exit(&aio_array->mutex);
 
-    slot->is_used = TRUE;
+    slot->is_used   = TRUE;
     slot->used_time = time(NULL);
-    slot->message1 = message1;
-    slot->message2 = message2;
-    slot->file     = file;
-    slot->name     = name;
-    slot->len      = len;
-    slot->type     = type;
-    slot->buf      = (byte*)buf;
-    slot->offset   = offset;
+    slot->message1  = message1;
+    slot->message2  = message2;
+    slot->file      = file;
+    slot->name      = name;
+    slot->len       = len;
+    slot->type      = type;
+    slot->buf       = (byte*)buf;
+    slot->offset    = offset;
 
 #ifdef __WIN__
     control = &slot->control;
@@ -588,7 +592,7 @@ loop:
     /* Check if we are dealing with 64 bit arch. If not then make sure that offset fits in 32 bits. */
     aio_offset = (off_t) offset;
 
-    ut_a(sizeof(aio_offset) >= sizeof(offset)  || ((os_offset_t) aio_offset) == offset);
+    ut_a(sizeof(aio_offset) >= sizeof(offset) || ((os_offset_t) aio_offset) == offset);
 
     iocb = &slot->control;
     if (type == OS_FILE_READ) {
@@ -633,7 +637,7 @@ static void os_aio_array_free_slot(os_aio_array_t* aio_array, os_aio_slot_t* slo
 }
 
 #ifdef __WIN__
-static int os_aio_windows_handle(   os_aio_context_t* aio_context,      uint32 microseconds)
+static int os_aio_windows_handle(os_aio_context_t* aio_context, uint32 microseconds)
 {
     os_aio_slot_t*  slot;
     uint32          index;
@@ -660,13 +664,7 @@ static int os_aio_windows_handle(   os_aio_context_t* aio_context,      uint32 m
     }
 
     index = WaitForMultipleObjects(event_count, events, TRUE, dwMilliseconds);
-    if (index == WAIT_TIMEOUT) {
-        ret_val = OS_FILE_IO_TIMEOUT;
-    } else if (index == WAIT_FAILED) {
-        ret_val = os_file_get_last_error();
-    } else if (index == WAIT_ABANDONED_0) {
-        ret_val = OS_FILE_IO_ABANDONED;
-    } else if (index == WAIT_OBJECT_0) {
+    if (index == WAIT_OBJECT_0) {
         ret_val = OS_FILE_IO_COMPLETION;
         for (uint32 i = 0; i < event_count; i++) {
             slot = slot_array[i];
@@ -679,6 +677,12 @@ static int os_aio_windows_handle(   os_aio_context_t* aio_context,      uint32 m
                 slot->ret = os_file_get_last_error();
             }
         }
+    } else if (index == WAIT_TIMEOUT) {
+        ret_val = OS_FILE_IO_TIMEOUT;
+    } else if (index == WAIT_FAILED) {
+        ret_val = os_file_get_last_error();
+    } else if (index == WAIT_ABANDONED_0) {
+        ret_val = OS_FILE_IO_ABANDONED;
     }
 
     return ret_val;
@@ -686,7 +690,7 @@ static int os_aio_windows_handle(   os_aio_context_t* aio_context,      uint32 m
 
 #else
 
-static bool32 os_aio_linux_handle(      os_aio_context_t* aio_context,   uint32 microseconds)
+static bool32 os_aio_linux_handle(os_aio_context_t* aio_context, uint32 microseconds)
 {
     os_aio_slot_t*    slot;
     int               ret;
@@ -782,7 +786,6 @@ static bool32 os_aio_linux_submit(os_aio_context_t* aio_context, os_aio_slot_t* 
 
 #endif
 
-
 bool32 os_file_aio_submit(
     os_aio_context_t* aio_context,
     uint32      type,     /* in: OS_FILE_READ or OS_FILE_WRITE */
@@ -795,8 +798,10 @@ bool32 os_file_aio_submit(
     void*       message2) /* in: message to be passed along with the aio operation */
 {
     os_aio_slot_t*  slot;
-    bool32          ret = TRUE;
-    DWORD           len = (DWORD)count;
+
+    if (type != OS_FILE_READ && type != OS_FILE_WRITE) {
+        return FALSE;
+    }
 
     slot = os_aio_array_alloc_slot(aio_context->aio_array,
         type, message1, message2, file, name, buf, offset, count);
@@ -813,36 +818,47 @@ bool32 os_file_aio_submit(
     UT_LIST_ADD_LAST(list_node, aio_context->slots, slot);
     mutex_exit(&aio_context->mutex);
 
-    if (type == OS_FILE_READ) {
-        //os_n_file_reads++;
-        //os_bytes_read_since_printout += count;
 #ifdef __WIN__
-        ret = ReadFile(file, buf, (DWORD)count, &len, &(slot->control));
-#else
-        if (!os_aio_linux_submit(aio_context, slot)) {
-            goto err_exit;
-        }
-#endif /* __WIN__ */
-    } else if (type == OS_FILE_WRITE) {
-        //os_n_file_writes++;
-#ifdef __WIN__
-        ret = WriteFile(file, buf, (DWORD)count, &len, &(slot->control));
-#else
-        if (!os_aio_linux_submit(aio_context, slot)) {
-            goto err_exit;
-        }
-#endif /* WIN_ASYNC_IO */
-    } else {
-        ut_error;
-    }
 
-#ifdef __WIN__
+    DWORD           offset_low; /* least significant 32 bits of file offset where to read */
+    LONG            offset_high; /* most significant 32 bits of offset */
+    DWORD           ret2;
+    uint32          mutex_index;
+    DWORD           len = (DWORD)count;
+    bool32          ret = TRUE;
+
+    /* Protect the seek / read operation with a mutex */
+    mutex_index = ((uint64)file) % OS_FILE_N_SEEK_MUTEXES;
+    offset_low = (offset & 0xFFFFFFFF);
+    offset_high = (offset >> 32);
+
+    os_mutex_enter(&os_file_seek_mutexes[mutex_index]);
+    ret2 = SetFilePointer(file, offset_low, &offset_high, FILE_BEGIN);
+    if (ret2 == 0xFFFFFFFF && GetLastError() != NO_ERROR) {
+        os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
+        goto err_exit;
+    }
+    if (type == OS_FILE_READ) {
+        ret = ReadFile(file, buf, (DWORD)count, &len, &(slot->control));
+    } else {
+        ret = WriteFile(file, buf, (DWORD)count, &len, &(slot->control));
+    }
+    os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
+
     if ((ret && len == count) || (!ret && GetLastError() == ERROR_IO_PENDING)) {
         /* aio was queued successfully! */
         return TRUE;
     }
+
     goto err_exit;
-#endif /* __WIN__ */
+
+#else
+
+    if (!os_aio_linux_submit(aio_context, slot)) {
+        goto err_exit;
+    }
+
+#endif // __WIN__
 
     /* aio was queued successfully! */
     return TRUE;
@@ -853,7 +869,7 @@ err_exit:
 }
 
 //Waits for an aio operation to complete.
-int os_file_aio_wait(os_aio_context_t* aio_context,        uint32 microseconds)
+int os_file_aio_wait(os_aio_context_t* aio_context, uint32 microseconds)
 {
     int ret;
 
@@ -927,22 +943,28 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
     array = (os_aio_array_t *)ut_malloc(sizeof(os_aio_array_t));
     memset(array, 0x0, sizeof(os_aio_array_t));
     UT_LIST_INIT(array->free_slots);
+    UT_LIST_INIT(array->free_contexts);
+    UT_LIST_INIT(array->used_contexts);
     mutex_create(&array->mutex);
     array->aio_slot_event = os_event_create(NULL);
     array->aio_context_event = os_event_create(NULL);
     array->slot_count = max_io_operation_count;
     array->io_context_count = io_context_count;
-    array->aio_slots = (os_aio_slot_t *)ut_malloc(max_io_operation_count * sizeof(os_aio_slot_t));
-    memset(array->aio_slots, 0x0, sizeof(max_io_operation_count * sizeof(os_aio_slot_t)));
+
+    //
     array->aio_contexts = (os_aio_context_t *)ut_malloc(io_context_count * sizeof(os_aio_context_t));
     memset(array->aio_contexts, 0x0, sizeof(io_context_count * sizeof(os_aio_context_t)));
+    for (uint32 i = 0; i < io_context_count; i++) {
+        os_aio_context_t *ctx = array->aio_contexts + i;
+        ctx->aio_array = array;
+        mutex_create(&ctx->mutex);
+        UT_LIST_INIT(ctx->slots);
+        UT_LIST_ADD_LAST(list_node, array->free_contexts, ctx);
+    }
 
 #ifdef __WIN__
-    //array->handles = (HANDLE*)ut_malloc(max_io_operation_count * sizeof(HANDLE));
-#else
-    array->aio_ctxs = NULL;
-    //array->aio_events = NULL;
 
+#else
     /* Initialize the io_context array. One io_context per segment in the array. */
     array->aio_ctxs = (io_context_t **)ut_malloc(io_context_count * sizeof(io_context_t));
     for (uint32 i = 0; i < io_context_count; ++i) {
@@ -951,22 +973,15 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
         }
     }
 
-    /* Initialize the event array. One event per slot. */
-    //array->aio_events = (struct io_event_t *)ut_malloc(max_io_operation_count * sizeof(struct io_event_t));
-    //memset(array->aio_events, 0x0, sizeof(struct io_event_t) * max_io_operation_count);
-
-    UT_LIST_INIT(array->free_contexts);
-    UT_LIST_INIT(array->used_contexts);
     for (uint32 i = 0; i < io_context_count; i++) {
         os_aio_context_t *ctx = array->aio_contexts + i;
-        ctx->aio_array = array;
         ctx->io_ctx = array->aio_ctxs[i];
-        mutex_create(&ctx->mutex);
-        UT_LIST_INIT(ctx->slots);
-        UT_LIST_ADD_LAST(list_node, array->free_contexts, ctx);
     }
 #endif /* __WIN__ */
 
+    //
+    array->aio_slots = (os_aio_slot_t *)ut_malloc(max_io_operation_count * sizeof(os_aio_slot_t));
+    memset(array->aio_slots, 0x0, sizeof(max_io_operation_count * sizeof(os_aio_slot_t)));
     for (uint32 i = 0; i < max_io_operation_count; i++) {
         os_aio_slot_t* slot;
         slot = os_aio_array_get_nth_slot(array, i);
@@ -976,7 +991,6 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
         slot->handle = CreateEvent(NULL,TRUE, FALSE, NULL);
         over = &slot->control;
         over->hEvent = slot->handle;
-        //array->handles[i] = over->hEvent;
 #else
         memset(&slot->control, 0x0, sizeof(slot->control));
         slot->n_bytes = 0;

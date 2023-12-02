@@ -22,11 +22,11 @@ int main2(int argc, char *argv[])
     buf = (char *)mcontext_alloc(context, 32);
     mcontext_free(context, buf);
 
-    mcontext_push(context, 44);
-    buf = (char *)mcontext_push(context, 44);
-    mcontext_push(context, 5000);
-    mcontext_push(context, 6000);
-    mcontext_pop2(context, buf);
+    mcontext_stack_push(context, 44);
+    buf = (char *)mcontext_stack_push(context, 44);
+    mcontext_stack_push(context, 5000);
+    mcontext_stack_push(context, 6000);
+    mcontext_stack_pop2(context, buf);
     mcontext_clean(context);
 
 
