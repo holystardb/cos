@@ -32,6 +32,14 @@ independent way by using YieldProcessor. */
 #define OS_RELAX_CPU()           __asm__ __volatile__("pause")
 #endif
 
+#ifdef __WIN__
+typedef uint32 os_thread_ret_t;
+#define OS_THREAD_DUMMY_RETURN return(0)
+#else
+typedef void* os_thread_ret_t;
+#define OS_THREAD_DUMMY_RETURN return(NULL)
+#endif
+
 
 inline int os_create_thread_local_key(os_thread_local_key_t *key,            void (*destructor)(void *))
 {
@@ -74,6 +82,7 @@ os_thread_t os_thread_create(
     void*            (*start_f)(void*),    /* in: pointer to function from which to start */
     void*            arg,    /* in: argument to start function */
     os_thread_id_t*  thread_id);    /* out: id of created 	thread */	
+void os_thread_exit(void* exit_value);
 bool32 os_thread_join(os_thread_t thread);
 bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b);
 bool32 os_thread_is_valid(os_thread_t thread);

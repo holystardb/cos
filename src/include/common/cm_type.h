@@ -145,10 +145,11 @@ typedef unsigned int            uint;
 typedef unsigned int            WORD32;
 typedef unsigned int            UINT32;
 typedef unsigned int            uint32;
-typedef unsigned int            BOOL32;
-typedef unsigned int            bool32;
 typedef signed   int            INT32;
 typedef signed   int            int32;
+
+typedef unsigned int            BOOL32;
+typedef unsigned int            bool32;
 
 typedef long                    LONG;
 typedef unsigned long           ULONG;
@@ -156,16 +157,32 @@ typedef unsigned long           ulong;
 
 #ifndef __WIN__
 typedef unsigned long long      WORD64;
-#ifndef HP_UINT64
 typedef unsigned long long      UINT64;
 typedef unsigned long long      uint64;
-#endif
 typedef signed   long long      INT64;
 typedef signed   long long      int64;
 #else
 typedef unsigned __int64        WORD64;
+typedef unsigned __int64        UINT64;
 typedef unsigned __int64        uint64;
+typedef __int64                 INT64;
 typedef __int64                 int64;
+#endif
+
+#ifdef __WIN__
+typedef struct st_int128 {
+    int64   val1;
+    int64   val2;
+} int128;
+typedef struct st_uint128 {
+    uint64  val1;
+    uint64  val2;
+} uint128;
+#else
+typedef unsigned __int128       UINT128;
+typedef unsigned __int128       uint128;
+typedef __int128                INT128;
+typedef __int128                int128;
 #endif
 
 #ifdef __WIN__
@@ -238,6 +255,26 @@ typedef unsigned char*          PUCHAR;
 #define SRV_PATH_SEPARATOR     '/'
 #endif
 
+#ifdef __WIN__
+#define os_file_t                           HANDLE
+#define OS_FILE_INVALID_HANDLE              INVALID_HANDLE_VALUE
+#else
+typedef int                                 os_file_t;
+#define OS_FILE_INVALID_HANDLE              -1
+#endif
+
+typedef enum
+{
+    LOG_UNKOWN   = 0,
+    LOG_FATAL    = 1,
+    LOG_ERROR    = 2,
+    LOG_WARN     = 3,
+    LOG_NOTICE   = 4,
+    LOG_INFO     = 5,
+    LOG_DEBUG    = 6,
+    LOG_TRACE    = 7,
+} log_level_t;
+
 
 /***********************************************************************************************
 *                                      callback function                                       *
@@ -292,6 +329,25 @@ typedef enum status_stuct
             return TRUE;                  \
         }                                 \
     } while (0)
+
+
+
+/***********************************************************************************************
+*                                      DEBUG OUTPUT                                            *
+***********************************************************************************************/
+
+#if 0
+#define UNIV_DEBUG              /*  */
+#define UNIV_MEMORY_DEBUG       /* detect memory leaks etc */
+#define UNIV_MEMROY_VALGRIND    /* Enable extra Valgrind instrumentation */
+#define UNIV_DEBUG_OUTPUT       /* DBUG_*, ut_ad, ut_d */
+#define UNIV_MUTEX_DEBUG        /* mutex and latch */
+
+
+#endif
+
+
+
 
 
 #ifdef __cplusplus

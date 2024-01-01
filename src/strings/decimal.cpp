@@ -1014,11 +1014,11 @@ int decimal2double(const decimal_t *from, double *to)
   rc = decimal2string(from, strbuf, &len, 0, 0, 0);
   end= strbuf + len;
 
-  DBUG_PRINT("info", ("interm.: %s", strbuf));
+  //DBUG_PRINT("info", ("interm.: %s", strbuf));
 
   *to= my_strtod(strbuf, &end, &error);
 
-  DBUG_PRINT("info", ("result: %f", *to));
+  //DBUG_PRINT("info", ("result: %f", *to));
 
   return (rc != E_DEC_OK) ? rc : (error ? E_DEC_OVERFLOW : E_DEC_OK);
 }

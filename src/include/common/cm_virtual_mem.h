@@ -11,7 +11,7 @@ typedef struct st_vm_page {
 } vm_page_t;
 
 typedef struct st_vm_ctrl {
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
     uint32          id;
 #endif
     mutex_t         mutex;
@@ -27,24 +27,8 @@ typedef struct st_vm_ctrl {
     UT_LIST_NODE_T(struct st_vm_ctrl) list_node;
 } vm_ctrl_t;
 
-typedef struct st_vm_ctrl_pool {
-    mutex_t         mutex;
-    UT_LIST_BASE_NODE_T(vm_ctrl_t) free_ctrls;
-} vm_ctrl_pool_t;
-
-typedef struct st_vm_page_pool {
-    mutex_t         mutex;
-    UT_LIST_BASE_NODE_T(vm_page_t) free_pages;
-} vm_page_pool_t;
-
-
-#define VM_CTRL_POOL_COUNT            16
-#define VM_PAGE_POOL_COUNT            16
-
-#define VM_FILE_COUNT                 8
-
 typedef struct st_vm_page_slot {
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
     uint32        id;
 #endif
     union {
@@ -54,16 +38,18 @@ typedef struct st_vm_page_slot {
     struct st_vm_page_slot *next;
 } vm_page_slot_t;
 
+#define VM_FILE_HANDLE_COUNT    0x0F
 typedef struct st_vm_file {
     char               *name;
     uint32              id;
-    os_file_t           handle;
+    os_file_t           handle[VM_FILE_HANDLE_COUNT + 1];
     uint32              page_max_count;
     mutex_t             mutex;
     vm_page_slot_t     *free_slots;
     UT_LIST_BASE_NODE_T(vm_ctrl_t) slot_pages;
 } vm_file_t;
 
+#define VM_FILE_COUNT           8
 typedef struct st_vm_pool {
     mutex_t          mutex;
     char            *buf;
@@ -71,24 +57,23 @@ typedef struct st_vm_pool {
     uint32           page_size;
     uint32           page_count;
     uint32           page_hwm;
+
     uint32           ctrl_page_count;
+    uint32           ctrl_page_max_count;
+
     uint32           ctrl_count_per_page;
     uint32           slot_count_pre_page;
     uint32           page_count_pre_slot_page;
     uint32           page_count_pre_slot;
     bool32           io_in_progress_ctrl_page;
 
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
     uint32           ctrl_sequence;
     uint32           slot_sequence;
 #endif
 
     atomic32_t       vm_file_index;
     vm_file_t        vm_files[VM_FILE_COUNT];
-    uint8            ctrl_pool_index;
-    uint8            page_pool_index;
-    vm_ctrl_pool_t   free_ctrl_pool[VM_CTRL_POOL_COUNT];
-    vm_page_pool_t   free_page_pool[VM_PAGE_POOL_COUNT];
 
     os_aio_array_t  *aio_array;
 

@@ -6,6 +6,8 @@
 #include "cm_memory.h"
 #include "cm_rwlock.h"
 
+#include "knl_log.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -303,7 +305,9 @@ enum mtr_state_t {
 };
 
 /* Mini-transaction handle and buffer */
-typedef struct st_mtr{
+class mtr_t {
+public:
+    mtr_t* queue_next_mtr;
 
     dyn_array_t memo; /* memo stack for locks etc. */
     dyn_array_t log; /* mini-transaction log */
@@ -312,17 +316,19 @@ typedef struct st_mtr{
     unsigned made_dirty:1; /*!< TRUE if mtr has made at least one buffer pool page dirty */
     uint32 n_log_recs; /* count of how many page initial log records have been written to the mtr log */
     uint32 log_mode; /* specifies which operations should be logged; default value MTR_LOG_ALL */
-    uint64 start_lsn; /* start lsn of the possible log entry for this mtr */
+    log_buf_lsn_t start_buf_lsn; /* start lsn of the possible log entry for this mtr */
     uint64 end_lsn; /* end lsn of the possible log entry for this mtr */
     uint32 magic_n;
     uint32 state; /* MTR_ACTIVE, MTR_COMMITTING, MTR_COMMITTED */
 
+    mtr_t() : queue_next_mtr(NULL)
+    {  }
+
     // return true if the mini-transaction is active */
-    bool32 is_active()
-    {
+    bool32 is_active() {
         return (state == MTR_STATE_ACTIVE);
     }
-} mtr_t;
+};
 
 #define MTR_MAGIC_N      54551
 #define MTR_ACTIVE       12231

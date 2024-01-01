@@ -6,7 +6,7 @@
 #include "cm_list.h"
 #include "cm_thread.h"
 #include "cm_type.h"
-
+#include "cm_dbug.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -71,8 +71,10 @@ void os_mutex_destroy(os_mutex_t *mutex);
 
 typedef struct st_spin_lock {
     atomic32_t      lock;
+#ifdef UNIV_MUTEX_DEBUG
     uint32          magic_n;
     os_thread_id_t  thread_id; /*!< The thread id of the thread which locked. */
+#endif
 } spinlock_t;
 
 typedef struct st_spinlock_stats {
@@ -91,9 +93,10 @@ typedef struct st_spinlock_stats {
 inline void spin_lock_init(spinlock_t *lock)
 {
     os_wmb;
-
+#ifdef UNIV_MUTEX_DEBUG
     lock->thread_id = 0;
     lock->magic_n = SPINLOCK_MAGIC_N;
+#endif
     lock->lock = 0;
 }
 
@@ -157,9 +160,12 @@ inline void spin_unlock(spinlock_t *lock)
 
 inline bool32 spin_lock_own(spinlock_t *lock)
 {
+#ifdef UNIV_MUTEX_DEBUG
     ut_ad(lock->magic_n == SPINLOCK_MAGIC_N);
-
     return(lock->lock == 1 && os_thread_eq(lock->thread_id, os_thread_get_curr_id()));
+#else
+    return TRUE;
+#endif
 }
 
 

@@ -1,5 +1,6 @@
 #include "cm_dbug.h"
 #include "cm_datetime.h"
+#include "cm_log.h"
 
 #include <signal.h>       /* for signal */  
 #ifndef __WIN__
@@ -18,126 +19,96 @@ bool32 ut_dbg_stop_threads = FALSE;
 uint64* ut_dbg_null_ptr = NULL;
 
 
-#define DEBUG_MSG_BUF 1022
+#define DEBUG_MSG_BUF 256
 
-FILE *debug_outfile = NULL;
-int do_debug = 0;
+int         do_debug = 0;
+log_info    DBUG_LOGGER;
 
-bool32 dbug_init(const char *filename, int level)
+
+bool32 dbug_init(char *log_path, char *file_name, int level)
 {
-    errno_t err;
-
     do_debug = level;
     if (do_debug == 0) {
         return FALSE;
     }
 
-    if(filename) {
-        err = fopen_s(&debug_outfile, filename, "w");
-        if (err != 0) {
-            return FALSE;
-        }
-    }
+    DBUG_LOGGER.log_init(LOG_TRACE, log_path, file_name, TRUE);
 
     return TRUE;
 }
 
 void dbug_end()
 {
-    if (debug_outfile) {
-        fflush(debug_outfile);
-    }
+    DBUG_LOGGER.log_file_flush();
 }
 
 void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...)
 {
-    va_list args;
-    char buf[DEBUG_MSG_BUF];
-    int len;
-    date_clock_t clock;
+    va_list       args;
+    char          buf[DEBUG_MSG_BUF];
+    int           len;
+    char         *filename;
 
-    char *filename = strrchr(_file_, '/');
-    if (filename == NULL) {
-        filename = strrchr(_file_, '\\');
-    }
+#ifdef __WIN__
+    filename = strrchr(_file_, '\\');
+#else
+    filename = strrchr(_file_, '/');
+#endif
     if (filename) {
         filename++;
     }
 
-    current_clock(&clock);
-    len = snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [%lu] [%s : %d] [%s] ",
-        clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second, clock.milliseconds,
-        os_thread_get_curr_id(), filename, _line_, _stack_frame_->func);
+    len = snprintf(buf, DEBUG_MSG_BUF, "[%s : %d] [%s]", filename, _line_, _stack_frame_->func);
 
     va_start(args, format);
     len += vsnprintf(buf + len, DEBUG_MSG_BUF - len, format, args);
     va_end(args);
 
-    if (debug_outfile) {
-        fprintf(debug_outfile, "%s\n", buf);
-    } else {
-        fprintf(stderr, "%s\n", buf);
-        fflush(stderr);
-    }
+    LOGGER_DEBUG(DBUG_LOGGER, "%s", buf);
 }
 
 void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, char *func)
 {
-    date_clock_t clock;
-    char buf[DEBUG_MSG_BUF];
+    char          buf[DEBUG_MSG_BUF];
+    char         *filename;
 
-    char *filename = strrchr(_file_, '/');
-    if (filename == NULL) {
-        filename = strrchr(_file_, '\\');
-    }
+#ifdef __WIN__
+    filename = strrchr(_file_, '\\');
+#else
+    filename = strrchr(_file_, '/');
+#endif
     if (filename) {
         filename++;
     }
 
     _stack_frame_->func = func;
+    snprintf(buf, DEBUG_MSG_BUF, "[%s : %d] enter %s", filename, _line_, func);
 
-    current_clock(&clock);
-    snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [%lu] [%s : %d] enter %s",
-        clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second, clock.milliseconds,
-        os_thread_get_curr_id(), filename, _line_, func);
-
-    if (debug_outfile) {
-        fprintf(debug_outfile, "%s\n", buf);
-    } else {
-        fprintf(stderr, "%s\n", buf);
-        fflush(stderr);
-    }
+    LOGGER_DEBUG(DBUG_LOGGER, "%s", buf);
 }
 
 void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_)
 {
-    date_clock_t clock;
-    char buf[DEBUG_MSG_BUF];
+    char          buf[DEBUG_MSG_BUF];
+    char         *filename;
 
-    char *filename = strrchr(_file_, '/');
-    if (filename == NULL) {
-        filename = strrchr(_file_, '\\');
-    }
+#ifdef __WIN__
+    filename = strrchr(_file_, '\\');
+#else
+    filename = strrchr(_file_, '/');
+#endif
     if (filename) {
         filename++;
     }
 
-    current_clock(&clock);
-    snprintf(buf, DEBUG_MSG_BUF, "%d-%02d-%02d %02d:%02d:%02d.%03d [%lu] [%s : %d] leave %s",
-       clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second, clock.milliseconds,
-       os_thread_get_curr_id(), filename, _line_, _stack_frame_->func);
+    snprintf(buf, DEBUG_MSG_BUF, "[%s : %d] leave %s", filename, _line_, _stack_frame_->func);
 
-    if (debug_outfile) {
-        fprintf(debug_outfile, "%s\n", buf);
-    } else {
-        fprintf(stderr, "%s\n", buf);
-        fflush(stderr);
-    }
+    LOGGER_DEBUG(DBUG_LOGGER, "%s", buf);
 }
 
 void dbug_print_stacktrace()
 {
-    fprintf(stderr, "dbug_print_stacktrace:\n");
+    fprintf(stderr, "dbug_print_stacktrace:");
 #ifdef __WIN__
 #else
     void  *buffer[MAX_BACK_TRACE_DEPTH];
@@ -146,9 +117,15 @@ void dbug_print_stacktrace()
     int len_symbols = backtrace(buffer, MAX_BACK_TRACE_DEPTH);
     symbol_strings = backtrace_symbols(buffer, len_symbols);
     if (symbol_strings != NULL) {
+        //
+        LOGGER.coredump_to_file(symbol_strings, len_symbols);
+
+        //
         for (int i = 0; i < len_symbols; i++) {
-            log_stderr(LOG_FATAL, "%s", symbol_strings[i]);
+            fprintf(stderr, "%s", symbol_strings[i]);
         }
+        fflush(stderr);
+
         free(symbol_strings);
     }
 #endif

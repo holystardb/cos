@@ -8,10 +8,10 @@
 os_event_t os_event_create(char* name)
 {
 #ifdef _WIN32
-    HANDLE	event;
-    event = CreateEvent(NULL,	/* No security attributes */
-                        TRUE,		/* Manual reset */
-                        FALSE,		/* Initial state nonsignaled */
+    HANDLE event;
+    event = CreateEvent(NULL,  /* No security attributes */
+                        TRUE,  /* Manual reset */
+                        FALSE, /* Initial state nonsignaled */
                         name);
     return(event);
 #else
@@ -26,10 +26,10 @@ os_event_t os_event_create(char* name)
 
 void os_event_set(os_event_t event)
 {
-#ifdef _WIN32	
+#ifdef __WIN__
     SetEvent(event);
 #else
-    os_mutex_lock(&(event->os_mutex));
+    os_mutex_enter(&(event->os_mutex));
     if (event->is_set) {
         /* Do nothing */
     } else {
@@ -37,23 +37,23 @@ void os_event_set(os_event_t event)
         event->signal_count += 1;
         pthread_cond_broadcast(&(event->cond_var));
     }
-    os_mutex_unlock(&(event->os_mutex));
+    os_mutex_exit(&(event->os_mutex));
 #endif
 }
 
 void os_event_set_signal(os_event_t event)
 {
-#ifdef _WIN32	
+#ifdef __WIN__
     SetEvent(event);
 #else
-    os_mutex_lock(&(event->os_mutex));
+    os_mutex_enter(&(event->os_mutex));
     if (event->is_set) {
         /* Do nothing */
     } else {
         event->is_set = TRUE;
         pthread_cond_signal(&(event->cond_var));
     }
-    os_mutex_unlock(&(event->os_mutex));
+    os_mutex_exit(&(event->os_mutex));
 #endif
 }
 
@@ -61,17 +61,17 @@ uint64 os_event_reset(os_event_t event)
 {
     uint64 ret = 0;
 
-#ifdef _WIN32
+#ifdef __WIN__
     ResetEvent(event);
 #else
-    os_mutex_lock(&(event->os_mutex));
+    os_mutex_enter(&(event->os_mutex));
     if (!event->is_set) {
         /* Do nothing */
     } else {
         event->is_set = FALSE;
     }
     ret = event->signal_count;
-    os_mutex_unlock(&(event->os_mutex));
+    os_mutex_exit(&(event->os_mutex));
 #endif
 
     return ret;
@@ -79,7 +79,7 @@ uint64 os_event_reset(os_event_t event)
 
 void os_event_destroy(os_event_t event)
 {
-#ifdef _WIN32
+#ifdef __WIN__
     CloseHandle(event);
 #else
     os_mutex_free(&(event->os_mutex));
@@ -90,12 +90,12 @@ void os_event_destroy(os_event_t event)
 
 void os_event_wait(os_event_t event, uint64 reset_sig_count)
 {
-#ifdef _WIN32
+#ifdef __WIN__
     DWORD err;
     /* Specify an infinite time limit for waiting */
     err = WaitForSingleObject(event, INFINITE);
 #else
-    os_mutex_lock(&(event->os_mutex));
+    os_mutex_enter(&(event->os_mutex));
 
     if (!reset_sig_count) {
         reset_sig_count = event->signal_count;
@@ -107,7 +107,7 @@ void os_event_wait(os_event_t event, uint64 reset_sig_count)
 
         /* Solaris manual said that spurious wakeups may occur: we have to check the 'is_set' variable again */
     }
-    os_mutex_unlock(&(event->os_mutex));
+    os_mutex_exit(&(event->os_mutex));
 #endif
 }
 
@@ -116,7 +116,7 @@ int os_event_wait_time(
         uint32       microseconds,  /* in: timeout in microseconds, or  OS_SYNC_INFINITE_TIME */
         uint64       reset_sig_count)
 {
-#ifdef _WIN32
+#ifdef __WIN__
     DWORD err;
     /* Specify an infinite time limit for waiting */
     if (microseconds != OS_WAIT_INFINITE_TIME) {
@@ -151,7 +151,7 @@ int os_event_wait_time(
         abstime.tv_nsec = tv.tv_usec * 1000;
     }
 
-    os_mutex_lock(&(event->os_mutex));
+    os_mutex_enter(&(event->os_mutex));
 
     if (!reset_sig_count) {
         reset_sig_count = event->signal_count;
@@ -170,7 +170,7 @@ int os_event_wait_time(
     } while (ETIMEDOUT != err);  /* Solaris manual said that spurious wakeups may occur: 
                                     we have to check the 'is_set' variable again */
 
-    os_mutex_unlock(&(event->os_mutex));
+    os_mutex_exit(&(event->os_mutex));
 
     return err ? OS_WAIT_TIME_EXCEEDED : 0);
 #endif

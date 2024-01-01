@@ -13,15 +13,11 @@
 extern "C" {
 #endif
 
+memory_pool_t *g_mem_pool = NULL;
+uint32         g_event_count = 4096;
+
 
 #ifdef __WIN__
-
-#define EPOLL_EPFD_EXTENT_STEP                1
-#define EPOLL_MAX_EPFD_COUNT                  2
-#define EPOLL_FD_EXTENT_STEP                  16
-#define EPOLL_MAX_FD_COUNT                    10240
-#define EPOLL_HASHMAP_BUCKETS                 97
-
 
 typedef struct epoll_event  epoll_event_t;
 
@@ -49,10 +45,13 @@ typedef struct st_entry_pool
 static entry_pool_t  g_epfd_pool = { 0 };
 
 
-int epoll_init()
+int epoll_init(memory_pool_t *mpool, uint32 event_count)
 {
+    g_mem_pool = mpool;
+    g_event_count = event_count;
+
     if (g_epfd_pool.epfd_entry_pool == NULL) {
-        g_epfd_pool.epfd_entry_pool = biqueue_init(sizeof(epfd_entry_t), 255);
+        g_epfd_pool.epfd_entry_pool = biqueue_init(sizeof(epfd_entry_t), g_event_count, mpool);
     }
     return 0;
 }
@@ -76,7 +75,7 @@ static int epoll_ctl_add(epfd_entry_t* epfd_entry, my_socket fd, struct epoll_ev
     spin_unlock(&epfd_entry->fd_entry_rbt_lock);
 
     if (rbt_node == NULL) {
-        LOG_PRINT_ERROR("epoll_ctl_add: error for malloc fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
+        LOGGER_ERROR(LOGGER, "epoll_ctl_add: error for malloc fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
         return -1;
     }
 
@@ -97,7 +96,7 @@ static int epoll_ctl_mod(epfd_entry_t* epfd_entry, my_socket fd, struct epoll_ev
     spin_unlock(&epfd_entry->fd_entry_rbt_lock);
 
     if (fd_entry == NULL) {
-        LOG_PRINT_ERROR("epoll_ctl_mod: error for find fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
+        LOGGER_ERROR(LOGGER, "epoll_ctl_mod: error for find fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
         return -1;
     }
 
@@ -123,7 +122,7 @@ static int epoll_ctl_del(epfd_entry_t* epfd_entry, my_socket fd, struct epoll_ev
     spin_unlock(&epfd_entry->fd_entry_rbt_lock);
 
     if (!deleted) {
-        LOG_PRINT_ERROR("epoll_ctl_del: error for free fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
+        LOGGER_ERROR(LOGGER, "epoll_ctl_del: error for free fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
         return -1;
     }
 
@@ -137,7 +136,7 @@ int epoll_ctl(int epfd, int op, my_socket fd, struct epoll_event *event)
 
     node = biqueue_get_node(g_epfd_pool.epfd_entry_pool, epfd);
     if (node == NULL) {
-        LOG_PRINT_ERROR("epoll_ctl: error for get epfd_entry, epoll fd %d, fd %d", epfd, fd);
+        LOGGER_ERROR(LOGGER, "epoll_ctl: error for get epfd_entry, epoll fd %d, fd %d", epfd, fd);
         return -1;
     }
     entry = OBJECT_OF_QUEUE_NODE(epfd_entry_t, node, queue_node);
@@ -159,7 +158,7 @@ int epoll_ctl(int epfd, int op, my_socket fd, struct epoll_event *event)
             return epoll_ctl_del(entry, fd, event);
         default:
         {
-            LOG_PRINT_ERROR("epoll_ctl: invalid op, epoll fd %d, fd %d op %d", epfd, fd, op);
+            LOGGER_ERROR(LOGGER, "epoll_ctl: invalid op, epoll fd %d, fd %d op %d", epfd, fd, op);
             return -1;
         }
     }
@@ -182,14 +181,14 @@ int epoll_create1(int flags)
 
     node = biqueue_alloc(g_epfd_pool.epfd_entry_pool); 
     if (node == NULL) {
-        LOG_PRINT_ERROR("epoll_create1: error for malloc epoll_entry");
+        LOGGER_ERROR(LOGGER, "epoll_create1: error for malloc epoll_entry");
         return -1;
     }
 
     entry = OBJECT_OF_QUEUE_NODE(epfd_entry_t, node, queue_node);
     entry->epfd = node->node_id;
     spin_lock_init(&entry->fd_entry_rbt_lock);
-    entry->fd_entry_rbt = rbt_create(sizeof(fd_entry_t), fd_entry_cmp);
+    entry->fd_entry_rbt = rbt_create(sizeof(fd_entry_t), fd_entry_cmp, g_mem_pool);
 
     return entry->epfd;
 }
@@ -203,7 +202,7 @@ static int epoll_wait_fd(int epfd, int maxevents, uint32 *loop, fd_entry_t *fds[
 
     queue_node = biqueue_get_node(g_epfd_pool.epfd_entry_pool, epfd);
     if (queue_node == NULL) {
-        LOG_PRINT_ERROR("epoll_ctl: error for get epfd_entry, epoll fd %d", epfd);
+        LOGGER_ERROR(LOGGER, "epoll_ctl: error for get epfd_entry, epoll fd %d", epfd);
         return -1;
     }
     epfd_entry = OBJECT_OF_QUEUE_NODE(epfd_entry_t, queue_node, queue_node);
@@ -308,15 +307,17 @@ int epoll_close(int epfd)
 
     rbt_free(epfd_entry->fd_entry_rbt);
     epfd_entry->fd_entry_rbt = NULL;
+
     spin_lock_init(&epfd_entry->fd_entry_rbt_lock);
-    
+
     biqueue_free(g_epfd_pool.epfd_entry_pool, node);
-    
+
     return 0;
 #else
     return close(epfd);
 #endif
 }
+
 
 #ifdef __cplusplus
 }

@@ -3,6 +3,7 @@
 #include "cm_virtual_mem.h"
 #include "cm_dbug.h"
 #include "cm_log.h"
+#include "cm_mutex.h"
 
 typedef struct st_vm_xdesc {
     UT_LIST_NODE_T(struct st_vm_xdesc) list_node;
@@ -18,28 +19,83 @@ void test_memory()
     memory_area_t* area;
     memory_pool_t* pool;
     memory_context_t* context;
-    uint64 size = 1024 * 1024;
+    memory_stack_context_t* stack_context;
+    uint64 size = 1024 * 1024 * 10;
     bool32 is_extend = FALSE;
     uint32 local_page_count = 8;
-    uint32 max_page_count = 16;
+    uint32 max_page_count = 1024;
     uint32 page_size = 1024 * 8;
 
     area = marea_create(size, is_extend);
     pool = mpool_create(area, local_page_count, max_page_count, page_size);
+    
+
+    printf("case 1:\n");
     context = mcontext_create(pool);
-
-    char *buf;
-    buf = (char *)mcontext_alloc(context, 32);
-    mcontext_free(context, buf);
-
-    mcontext_stack_push(context, 44);
-    buf = (char *)mcontext_stack_push(context, 44);
-    mcontext_stack_push(context, 5000);
-    mcontext_stack_push(context, 6000);
-    mcontext_stack_pop2(context, buf);
+    char *buf[1024];
+    for (uint32 i = 0; i < 1024; i++) {
+        if (i == 960) {
+            printf("flag, i=%d\n", i);
+        }
+        buf[i] = (char *)my_malloc(context, 53);
+        if (buf[i] == NULL) {
+            printf("can not alloc, i=%d\n", i);
+            goto err_exit;
+        }
+        memset(buf[i], 0x00, 53);
+        sprintf_s(buf[i], 53, "data: %08d", i);
+    }
+    for (uint32 i = 0; i < 1024; i++) {
+        char temp[53];
+        sprintf_s(temp, 53, "data: %08d", i);
+        if (strncmp(buf[i], temp, strlen(temp)) != 0) {
+            printf("check: fail, i=%d\n", i);
+            goto err_exit;
+        }
+        my_free(buf[i]);
+    }
     mcontext_clean(context);
+    mcontext_destroy(context);
+
+    printf("case 2:\n");
+    context = mcontext_create(pool);
+    for (uint32 i = 0; i < 1024; i++) {
+        buf[i] = (char *)my_malloc(context, 53);
+        if (buf[i] == NULL) {
+            printf("can not alloc, i=%d\n", i);
+            goto err_exit;
+        }
+        memset(buf[i], 0x00, 53);
+        sprintf_s(buf[i], 53, "data: %08d", i);
+    }
+    for (uint32 i = 0; i < 1024; i++) {
+        char temp[53];
+        sprintf_s(temp, 53, "data: %08d", i);
+        if (strncmp(buf[i], temp, strlen(temp)) != 0) {
+            printf("check: fail, i=%d\n", i);
+            goto err_exit;
+        }
+    }
+    mcontext_clean(context);
+    mcontext_destroy(context);
+
+    printf("case 3:\n");
+    stack_context = mcontext_stack_create(pool);
+    mcontext_stack_push(stack_context, 44);
+    buf[0] = (char *)mcontext_stack_push(stack_context, 44);
+    mcontext_stack_push(stack_context, 5000);
+    mcontext_stack_push(stack_context, 6000);
+    mcontext_stack_pop2(stack_context, buf[0]);
+    mcontext_stack_clean(stack_context);
+    mcontext_stack_destroy(stack_context);
 
     printf("\n\n*********************** done ***********************\n");
+
+    return;
+
+err_exit:
+
+    printf("\n\n*********************** Error ***********************\n");
 }
 
 bool32 test_vm_memory()
@@ -59,8 +115,8 @@ bool32 test_vm_memory()
     }
 
     for (uint32 i = 0; i < loop_count; i++) {
-        if (i == 94) {
-            printf("flag: %d\n", i);
+        if (i == 21) {
+            //printf("flag: %d\n", i);
         }
 
         ctrl[i] = vm_alloc(pool);
@@ -68,7 +124,7 @@ bool32 test_vm_memory()
             printf("write error: vm_alloc, i=%d\n", i);
             goto err_exit;
         }
-        printf("\nwrite: ctrl %p i=%d ********************\n", ctrl[i], i);
+        //printf("\nwrite: ctrl %p i=%d ********************\n", ctrl[i], i);
 
         if (vm_open(pool, ctrl[i]) == FALSE) {
             printf("write error: vm_open, i=%d\n", i);
@@ -86,19 +142,19 @@ bool32 test_vm_memory()
     }
 
     for (uint32 i = 0; i < loop_count; i++) {
-        printf("\nread check: ctrl %p i=%d ********************\n", ctrl[i], i);
+        //printf("\nread check: ctrl %p i=%d ********************\n", ctrl[i], i);
         if (vm_open(pool, ctrl[i]) == FALSE) {
             printf("read error: vm_open, i=%d\n", i);
             goto err_exit;
         }
 
         if (i == 6) {
-            printf("flag\n");
+        //    printf("flag\n");
         }
 
         sprintf_s(temp, 1024, "data: %08d", i);
         if (strncmp(ctrl[i]->val.data, temp, strlen(temp)) == 0) {
-            printf("read check: ok, i=%d\n", i);
+            //printf("read check: ok, i=%d\n", i);
         } else {
             printf("read check: fail, i=%d\n", i);
             goto err_exit;
@@ -196,15 +252,25 @@ void do_test_free_page()
     test_free_page(page_no + 1);
 }
 
-int main(int argc, char *argv[])
+int main_100(int argc, char *argv[])
 {
-    char *log_path = "D:\\MyWork\\cos\\data";
-    log_init(LOG_TRACE, log_path, "memory_test.log");
+    char *log_path = "D:\\MyWork\\cos\\data\\";
+    LOGGER.log_init(LOG_INFO, log_path, "memory_test");
+    //LOGGER.log_init(LOG_INFO, NULL, "memory_test");
+    LOGGER_WARN(LOGGER, "WARN: This is memory test");
+    LOGGER_DEBUG(LOGGER, "DEBUG: This is memory test");
 
-    DBUG_INIT(NULL, 1);
+    //DBUG_INIT(log_path, "memory_dbug", 1);
+    DBUG_INIT(NULL, "memory_dbug", 1);
     DBUG_ENTER("main");
     DBUG_PRINT("%s", "do vm_memory test");
+    DBUG_PRINT("%s", "-------------------------------------------");
+    //ut_a(0);
+    ut_error;
+    //
+    test_memory();
 
+    //
     test_vm_memory();
 
     DBUG_END();

@@ -73,6 +73,6 @@ public:
 
 extern bool32 knl_server_init(void);
 extern bool32 knl_server_start(memory_area_t* marea);
-
+extern bool32 knl_server_init_db(memory_area_t* marea);
 
 #endif  /* _KNL_HANDLER_H */

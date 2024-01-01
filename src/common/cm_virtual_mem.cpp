@@ -5,8 +5,6 @@
 #include "cm_util.h"
 
 
-#define VM_CTRL_PAGE_MAX_COUNT               4096  // max memory is 1TB
-
 #define INVALID_SWAP_PAGE_ID                 (uint64)-1
 #define INVALID_PAGE_SLOT                    0xFFFF
 #define VM_GET_OFFSET_BY_SWAP_PAGE_ID(id)    ((id & 0xFFFFFFFF) * pool->page_size)
@@ -25,37 +23,68 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
 {
     vm_pool_t *pool;
     uint64     tmp_memory_size;
-    uint32     tmp_page_size;
+    uint32     ctrl_page_max_count;
 
-    tmp_page_size = (page_size / (8 * 1024)) * (8 * 1024);
-    if (tmp_page_size == 0 || tmp_page_size > (1024 * 1024)) {
-        log_to_stderr(LOG_ERROR, "vm_pool_create: error, invalid page size %u", page_size);
+    // 8KB page size: 32768 pages * 8KB = 256MB, total 50GB memory 
+    // 16KB page size: 16384 pages * 16KB = 256MB, total 100GB memory 
+    // 32KB page size: 8192 pages * 32KB = 256MB, total 200GB memory 
+    // 64KB page size: 4096 pages * 64KB = 256MB, total 400GB memory 
+    // 128KB page size: 2048 pages * 128KB = 256MB, total 800GB memory 
+    // 256KB page size: 512 pages * 256KB = 128MB, total 800GB memory 
+    // 512KB page size: 128 pages * 512KB = 64MB, total 800GB memory 
+
+    switch (page_size) {
+    case 1024 * 8:
+        ctrl_page_max_count = 32768;
+        break;
+    case 1024 * 16:
+        ctrl_page_max_count = 16384;
+        break;
+    case 1024 * 32:
+        ctrl_page_max_count = 8192;
+        break;
+    case 1024 * 64:
+        ctrl_page_max_count = 4096;
+        break;
+    case 1024 * 128:
+        ctrl_page_max_count = 2048;
+        break;
+    case 1024 * 256:
+        ctrl_page_max_count = 512;
+        break;
+    case 1024 * 512:
+        ctrl_page_max_count = 128;
+        break;
+    default:
+        LOGGER_ERROR(LOGGER, "vm_pool_create: error, invalid page size %u", page_size);
         return FALSE;
     }
-    tmp_memory_size = (memory_size / tmp_page_size) * tmp_page_size;
+
+    tmp_memory_size = (memory_size / page_size) * page_size;
     if (tmp_memory_size < 1024 * 1024) {
-        log_to_stderr(LOG_ERROR, "vm_pool_create: error, invalid memory size %lu", memory_size);
+        LOGGER_ERROR(LOGGER, "vm_pool_create: error, invalid memory size %lu", memory_size);
         return FALSE;
     }
 
-    pool = (vm_pool_t *)ut_malloc(sizeof(vm_pool_t));
+    pool = (vm_pool_t *)malloc(sizeof(vm_pool_t));
     if (pool == NULL) {
-        log_to_stderr(LOG_ERROR, "vm_pool_create: error, can not alloc memory for vm_pool_t");
+        LOGGER_ERROR(LOGGER, "vm_pool_create: error, can not alloc memory for vm_pool_t");
         return NULL;
     }
 
     pool->memory_size = tmp_memory_size;
     pool->buf = (char *)os_mem_alloc_large(&pool->memory_size);
     pool->page_hwm = 0;
-    pool->page_size = tmp_page_size;
-    pool->page_count = (uint32)(tmp_memory_size / tmp_page_size);
+    pool->page_size = page_size;
+    pool->page_count = (uint32)(tmp_memory_size / page_size);
     pool->ctrl_page_count = 0;
-    pool->ctrl_count_per_page = tmp_page_size / sizeof(vm_ctrl_t);
+    pool->ctrl_page_max_count = ctrl_page_max_count;
+    pool->ctrl_count_per_page = page_size / sizeof(vm_ctrl_t);
     pool->slot_count_pre_page = pool->page_size / sizeof(vm_page_slot_t);
     pool->page_count_pre_slot = 64;
     pool->page_count_pre_slot_page = pool->slot_count_pre_page * pool->page_count_pre_slot;
     pool->io_in_progress_ctrl_page = FALSE;
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
     pool->ctrl_sequence = 0;
     pool->slot_sequence = 0;
 #endif
@@ -68,11 +97,12 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
     for (uint32 i = 0; i < VM_FILE_COUNT; i++) {
         pool->vm_files[i].id = i;
         pool->vm_files[i].name = NULL;
-        pool->vm_files[i].handle = OS_FILE_INVALID_HANDLE;
         pool->vm_files[i].page_max_count = 0;
         pool->vm_files[i].free_slots = NULL;
-        //pool->vm_files[i].full_slots = NULL;
         UT_LIST_INIT(pool->vm_files[i].slot_pages);
+        for (uint32 j = 0; j <= VM_FILE_HANDLE_COUNT; j++) {
+            pool->vm_files[i].handle[j] = OS_FILE_INVALID_HANDLE;
+        }
     }
 
     uint32 max_io_operation_count = 100;
@@ -80,8 +110,8 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
     pool->aio_array = os_aio_array_create(max_io_operation_count, io_context_count);
     if (pool->aio_array == NULL) {
         os_mem_free_large(pool->buf, pool->memory_size);
-        ut_free(pool);
-        log_to_stderr(LOG_ERROR, "vm_pool_create: error, can not create aio array");
+        free(pool);
+        LOGGER_ERROR(LOGGER, "vm_pool_create: error, can not create aio array");
         return NULL;
     }
 
@@ -94,11 +124,14 @@ void vm_pool_destroy(vm_pool_t *pool)
 {
     //
     for (uint32 i = 0; i < VM_FILE_COUNT; i++) {
-        if (pool->vm_files[i].handle != OS_FILE_INVALID_HANDLE) {
-            os_close_file(pool->vm_files[i].handle);
+        for (uint32 j = 0; j <= VM_FILE_HANDLE_COUNT; j++) {
+            if (pool->vm_files[i].handle[j] != OS_FILE_INVALID_HANDLE) {
+                os_close_file(pool->vm_files[i].handle[j]);
+                pool->vm_files[i].handle[j] = OS_FILE_INVALID_HANDLE;
+            }
         }
         if (pool->vm_files[i].name) {
-            ut_free(pool->vm_files[i].name);
+            free(pool->vm_files[i].name);
         }
     }
     //
@@ -106,26 +139,46 @@ void vm_pool_destroy(vm_pool_t *pool)
 
     os_aio_array_free(pool->aio_array);
 
-    ut_free(pool);
+    free(pool);
 }
 
 bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
 {
-    bool32     ret;
-    os_file_t  file;
-    vm_file_t *vm_file = NULL;
+    bool32       ret;
+    uint64       max_size;
+    vm_file_t   *vm_file = NULL;
+    vm_ctrl_t   *ctrl = NULL;
 
-    if (size  > (uint64)1024 * 1024 * 1024 * 1024) {
-        log_to_stderr(LOG_ERROR, "vm_pool_add_file: error, invalid size %lu", size);
+    switch (pool->page_size) {
+    case 1024 * 8:
+        max_size = (uint64)1024 * 1024 * 1024 * 50;
+        break;
+    case 1024 * 16:
+        max_size = (uint64)1024 * 1024 * 1024 * 100;
+        break;
+    case 1024 * 32:
+        max_size = (uint64)1024 * 1024 * 1024 * 200;
+        break;
+    case 1024 * 64:
+        max_size = (uint64)1024 * 1024 * 1024 * 400;
+        break;
+    case 1024 * 128:
+        max_size = (uint64)1024 * 1024 * 1024 * 800;
+        break;
+    case 1024 * 256:
+        max_size = (uint64)1024 * 1024 * 1024 * 800;
+        break;
+    case 1024 * 512:
+    default:
+        max_size = (uint64)1024 * 1024 * 1024 * 800;
+        break;
+    }
+
+    if (size > max_size || size < 8 * 1024 * 1024) {
+        LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, invalid size %lu", size);
         return FALSE;
     }
     size = size / (8 * 1024 * 1024) * (8 * 1024 * 1024);
-
-    ret = os_open_file(name, OS_FILE_CREATE, OS_FILE_AIO, &file);
-    if (ret == FALSE) {
-        log_to_stderr(LOG_ERROR, "vm_pool_add_file: error, can not create file %s", name);
-        return FALSE;
-    }
 
     mutex_enter(&pool->mutex, NULL);
     for (uint32 i = 0; i < VM_FILE_COUNT; i++) {
@@ -136,7 +189,6 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
             strcpy_s(vm_file->name, strlen(name) + 1, name);
             vm_file->name[strlen(name)] = '\0';
             vm_file->page_max_count = (uint32)(size / pool->page_size);
-            vm_file->handle = file;
             vm_file->free_slots = NULL;
             mutex_create(&vm_file->mutex);
             UT_LIST_INIT(vm_file->slot_pages);
@@ -146,10 +198,25 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
     mutex_exit(&pool->mutex);
 
     if (vm_file == NULL) {
-        os_close_file(file);
-        log_to_stderr(LOG_ERROR, "vm_pool_add_file: error, file array is full, %s", name);
+        LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, file array is full, %s", name);
         return FALSE;
     }
+
+#ifdef __WIN__
+    for (uint32 i = 0; i <= VM_FILE_HANDLE_COUNT; i++) {
+        ret = os_open_file(name, i == 0 ? OS_FILE_CREATE : OS_FILE_OPEN, OS_FILE_AIO, &vm_file->handle[i]);
+        if (ret == FALSE) {
+            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s", name);
+            goto err_exit;
+        }
+    }
+#else
+    ret = os_open_file(name, OS_FILE_CREATE, OS_FILE_AIO, &vm_file->handle[0]);
+    if (ret == FALSE) {
+        lLOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s", name);
+        goto err_exit;
+    }
+#endif
 
     uint32 slot_page_count;
     uint32 slot_count_pre_page;
@@ -160,16 +227,15 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
         slot_page_count += 1;
     }
 
-    vm_ctrl_t *ctrl = NULL;
     vm_page_slot_t *cur_slot = NULL;
     for (uint32 page_index = 0; page_index < slot_page_count; page_index++) {
         ctrl = vm_alloc(pool);
         if (ctrl == NULL) {
-            log_to_stderr(LOG_ERROR, "vm_pool_add_file: error for alloc vm_ctrl");
+            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error for alloc vm_ctrl");
             goto err_exit;
         }
         if (!vm_open(pool, ctrl)) {
-            log_to_stderr(LOG_ERROR, "vm_pool_add_file: error for vm_open");
+            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error for vm_open");
             goto err_exit;
         }
         UT_LIST_ADD_FIRST(list_node, vm_file->slot_pages, ctrl);
@@ -184,7 +250,7 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
             vm_page_slot_t *slot = (vm_page_slot_t *)(ctrl->val.data + sizeof(vm_page_slot_t) * i);
             slot->val.bitmaps = 0;
             slot->next = NULL;
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
             slot->id = pool->slot_sequence++;
 #endif
             //
@@ -211,10 +277,15 @@ err_exit:
         ctrl = UT_LIST_GET_FIRST(vm_file->slot_pages);
     }
 
+    for (uint32 i = 0; i < VM_FILE_HANDLE_COUNT; i++) {
+        if (vm_file->handle[i] != OS_FILE_INVALID_HANDLE) {
+            os_close_file(vm_file->handle[i]);
+            vm_file->handle[i] = OS_FILE_INVALID_HANDLE;
+        }
+    }
+
     free(vm_file->name);
     vm_file->name = NULL;
-
-    os_close_file(file);
 
     return FALSE;
 }
@@ -228,7 +299,7 @@ static void vm_pool_fill_ctrls_by_page(vm_pool_t *pool, vm_page_t *page)
     for (uint32 i = 0; i < pool->ctrl_count_per_page; i++) {
         ctrl = (vm_ctrl_t *)((char *)page + i * sizeof(vm_ctrl_t));
         UT_LIST_ADD_FIRST(list_node, pool->free_ctrls, ctrl);
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
         ctrl->id = pool->ctrl_sequence++;
 #endif
     }
@@ -268,7 +339,7 @@ vm_ctrl_t* vm_alloc(vm_pool_t *pool)
             UT_LIST_REMOVE(list_node, pool->free_ctrls, ctrl);
             break;
         }
-        if (pool->ctrl_page_count >= VM_CTRL_PAGE_MAX_COUNT) {
+        if (pool->ctrl_page_count >= pool->ctrl_page_max_count) {
             // full
             break;
         }
@@ -628,7 +699,7 @@ static void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_p
     }
     slot = (vm_page_slot_t *)(ctrl->val.data + sizeof(vm_page_slot_t) * slot_index);
     ut_a(slot->val.byte_bitmap[byte_index] & ((uint64)1 << bit_index));
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
     ut_a(slot->id == page_index * pool->slot_count_pre_page + slot_index);
 #endif
 
@@ -692,7 +763,7 @@ static uint64 vm_file_alloc_page_low(vm_pool_t *pool,
             uint32 slot_index;
             vm_file_get_slot_page_index_by_slot(pool, vm_file, slot, &slot_page_index, &slot_index);
 
-#ifdef DEBUG_OUTPUT
+#ifdef UNIV_MEMORY_DEBUG
             ut_a(slot->id == slot_page_index * pool->slot_count_pre_page + slot_index);
 #endif
 
@@ -745,7 +816,7 @@ static bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_pa
     uint64            offset; // file offset where to read or write */
     void*             message1 = NULL;
     void*             message2 = NULL;
-    uint32            microseconds = 5000000; // 5 seconds
+    uint32            microseconds = 120 * 1000000; // 120 seconds
     vm_file_t        *vm_file = NULL;
     os_aio_context_t* aio_ctx;
     int               aio_ret;
@@ -755,7 +826,6 @@ static bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_pa
     *swap_page_id = INVALID_SWAP_PAGE_ID;
 
     mutex_enter(&pool->mutex, NULL);
-    //pool->vm_file_index = atomic32_inc(&pool->vm_file_index);
     for (uint32 i = 0; i < VM_FILE_COUNT; i++) {
         if (pool->vm_files[i].name == NULL) {
             break;
@@ -777,9 +847,13 @@ static bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_pa
         VM_GET_PAGE_NO_BY_SWAP_PAGE_ID(*swap_page_id), offset);
 
     aio_ctx = os_aio_array_alloc_context(pool->aio_array);
-    if (!os_file_aio_submit(aio_ctx, OS_FILE_WRITE,
-                            name, vm_file->handle, (void *)ctrl->val.page, pool->page_size, offset,
-                            message1, message2)) {
+    if (!os_file_aio_submit(aio_ctx, OS_FILE_WRITE, name,
+#ifdef __WIN__
+                            vm_file->handle[*swap_page_id & VM_FILE_HANDLE_COUNT],
+#else
+                            vm_file->handle[0],
+#endif
+                            (void *)ctrl->val.page, pool->page_size, offset, message1, message2)) {
         //ret_val = os_file_get_last_error();
         vm_file_free_page(pool, vm_file, *swap_page_id);
         ret = FALSE;
@@ -812,7 +886,7 @@ static bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl)
     uint64      offset; // file offset where to read or write */
     void*       message1 = NULL;
     void*       message2 = NULL;
-    uint32      microseconds = 5000000; // 5 seconds
+    uint32      microseconds = 120 * 1000000; // 120 seconds
     vm_file_t  *vm_file = NULL;
     os_aio_context_t* aio_ctx;
     int aio_ret;
@@ -826,9 +900,13 @@ static bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl)
         VM_GET_PAGE_NO_BY_SWAP_PAGE_ID(ctrl->swap_page_id), offset);
 
     aio_ctx = os_aio_array_alloc_context(pool->aio_array);
-    if (!os_file_aio_submit(aio_ctx, OS_FILE_READ,
-                            name, vm_file->handle, (void *)page, pool->page_size, offset,
-                            message1, message2)) {
+    if (!os_file_aio_submit(aio_ctx, OS_FILE_READ, name,
+#ifdef __WIN__
+                            vm_file->handle[ctrl->swap_page_id & VM_FILE_HANDLE_COUNT],
+#else
+                            vm_file->handle[0],
+#endif
+                            (void *)page, pool->page_size, offset, message1, message2)) {
         //ret_val = os_file_get_last_error();
         os_aio_array_free_context(aio_ctx);
         ret = FALSE;

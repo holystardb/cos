@@ -2,7 +2,7 @@
 #define _VIO_PAT_H
 
 #include "cm_type.h"
-
+#include "cm_memory.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,7 +28,7 @@ extern "C" {
 
 typedef int32 (*pat_callback_func)(uint8 sender, uint16 event, void* data, uint32 len);
 
-bool32 pat_pool_init(uint8 reactor_count);
+bool32 pat_pool_init(uint8 reactor_count, memory_pool_t *mpool);
 void pat_pool_destroy();
 bool32 pat_pool_set_auth(char *user, char* password);
 

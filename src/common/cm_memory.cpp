@@ -7,8 +7,11 @@ THREAD_LOCAL memory_context_t  *current_memory_context = NULL;
 
 
 #define M_CONTEXT_PAGE_SIZE       8192 // 8KB
+#define M_POOL_PAGE_SIZE          8192 // 8KB
+
 
 uint32 MemoryContextHeaderSize = ut_align8(sizeof(memory_context_t));
+uint32 MemoryStackContextHeaderSize = ut_align8(sizeof(memory_stack_context_t));
 uint32 MemoryPageHeaderSize = ut_align8(sizeof(memory_page_t));
 uint32 MemoryBlockHeaderSize = ut_align8(sizeof(mem_block_t));
 uint32 MemoryBufHeaderSize = ut_align8(sizeof(mem_buf_t));
@@ -16,16 +19,22 @@ uint32 MemoryBufHeaderSize = ut_align8(sizeof(mem_buf_t));
 memory_area_t* marea_create(uint64 mem_size, bool32 is_extend)
 {
     memory_area_t *area = (memory_area_t *)malloc(sizeof(memory_area_t));
-    if (area) {
-        area->is_extend = is_extend;
-        spin_lock_init(&area->lock);
-        area->offset = 0;
-        for (uint32 i = 0; i < MEM_AREA_PAGE_ARRAY_SIZE; i++) {
-            UT_LIST_INIT(area->free_pages[i]);
-        }
-        area->size = ut_2pow_round(mem_size, M_CONTEXT_PAGE_SIZE);
+    if (area == NULL) {
+        return NULL;
+    }
+
+    area->is_extend = is_extend;
+    mutex_create(&area->mutex);
+    area->offset = 0;
+    UT_LIST_INIT(area->free_pools);
+    for (uint32 i = 0; i < MEM_AREA_PAGE_ARRAY_SIZE; i++) {
+        UT_LIST_INIT(area->free_pages[i]);
+    }
+    area->size = ut_2pow_round(mem_size, M_CONTEXT_PAGE_SIZE);
+    area->buf = NULL;
+    if (area->size > 0) {
         area->buf = (char *)os_mem_alloc_large(&area->size);
-        if (!area->buf) {
+        if (area->buf == NULL) {
             free(area);
             area = NULL;
         }
@@ -37,6 +46,10 @@ memory_area_t* marea_create(uint64 mem_size, bool32 is_extend)
 void marea_destroy(memory_area_t* area)
 {
     memory_page_t *page;
+
+    if (area == NULL) {
+        return;
+    }
 
     if (area->is_extend) {
         for (uint32 i = 0; i < MEM_AREA_PAGE_ARRAY_SIZE; i++) {
@@ -55,16 +68,22 @@ void marea_destroy(memory_area_t* area)
     free(area);
 }
 
-memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size)
+memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size, bool32 need_mutex)
 {
     memory_page_t *page;
+
+    if (page_size % 1024 != 0) {
+        return NULL;
+    }
 
     uint32 n = ut_2_log(page_size / 1024);
     if (n >= MEM_AREA_PAGE_ARRAY_SIZE) {
         return NULL;
     }
 
-    spin_lock(&area->lock, NULL);
+    if (need_mutex) {
+        mutex_enter(&area->mutex, NULL);
+    }
     page = UT_LIST_GET_FIRST(area->free_pages[n]);
     if (page) {
         UT_LIST_REMOVE(list_node, area->free_pages[n], page);
@@ -72,7 +91,9 @@ memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size)
         page = (memory_page_t *)(area->buf + area->offset);
         area->offset += page_size + MemoryPageHeaderSize;
     }
-    spin_unlock(&area->lock);
+    if (need_mutex) {
+        mutex_exit(&area->mutex);
+    }
 
     if (page == NULL && area->is_extend) {
         page = (memory_page_t *)malloc(page_size + ut_align8(sizeof(memory_page_t)));
@@ -87,29 +108,67 @@ void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size)
 
     ut_a(n < MEM_AREA_PAGE_ARRAY_SIZE);
 
-    spin_lock(&area->lock, NULL);
+    mutex_enter(&area->mutex, NULL);
     UT_LIST_ADD_LAST(list_node, area->free_pages[n], page);
-    spin_unlock(&area->lock);
+    mutex_exit(&area->mutex);
 }
 
 memory_pool_t* mpool_create(memory_area_t *area,
     uint32 local_page_count, uint32 max_page_count, uint32 page_size)
 {
+    memory_page_t *page;
+    memory_pool_t *pool = NULL;
+
     if (page_size == 0 || page_size % 1024 != 0 || page_size > MEM_AREA_PAGE_MAX_SIZE ||
         local_page_count == 0 || max_page_count < local_page_count) {
         return NULL;
     }
-    memory_pool_t *pool = (memory_pool_t *)malloc(sizeof(memory_pool_t));
-    if (pool != NULL) {
-        spin_lock_init(&pool->lock);
-        pool->local_page_count = local_page_count;
-        pool->max_page_count = max_page_count;
-        pool->page_alloc_count = 0;
-        pool->page_size = page_size;
-        pool->area = area;
-        UT_LIST_INIT(pool->free_pages);
-        UT_LIST_INIT(pool->free_contexts);
-        UT_LIST_INIT(pool->context_used_pages);
+
+    mutex_enter(&area->mutex, NULL);
+
+retry:
+
+    pool = UT_LIST_GET_FIRST(area->free_pools);
+    if (pool) {
+        UT_LIST_REMOVE(list_node, area->free_pools, pool);
+    } else {
+        page = marea_alloc_page(area, M_POOL_PAGE_SIZE, FALSE);
+        if (page == NULL) {
+            mutex_exit(&area->mutex);
+
+            return NULL;
+        }
+
+        char *buf = MEM_PAGE_DATA_PTR(page);
+        uint32 num = M_POOL_PAGE_SIZE / sizeof(memory_pool_t);
+        for (uint32 i = 0; i < num; i++) {
+            pool = (memory_pool_t *)(buf + i * sizeof(memory_pool_t));
+            UT_LIST_ADD_FIRST(list_node, area->free_pools, pool);
+        }
+
+        goto retry;
+    }
+
+    mutex_exit(&area->mutex);
+
+    //
+    mutex_create(&pool->mutex);
+    mutex_create(&pool->context_mutex);
+    mutex_create(&pool->stack_context_mutex);
+    pool->local_page_count = local_page_count;
+    pool->max_page_count = max_page_count;
+    pool->page_alloc_count = 0;
+    pool->page_size = page_size;
+    pool->area = area;
+
+    UT_LIST_INIT(pool->free_contexts);
+    UT_LIST_INIT(pool->context_used_pages);
+    UT_LIST_INIT(pool->free_stack_contexts);
+    UT_LIST_INIT(pool->stack_context_used_pages);
+
+    for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
+        mutex_create(&pool->free_pages_mutex[i]);
+        UT_LIST_INIT(pool->free_pages[i]);
     }
 
     return pool;
@@ -118,74 +177,94 @@ memory_pool_t* mpool_create(memory_area_t *area,
 void mpool_destroy(memory_pool_t *pool)
 {
     memory_page_t *page;
-    UT_LIST_BASE_NODE_T(memory_page_t) free_pages, context_pages;
 
-    spin_lock(&pool->lock, NULL);
-    free_pages.count = pool->free_pages.count;
-    free_pages.start = pool->free_pages.start;
-    free_pages.end = pool->free_pages.end;
-    UT_LIST_INIT(pool->free_pages);
-    context_pages.count = pool->context_used_pages.count;
-    context_pages.start = pool->context_used_pages.start;
-    context_pages.end = pool->context_used_pages.end;
-    UT_LIST_INIT(pool->context_used_pages);
-    spin_unlock(&pool->lock);
-
-    page = UT_LIST_GET_FIRST(free_pages);
+    page = UT_LIST_GET_FIRST(pool->context_used_pages);
     while (page) {
-        UT_LIST_REMOVE(list_node, free_pages, page);
-        marea_free_page(pool->area, page, pool->page_size);
-        page = UT_LIST_GET_FIRST(free_pages);
-    }
-
-    page = UT_LIST_GET_FIRST(context_pages);
-    while (page) {
-        UT_LIST_REMOVE(list_node, context_pages, page);
+        UT_LIST_REMOVE(list_node, pool->context_used_pages, page);
         marea_free_page(pool->area, page, M_CONTEXT_PAGE_SIZE);
-        page = UT_LIST_GET_FIRST(context_pages);
+        page = UT_LIST_GET_FIRST(pool->context_used_pages);
+    }
+    UT_LIST_INIT(pool->context_used_pages);
+
+    page = UT_LIST_GET_FIRST(pool->stack_context_used_pages);
+    while (page) {
+        UT_LIST_REMOVE(list_node, pool->stack_context_used_pages, page);
+        marea_free_page(pool->area, page, M_CONTEXT_PAGE_SIZE);
+        page = UT_LIST_GET_FIRST(pool->stack_context_used_pages);
+    }
+    UT_LIST_INIT(pool->stack_context_used_pages);
+
+    for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
+        page = UT_LIST_GET_FIRST(pool->free_pages[i]);
+        while (page) {
+            UT_LIST_REMOVE(list_node, pool->free_pages[i], page);
+            marea_free_page(pool->area, page, pool->page_size);
+            page = UT_LIST_GET_FIRST(pool->free_pages[i]);
+        }
+        UT_LIST_INIT(pool->free_pages[i]);
     }
 
-    free(pool);
+    mutex_enter(&pool->area->mutex, NULL);
+    UT_LIST_ADD_LAST(list_node, pool->area->free_pools, pool);
+    mutex_exit(&pool->area->mutex);
 }
 
-memory_page_t* mpool_alloc_page(memory_pool_t *pool)
+static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
 {
     memory_page_t *page;
     bool32 need_alloc = FALSE;
 
-    spin_lock(&pool->lock, NULL);
-    page = UT_LIST_GET_FIRST(pool->free_pages);
-    if (page != NULL) {
-        UT_LIST_REMOVE(list_node, pool->free_pages, page);
-    } else if (pool->page_alloc_count < pool->max_page_count) {
+    for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
+        index = (i + index) % MPOOL_FREE_PAGE_LIST_COUNT;
+
+        mutex_enter(&pool->free_pages_mutex[index], NULL);
+        page = UT_LIST_GET_FIRST(pool->free_pages[index]);
+        if (page != NULL) {
+            UT_LIST_REMOVE(list_node, pool->free_pages[index], page);
+            mutex_exit(&pool->free_pages_mutex[index]);
+            break;
+        }
+        mutex_exit(&pool->free_pages_mutex[index]);
+    }
+
+    if (page) {
+        return page;
+    }
+
+    uint32 page_alloc_count = atomic32_inc(&pool->page_alloc_count);
+    if (page_alloc_count < pool->max_page_count) {
         page = marea_alloc_page(pool->area, pool->page_size);
         if (page) {
-            pool->page_alloc_count++;
+            return page;
         }
     }
-    spin_unlock(&pool->lock);
+    atomic32_dec(&pool->page_alloc_count);
 
-    return page;
+    return NULL;
+}
+
+static void mpool_free_page_low(memory_pool_t *pool, memory_page_t *page, uint64 index)
+{
+    if ((uint32)pool->page_alloc_count > pool->local_page_count) {
+        marea_free_page(pool->area, page, pool->page_size);
+        atomic32_dec(&pool->page_alloc_count);
+        return;
+    }
+
+    index = index % MPOOL_FREE_PAGE_LIST_COUNT;
+    mutex_enter(&pool->free_pages_mutex[index], NULL);
+    UT_LIST_ADD_LAST(list_node, pool->free_pages[index], page);
+    mutex_exit(&pool->free_pages_mutex[index]);
+}
+
+memory_page_t* mpool_alloc_page(memory_pool_t *pool)
+{
+    return mpool_alloc_page_low(pool, 0);
 }
 
 void mpool_free_page(memory_pool_t *pool, memory_page_t *page)
 {
-    bool32 is_need_free = FALSE;
-
-    spin_lock(&pool->lock, NULL);
-    if (pool->local_page_count >= pool->page_alloc_count) {
-        UT_LIST_ADD_LAST(list_node, pool->free_pages, page);
-    } else {
-        if (pool->page_alloc_count > 0) {
-            pool->page_alloc_count--;
-        }
-        is_need_free = TRUE;
-    }
-    spin_unlock(&pool->lock);
-
-    if (is_need_free) {
-        marea_free_page(pool->area, page, pool->page_size);
-    }
+    mpool_free_page_low(pool, page, 0);
 }
 
 static void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
@@ -193,6 +272,8 @@ static void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
     memory_context_t *ctx = NULL;
     uint32 num = pool->page_size / MemoryContextHeaderSize;
     char *buf = MEM_PAGE_DATA_PTR(page);
+
+    ut_ad(mutex_own(&pool->context_mutex));
 
     for (uint32 i = 0; i < num; i++) {
         ctx = (memory_context_t *)(buf + i * MemoryContextHeaderSize);
@@ -205,7 +286,7 @@ static memory_context_t* mpool_alloc_mcontext(memory_pool_t *pool)
     memory_page_t *page;
     memory_context_t *ctx;
 
-    spin_lock(&pool->lock, NULL);
+    mutex_enter(&pool->context_mutex, NULL);
     for (;;) {
         ctx = UT_LIST_GET_FIRST(pool->free_contexts);
         if  (ctx != NULL) {
@@ -221,58 +302,108 @@ static memory_context_t* mpool_alloc_mcontext(memory_pool_t *pool)
         UT_LIST_ADD_LAST(list_node, pool->context_used_pages, page);
         mpool_fill_mcontext(pool, page);
     }
-    spin_unlock(&pool->lock);
+    mutex_exit(&pool->context_mutex);
 
     return ctx;
 }
 
 static void mpool_free_mcontext(memory_context_t *ctx)
 {
-    spin_lock(&ctx->pool->lock, NULL);
+    mutex_enter(&ctx->pool->context_mutex, NULL);
     UT_LIST_ADD_LAST(list_node, ctx->pool->free_contexts, ctx);
-    spin_unlock(&ctx->pool->lock);
+    mutex_exit(&ctx->pool->context_mutex);
 }
 
-memory_context_t* mcontext_create(memory_pool_t *pool)
+static void mpool_fill_stack_mcontext(memory_pool_t *pool, memory_page_t *page)
 {
-    memory_context_t *context = mpool_alloc_mcontext(pool);
-    if (context != NULL) {
-        spin_lock_init(&context->lock);
-        UT_LIST_INIT(context->used_buf_pages);
-        UT_LIST_INIT(context->used_block_pages);
-        for (uint32 i = 0; i < MEM_BLOCK_FREE_LIST_SIZE; i++) {
-            UT_LIST_INIT(context->free_mem_blocks[i]);
+    memory_stack_context_t *ctx = NULL;
+    uint32 num = pool->page_size / MemoryStackContextHeaderSize;
+    char *buf = MEM_PAGE_DATA_PTR(page);
+
+    ut_ad(mutex_own(&pool->stack_context_mutex));
+
+    for (uint32 i = 0; i < num; i++) {
+        ctx = (memory_stack_context_t *)(buf + i * MemoryStackContextHeaderSize);
+        UT_LIST_ADD_FIRST(list_node, pool->free_stack_contexts, ctx);
+    }
+}
+
+static memory_stack_context_t* mpool_alloc_stack_mcontext(memory_pool_t *pool)
+{
+    memory_page_t *page;
+    memory_stack_context_t *ctx;
+
+    mutex_enter(&pool->stack_context_mutex, NULL);
+    for (;;) {
+        ctx = UT_LIST_GET_FIRST(pool->free_stack_contexts);
+        if  (ctx != NULL) {
+            UT_LIST_REMOVE(list_node, pool->free_stack_contexts, ctx);
+            ctx->pool = pool;
+            break;
         }
+        //
+        page = marea_alloc_page(pool->area, M_CONTEXT_PAGE_SIZE);
+        if (page == NULL) {
+            break;
+        }
+        UT_LIST_ADD_LAST(list_node, pool->stack_context_used_pages, page);
+        mpool_fill_stack_mcontext(pool, page);
+    }
+    mutex_exit(&pool->stack_context_mutex);
+
+    return ctx;
+}
+
+static void mpool_free_stack_mcontext(memory_stack_context_t *ctx)
+{
+    mutex_enter(&ctx->pool->stack_context_mutex, NULL);
+    UT_LIST_ADD_LAST(list_node, ctx->pool->free_stack_contexts, ctx);
+    mutex_exit(&ctx->pool->stack_context_mutex);
+}
+
+
+/******************************************************************************
+ *                             stack context                                  *
+ *****************************************************************************/
+
+memory_stack_context_t* mcontext_stack_create(memory_pool_t *pool)
+{
+    memory_stack_context_t *context = mpool_alloc_stack_mcontext(pool);
+    if (context != NULL) {
+        mutex_create(&context->mutex);
+        UT_LIST_INIT(context->used_buf_pages);
     }
 
     return context;
 }
 
-void mcontext_destroy(memory_context_t *context)
+void mcontext_stack_destroy(memory_stack_context_t *context)
 {
-    mcontext_clean(context);
-    mpool_free_mcontext(context);
+    mcontext_stack_clean(context);
+    mpool_free_stack_mcontext(context);
 }
 
-static bool32 mcontext_page_extend(memory_context_t *context)
+static bool32 mcontext_stack_page_extend(memory_stack_context_t *context)
 {
-    memory_page_t *page = mpool_alloc_page(context->pool);
+    memory_page_t *page;
 
+    page = mpool_alloc_page_low(context->pool, (uint64)context);
     if (page == NULL) {
         return FALSE;
     }
+    page->context = context;
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&context->mutex, NULL);
     mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
     buf->offset = 0;
     buf->buf = (char *)buf + MemoryBufHeaderSize;
     UT_LIST_ADD_LAST(list_node, context->used_buf_pages, page);
-    spin_unlock(&context->lock);
+    mutex_exit(&context->mutex);
 
     return TRUE;
 }
 
-void* mcontext_stack_push(memory_context_t *context, uint32 size)
+void* mcontext_stack_push(memory_stack_context_t *context, uint32 size)
 {
     void *ptr = NULL;
     memory_page_t *page;
@@ -283,22 +414,22 @@ void* mcontext_stack_push(memory_context_t *context, uint32 size)
     }
 
     for (;;) {
-        spin_lock(&context->lock, NULL);
+        mutex_enter(&context->mutex, NULL);
         page = UT_LIST_GET_LAST(context->used_buf_pages);
         if (page) {
             mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
             if (context->pool->page_size - mem_buf->offset >= align_size) {
                 ptr = mem_buf->buf + mem_buf->offset;
                 mem_buf->offset += align_size;
-                spin_unlock(&context->lock);
+                mutex_exit(&context->mutex);
                 break;
             } else {
                 page = NULL;
             }
         }
-        spin_unlock(&context->lock);
+        mutex_exit(&context->mutex);
 
-        if (page == NULL && !mcontext_page_extend(context)) {
+        if (page == NULL && !mcontext_stack_page_extend(context)) {
             break;
         }
     }
@@ -306,13 +437,13 @@ void* mcontext_stack_push(memory_context_t *context, uint32 size)
     return ptr;
 }
 
-void mcontext_stack_pop(memory_context_t *context, void *ptr, uint32 size)
+void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
 {
     bool32 is_need_free = FALSE;
     memory_page_t *page;
     uint32 align_size = ut_align8(size);
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&context->mutex, NULL);
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     if (page) {
         mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
@@ -325,21 +456,21 @@ void mcontext_stack_pop(memory_context_t *context, void *ptr, uint32 size)
             }
         }
     }
-    spin_unlock(&context->lock);
+    mutex_exit(&context->mutex);
 
     if (is_need_free) {
-        mpool_free_page(context->pool, page);
+        mpool_free_page_low(context->pool, page, (uint64)context);
     }
 }
 
-void mcontext_stack_pop2(memory_context_t *context, void *ptr)
+void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
 {
     memory_page_t *page, *tmp;
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
 
     UT_LIST_INIT(used_buf_pages);
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&context->mutex, NULL);
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     while (page) {
         mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
@@ -361,49 +492,83 @@ void mcontext_stack_pop2(memory_context_t *context, void *ptr)
         UT_LIST_REMOVE(list_node, context->used_buf_pages, tmp);
         UT_LIST_ADD_LAST(list_node, used_buf_pages, tmp);
     }
-    spin_unlock(&context->lock);
+    mutex_exit(&context->mutex);
 
     page = UT_LIST_GET_FIRST(used_buf_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_buf_pages, page);
-        mpool_free_page(context->pool, page);
+        mpool_free_page_low(context->pool, page, (uint64)context);
         page = UT_LIST_GET_FIRST(used_buf_pages);
     }
+}
+
+bool32 mcontext_stack_clean(memory_stack_context_t *context)
+{
+    memory_page_t *page;
+    UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
+
+    mutex_enter(&context->mutex, NULL);
+    used_buf_pages.count = context->used_buf_pages.count;
+    used_buf_pages.start = context->used_buf_pages.start;
+    used_buf_pages.end = context->used_buf_pages.end;
+    UT_LIST_INIT(context->used_buf_pages);
+    mutex_exit(&context->mutex);
+
+    page = UT_LIST_GET_FIRST(used_buf_pages);
+    while (page) {
+        UT_LIST_REMOVE(list_node, used_buf_pages, page);
+        mpool_free_page_low(context->pool, page, (uint64)context);
+        page = UT_LIST_GET_FIRST(used_buf_pages);
+    }
+
+    return TRUE;
+}
+
+
+/******************************************************************************
+ *                             normal context                                 *
+ *****************************************************************************/
+
+
+memory_context_t* mcontext_create(memory_pool_t *pool)
+{
+    memory_context_t *context = mpool_alloc_mcontext(pool);
+    if (context != NULL) {
+        mutex_create(&context->mutex);
+        UT_LIST_INIT(context->used_block_pages);
+        for (uint32 i = 0; i < MEM_BLOCK_FREE_LIST_SIZE; i++) {
+            UT_LIST_INIT(context->free_mem_blocks[i]);
+        }
+    }
+
+    return context;
+}
+
+void mcontext_destroy(memory_context_t *context)
+{
+    mcontext_clean(context);
+    mpool_free_mcontext(context);
 }
 
 bool32 mcontext_clean(memory_context_t *context)
 {
     memory_page_t *page;
-    UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
     UT_LIST_BASE_NODE_T(memory_page_t) used_block_pages;
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&context->mutex, NULL);
     for (uint32 i = 0; i < MEM_BLOCK_FREE_LIST_SIZE; i++) {
         UT_LIST_INIT(context->free_mem_blocks[i]);
     }
-
-    used_buf_pages.count = context->used_buf_pages.count;
-    used_buf_pages.start = context->used_buf_pages.start;
-    used_buf_pages.end = context->used_buf_pages.end;
-    UT_LIST_INIT(context->used_buf_pages);
-
     used_block_pages.count = context->used_block_pages.count;
     used_block_pages.start = context->used_block_pages.start;
     used_block_pages.end = context->used_block_pages.end;
     UT_LIST_INIT(context->used_block_pages);
-    spin_unlock(&context->lock);
-
-    page = UT_LIST_GET_FIRST(used_buf_pages);
-    while (page) {
-        UT_LIST_REMOVE(list_node, used_buf_pages, page);
-        mpool_free_page(context->pool, page);
-        page = UT_LIST_GET_FIRST(used_buf_pages);
-    }
+    mutex_exit(&context->mutex);
 
     page = UT_LIST_GET_FIRST(used_block_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_block_pages, page);
-        mpool_free_page(context->pool, page);
+        mpool_free_page_low(context->pool, page, (uint64)context);
         page = UT_LIST_GET_FIRST(used_block_pages);
     }
 
@@ -433,7 +598,7 @@ static bool32 mcontext_block_fill_free_list(memory_context_t *context, uint32 n)
     mem_block_t* block;
     mem_block_t* block2;
 
-    if (n >= MEM_BLOCK_FREE_LIST_SIZE) {
+    if (n + 1 >= MEM_BLOCK_FREE_LIST_SIZE) {
         /* We come here when we have run out of space in the memory pool: */
         return FALSE;
     }
@@ -461,15 +626,15 @@ static bool32 mcontext_block_fill_free_list(memory_context_t *context, uint32 n)
 
 static bool32 mcontext_block_alloc_page(memory_context_t *context)
 {
-    memory_page_t *page = mpool_alloc_page(context->pool);
+    memory_page_t *page = mpool_alloc_page_low(context->pool, (uint64)context);
     if (!page) {
         return FALSE;
     }
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&context->mutex, NULL);
     //
     UT_LIST_ADD_LAST(list_node, context->used_block_pages, page);
-
+    page->context = context;
     //
     char *curr_ptr = MEM_PAGE_DATA_PTR(page);
     uint32 used = 0;
@@ -488,7 +653,7 @@ static bool32 mcontext_block_alloc_page(memory_context_t *context)
 
         used = used + mcontext_get_size_by_blocks_index(i);
     }
-    spin_unlock(&context->lock);
+    mutex_exit(&context->mutex);
 
     return TRUE;
 }
@@ -514,13 +679,13 @@ static mem_block_t* mcontext_block_get_buddy(memory_context_t *context, mem_bloc
     return buddy;
 }
 
-void* mcontext_alloc(memory_context_t *context, uint32 size)
+void* mcontext_alloc(memory_context_t *context, uint32 size, const char* file, int line)
 {
     uint32 n;
     mem_block_t *block = NULL;
     uint32 align_size = size + MemoryBlockHeaderSize;
 
-    if (align_size > MEM_BLOCK_MAX_SIZE) {
+    if (context == NULL || align_size > MEM_BLOCK_MAX_SIZE) {
         return NULL;
     }
 
@@ -528,7 +693,7 @@ void* mcontext_alloc(memory_context_t *context, uint32 size)
 
 retry:
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&context->mutex, NULL);
     while (block == NULL) {
         block = UT_LIST_GET_FIRST(context->free_mem_blocks[n]);
         if (block) {
@@ -539,7 +704,7 @@ retry:
             break;
         }
     }
-    spin_unlock(&context->lock);
+    mutex_exit(&context->mutex);
 
     if (block == NULL && mcontext_block_alloc_page(context)) {
         goto retry;
@@ -548,41 +713,47 @@ retry:
     return block ? (char *)block + MemoryBlockHeaderSize : NULL;
 }
 
-void* mcontext_realloc(memory_context_t *context, void *old_ptr, uint32 size)
+void* mcontext_realloc(void *ptr, uint32 size, const char* file, int line)
 {
-    if (old_ptr == NULL) {
-        return mcontext_alloc(context, size);
+    if (ptr == NULL) {
+        return NULL;
     }
 
-    mem_block_t *block = (mem_block_t *)((char *)old_ptr - MemoryBlockHeaderSize);
+    mem_block_t *block = (mem_block_t *)((char *)ptr - MemoryBlockHeaderSize);
     ut_a(!block->is_free);
 
     if (block->size == size) {
-        return old_ptr;
+        return ptr;
     }
 
-    void *new_ptr = mcontext_alloc(context, size);
+    memory_context_t *context = (memory_context_t *)block->page->context;
+    void *new_ptr = mcontext_alloc(context, size, file, line);
     if (likely(new_ptr != NULL)) {
         uint32 min_size = (block->size < size) ? block->size : size;
-        memcpy(new_ptr, old_ptr, min_size);
-        mcontext_free(context, old_ptr);
+        memcpy(new_ptr, ptr, min_size);
+        mcontext_free(ptr, context);
     }
 
     return new_ptr;
 }
 
-void mcontext_free(memory_context_t *context, void *ptr)
+void mcontext_free(void *ptr, memory_context_t *context)
 {
     mem_block_t *block = (mem_block_t *)((char *)ptr - MemoryBlockHeaderSize);
+    memory_context_t *mctx = (memory_context_t *)block->page->context;
+
+    if (context != NULL) {
+        ut_a(context != mctx);
+    }
 
     ut_a(!block->is_free);
 
     uint32 n = mcontext_get_free_blocks_index(block->size);
-    mem_block_t *buddy = mcontext_block_get_buddy(context, block);
+    mem_block_t *buddy = mcontext_block_get_buddy(mctx, block);
 
-    spin_lock(&context->lock, NULL);
+    mutex_enter(&mctx->mutex, NULL);
     if (buddy && buddy->is_free && buddy->size == block->size) {
-        UT_LIST_REMOVE(list_node, context->free_mem_blocks[n], buddy);
+        UT_LIST_REMOVE(list_node, mctx->free_mem_blocks[n], buddy);
         buddy->is_free = 0;
 
         if ((char *)buddy < (char *)block) {
@@ -591,16 +762,21 @@ void mcontext_free(memory_context_t *context, void *ptr)
             block->size = block->size * 2;
             buddy = block;
         }
-        spin_unlock(&context->lock);
+        mutex_exit(&mctx->mutex);
 
-        mcontext_free(context, (char *)buddy + MemoryBlockHeaderSize);
+        mcontext_free((char *)buddy + MemoryBlockHeaderSize, mctx);
         return;
     } else {
         block->is_free = 1;
-        UT_LIST_ADD_LAST(list_node, context->free_mem_blocks[n], block);
+        UT_LIST_ADD_LAST(list_node, mctx->free_mem_blocks[n], block);
     }
-    spin_unlock(&context->lock);
+    mutex_exit(&mctx->mutex);
 }
+
+
+/******************************************************************************
+ *                             large memory                                   *
+ *****************************************************************************/
 
 void *os_mem_alloc_large(uint64 *n)
 {
@@ -617,7 +793,7 @@ void *os_mem_alloc_large(uint64 *n)
     size = *n = ut_2pow_round(*n + (system_info.dwPageSize - 1), (uint64)system_info.dwPageSize);
     ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!ptr) {
-        LOG_PRINT_ERROR("VirtualAlloc(%lld bytes) failed; Windows error %d", size, GetLastError());
+        LOGGER_ERROR(LOGGER, "VirtualAlloc(%lld bytes) failed; Windows error %d", size, GetLastError());
     }
 #else
     size = getpagesize();
@@ -639,7 +815,7 @@ void os_mem_free_large(void *ptr, uint64 size)
 #ifdef __WIN__
     /* When RELEASE memory, the size parameter must be 0. Do not use MEM_RELEASE with MEM_DECOMMIT. */
     if (!VirtualFree(ptr, 0, MEM_RELEASE)) {
-        LOG_PRINT_ERROR("VirtualFree(%p %lld bytes) failed; Windows error %d", ptr, size, GetLastError());
+        LOGGER_ERROR(LOGGER, "VirtualFree(%p %lld bytes) failed; Windows error %d", ptr, size, GetLastError());
     }
 #else
     if (munmap(ptr, size)) {

@@ -5,6 +5,8 @@
 #include "cm_error.h"
 #include "cm_mutex.h"
 #include "knl_hash_table.h"
+#include "knl_server.h"
+#include "knl_trx.h"
 
 /* Space id and page no where the dictionary header resides */
 #define DICT_HDR_SPACE      0   /* the SYSTEM tablespace */
@@ -17,6 +19,51 @@
 /** Minimum and Maximum number of undo tablespaces */
 #define FSP_MIN_UNDO_TABLESPACES 2
 #define FSP_MAX_UNDO_TABLESPACES (TRX_SYS_N_RSEGS - 1)
+
+/** Type flags of an index: OR'ing of the flags is allowed to define a
+combination of types */
+#define DICT_CLUSTERED	1	/*!< clustered index */
+#define DICT_UNIQUE	2	/*!< unique index */
+#define	DICT_UNIVERSAL	4	/*!< index which can contain records from any
+				other index */
+#define	DICT_IBUF	8	/*!< insert buffer tree */
+#define	DICT_CORRUPT	16	/*!< bit to store the corrupted flag
+				in SYS_INDEXES.TYPE */
+#define	DICT_FTS	32	/* FTS index; can't be combined with the
+				other flags */
+
+#define	DICT_IT_BITS	6	/*!< number of bits used for SYS_INDEXES.TYPE */
+
+
+/** Width of the COMPACT flag */
+#define DICT_TF_WIDTH_COMPACT		1
+/** Width of the ZIP_SSIZE flag */
+#define DICT_TF_WIDTH_ZIP_SSIZE		4
+/** Width of the ATOMIC_BLOBS flag.  The Antelope file formats broke up
+BLOB and TEXT fields, storing the first 768 bytes in the clustered index.
+Brracuda row formats store the whole blob or text field off-page atomically.
+Secondary indexes are created from this external data using row_ext_t
+to cache the BLOB prefixes. */
+#define DICT_TF_WIDTH_ATOMIC_BLOBS	1
+/** If a table is created with the MYSQL option DATA DIRECTORY and
+innodb-file-per-table, an older engine will not be able to find that table.
+This flag prevents older engines from attempting to open the table and
+allows InnoDB to update_create_info() accordingly. */
+#define DICT_TF_WIDTH_DATA_DIR		1
+
+/** Width of all the currently known table flags */
+#define DICT_TF_BITS	(DICT_TF_WIDTH_COMPACT		\
+			+ DICT_TF_WIDTH_ZIP_SSIZE	\
+			+ DICT_TF_WIDTH_ATOMIC_BLOBS	\
+			+ DICT_TF_WIDTH_DATA_DIR)
+
+#define DICT_TF2_BITS			6
+
+
+
+
+
+
 
 
 /* The columns in SYS_TABLES */
@@ -190,6 +237,18 @@ enum dict_fld_sys_datafiles_enum {
 
 
 
+
+/** Quiescing states for flushing tables to disk. */
+enum ib_quiesce_t {
+	QUIESCE_NONE,
+	QUIESCE_START,			/*!< Initialise, prepare to start */
+	QUIESCE_COMPLETE		/*!< All done */
+};
+
+
+typedef struct st_dict_table dict_table_t;
+typedef struct st_dict_index dict_index_t;
+
 /** Data structure for a column in a table */
 typedef struct st_dict_col {
 	/*----------------------*/
@@ -226,11 +285,11 @@ typedef struct st_dict_col {
 	unsigned	ord_part:1;	/*!< nonzero if this column appears in the ordering fields of an index */
 	unsigned	max_prefix:12; /*!< maximum index prefix length on this column.
                                     Our current max limit is 3072 for Barracuda table */
-}dict_col_t;
+} dict_col_t;
 
 
 /** Data structure for a field in an index */
-struct dict_field_t{
+typedef struct st_dict_field{
 	dict_col_t*	col;		/*!< pointer to the table column */
 	const char*	name;		/*!< name of the column */
 	unsigned	prefix_len:12;	/*!< 0 or the length of the column
@@ -244,14 +303,14 @@ struct dict_field_t{
 	unsigned	fixed_len:10;	/*!< 0 or the fixed length of the
 					column if smaller than
 					DICT_ANTELOPE_MAX_INDEX_COL_LEN */
-};
+} dict_field_t;
 
 
 /** Data structure for an index.  Most fields will be
 initialized to 0, NULL or FALSE in dict_mem_index_create(). */
-struct dict_index_t{
+struct st_dict_index{
 	index_id_t	id;	/*!< id of the index */
-	mem_heap_t*	heap;	/*!< memory heap */
+	//mem_heap_t*	heap;	/*!< memory heap */
 	const char*	name;	/*!< index name */
 	const char*	table_name;/*!< table name */
 	dict_table_t*	table;	/*!< back pointer to table */
@@ -294,8 +353,8 @@ struct dict_index_t{
 	dict_field_t*	fields;	/*!< array of field descriptions */
 #ifndef UNIV_HOTBACKUP
 	UT_LIST_NODE_T(dict_index_t) indexes; /*!< list of indexes of the table */
-	btr_search_t*	search_info; /*!< info used in optimistic searches */
-	row_log_t*	online_log;
+	//btr_search_t*	search_info; /*!< info used in optimistic searches */
+	//row_log_t*	online_log;
 				/*!< the log of modifications
 				during online index creation;
 				valid when online_status is
@@ -303,7 +362,7 @@ struct dict_index_t{
 	/*----------------------*/
 	/** Statistics for query optimization */
 	/* @{ */
-	ib_uint64_t*	stat_n_diff_key_vals;
+	uint64*	stat_n_diff_key_vals;
 				/*!< approximate number of different
 				key values for this index, for each
 				n-column prefix where 1 <= n <=
@@ -311,22 +370,22 @@ struct dict_index_t{
 				indexed from 0 to n_uniq-1); we
 				periodically calculate new
 				estimates */
-	ib_uint64_t*	stat_n_sample_sizes;
+	uint64*	stat_n_sample_sizes;
 				/*!< number of pages that were sampled
 				to calculate each of stat_n_diff_key_vals[],
 				e.g. stat_n_sample_sizes[3] pages were sampled
 				to get the number stat_n_diff_key_vals[3]. */
-	ib_uint64_t*	stat_n_non_null_key_vals;
+	uint64*	stat_n_non_null_key_vals;
 				/* approximate number of non-null key values
 				for this index, for each column where
 				1 <= n <= dict_get_n_unique(index) (the array
 				is indexed from 0 to n_uniq-1); This
 				is used when innodb_stats_method is
 				"nulls_ignored". */
-	ulint		stat_index_size;
+	uint32		stat_index_size;
 				/*!< approximate index size in
 				database pages */
-	ulint		stat_n_leaf_pages;
+    uint32		stat_n_leaf_pages;
 				/*!< approximate number of leaf pages in the
 				index tree */
 	/* @} */
@@ -335,8 +394,7 @@ struct dict_index_t{
 	trx_id_t	trx_id; /*!< id of the transaction that created this
 				index, or 0 if the index existed
 				when InnoDB was started up */
-	zip_pad_info_t	zip_pad;/*!< Information about state of
-				compression failures and successes */
+	//zip_pad_info_t	zip_pad;/*!< Information about state of compression failures and successes */
 #endif /* !UNIV_HOTBACKUP */
 #ifdef UNIV_BLOB_DEBUG
 	ib_mutex_t		blobs_mutex;
@@ -355,9 +413,9 @@ struct dict_index_t{
 
 /** Data structure for a database table.  Most fields will be
 initialized to 0, NULL or FALSE in dict_mem_table_create(). */
-struct dict_table_t{
+struct st_dict_table{
 	table_id_t	id;	/*!< id of the table */
-	mem_heap_t*	heap;	/*!< memory heap */
+	//mem_heap_t*	heap;	/*!< memory heap */
 	char*		name;	/*!< table name */
 	const char*	dir_path_of_temp_table;/*!< NULL or the directory path
 				where a TEMPORARY table that was explicitly
@@ -406,17 +464,17 @@ struct dict_table_t{
 				allocated from a temporary heap.  The final
 				string will be allocated from table->heap. */
 #ifndef UNIV_HOTBACKUP
-	hash_node_t	name_hash; /*!< hash chain node */
-	hash_node_t	id_hash; /*!< hash chain node */
+	//hash_node_t	name_hash; /*!< hash chain node */
+	//hash_node_t	id_hash; /*!< hash chain node */
 	UT_LIST_BASE_NODE_T(dict_index_t)
 			indexes; /*!< list of indexes of the table */
-	UT_LIST_BASE_NODE_T(dict_foreign_t)
-			foreign_list;/*!< list of foreign key constraints
-				in the table; these refer to columns
-				in other tables */
-	UT_LIST_BASE_NODE_T(dict_foreign_t)
-			referenced_list;/*!< list of foreign key constraints
-				which refer to this table */
+	//UT_LIST_BASE_NODE_T(dict_foreign_t)
+	//		foreign_list;/*!< list of foreign key constraints
+	//			in the table; these refer to columns
+	//			in other tables */
+	//UT_LIST_BASE_NODE_T(dict_foreign_t)
+	//		referenced_list;/*!< list of foreign key constraints
+	//			which refer to this table */
 	UT_LIST_NODE_T(dict_table_t)
 			table_LRU; /*!< node of the LRU list of tables */
 	unsigned	fk_max_recusive_level:8;
@@ -425,7 +483,7 @@ struct dict_table_t{
 				constraints. If exceeds this level, we will
 				stop loading child table into memory along with
 				its parent table */
-	ulint		n_foreign_key_checks_running;
+	uint32		n_foreign_key_checks_running;
 				/*!< count of how many foreign key check
 				operations are currently being performed
 				on the table: we cannot drop the table while
@@ -469,9 +527,9 @@ struct dict_table_t{
 	unsigned	stat_initialized:1; /*!< TRUE if statistics have
 				been calculated the first time
 				after database startup or table creation */
-	ib_time_t	stats_last_recalc;
+    time_t	stats_last_recalc;
 				/*!< Timestamp of last recalc of the stats */
-	ib_uint32_t	stat_persistent;
+	uint32	stat_persistent;
 				/*!< The two bits below are set in the
 				::stat_persistent member and have the following
 				meaning:
@@ -490,7 +548,7 @@ struct dict_table_t{
 				this ever happens. */
 #define DICT_STATS_PERSISTENT_ON	(1 << 1)
 #define DICT_STATS_PERSISTENT_OFF	(1 << 2)
-	ib_uint32_t	stats_auto_recalc;
+	uint32	stats_auto_recalc;
 				/*!< The two bits below are set in the
 				::stats_auto_recalc member and have
 				the following meaning:
@@ -511,21 +569,21 @@ struct dict_table_t{
 				this ever happens. */
 #define DICT_STATS_AUTO_RECALC_ON	(1 << 1)
 #define DICT_STATS_AUTO_RECALC_OFF	(1 << 2)
-	ulint		stats_sample_pages;
+	uint32		stats_sample_pages;
 				/*!< the number of pages to sample for this
 				table during persistent stats estimation;
 				if this is 0, then the value of the global
 				srv_stats_persistent_sample_pages will be
 				used instead. */
-	ib_uint64_t	stat_n_rows;
+	uint64	stat_n_rows;
 				/*!< approximate number of rows in the table;
 				we periodically calculate new estimates */
-	ulint		stat_clustered_index_size;
+    uint32		stat_clustered_index_size;
 				/*!< approximate clustered index size in
 				database pages */
-	ulint		stat_sum_of_other_index_sizes;
+    uint32		stat_sum_of_other_index_sizes;
 				/*!< other indexes in database pages */
-	ib_uint64_t	stat_modified_counter;
+	uint64	stat_modified_counter;
 				/*!< when a row is inserted, updated,
 				or deleted,
 				we add 1 to this number; we calculate new
@@ -572,7 +630,7 @@ struct dict_table_t{
 				the trx lock heap rather than use the
 				pre-allocated instance in autoinc_lock below.*/
 				/* @{ */
-	lock_t*		autoinc_lock;
+	//lock_t*		autoinc_lock;
 				/*!< a buffer for an AUTOINC lock
 				for this table: we allocate the memory here
 				so that individual transactions can get it
@@ -580,10 +638,10 @@ struct dict_table_t{
 				space from the lock heap of the trx:
 				otherwise the lock heap would grow rapidly
 				if we do a large insert from a select */
-	ib_mutex_t		autoinc_mutex;
+	mutex_t		autoinc_mutex;
 				/*!< mutex protecting the autoincrement
 				counter */
-	ib_uint64_t	autoinc;/*!< autoinc counter value to give to the
+	uint64	autoinc;/*!< autoinc counter value to give to the
 				next inserted row */
 	ulong		n_waiting_or_granted_auto_inc_locks;
 				/*!< This counter is used to track the number
@@ -598,8 +656,8 @@ struct dict_table_t{
 				/*!< The transaction that currently holds the
 				the AUTOINC lock on this table.
 				Protected by lock_sys->mutex. */
-	fts_t*		fts;	/* FTS specific state variables */
-				/* @} */
+	//fts_t*		fts;	/* FTS specific state variables */
+
 	/*----------------------*/
 
 	ib_quiesce_t	 quiesce;/*!< Quiescing states, protected by the
@@ -609,20 +667,19 @@ struct dict_table_t{
 				indexes. */
 
 	/*----------------------*/
-	ulint		n_rec_locks;
+	uint32		n_rec_locks;
 				/*!< Count of the number of record locks on
 				this table. We use this to determine whether
 				we can evict the table from the dictionary
 				cache. It is protected by lock_sys->mutex. */
-	ulint		n_ref_count;
+    uint32		n_ref_count;
 				/*!< count of how many handles are opened
 				to this table; dropping of the table is
 				NOT allowed until this count gets to zero;
 				MySQL does NOT itself check the number of
 				open handles at drop */
-	UT_LIST_BASE_NODE_T(lock_t)
-			locks;	/*!< list of locks on the table; protected
-				by lock_sys->mutex */
+	//UT_LIST_BASE_NODE_T(lock_t)
+	//		locks;	/*!< list of locks on the table; protected by lock_sys->mutex */
 #endif /* !UNIV_HOTBACKUP */
 
 #ifdef UNIV_DEBUG

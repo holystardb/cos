@@ -2,6 +2,7 @@
 #include "knl_handler.h"
 #include "knl_server.h"
 #include "knl_buf.h"
+#include "knl_log.h"
 
 // Create undo tablespace.
 static dberr_t srv_undo_tablespace_create(
@@ -31,7 +32,7 @@ bool32 knl_open_or_create_data_file(memory_area_t* marea, bool32 *create_new_db)
     *create_new_db = FALSE;
 
     os_file_t file;
-    uint32 dirname_len = strlen(srv_data_home);
+    uint32 dirname_len = (uint32)strlen(srv_data_home);
     if (srv_data_home[dirname_len - 1] != SRV_PATH_SEPARATOR) {
         sprintf_s(name, 2048, "%s%c%s.dat", srv_data_home, SRV_PATH_SEPARATOR, system_space_name);
     } else {
@@ -44,9 +45,9 @@ bool32 knl_open_or_create_data_file(memory_area_t* marea, bool32 *create_new_db)
     if (!ret) {
         //return DB_ERROR;
     }
-    ret = os_file_extend(name, file, srv_system_space_size);
+    ret = os_file_extend(name, file, srv_system_file_size);
     if (!ret) {
-        LOG_PRINT_FATAL("Error in creating %s: probably out of disk space", name);
+        LOGGER_FATAL(LOGGER, "Error in creating %s: probably out of disk space", name);
         return DB_ERROR;
     }
 
@@ -77,15 +78,38 @@ bool32 knl_open_or_create_data_file(memory_area_t* marea, bool32 *create_new_db)
 
 bool32 knl_server_start(memory_area_t* marea)
 {
-    dberr_t err;
+    dberr_t   err;
+    db_ctrl_t ctrl;
+    bool32    ret;
+
+    for (uint32 i = 1; i <= 3; i++) {
+        ret = read_ctrl_file(name, &ctrl);
+        if (ret) {
+            break;
+        }
+    }
+    if (!ret) {
+        LOGGER_FATAL(LOGGER, "Startup failed, control file damaged");
+        return FALSE;
+    }
 
     sync_init();
     mtr_init(marea);
 
+    if (!log_init()) {
+        return FALSE;
+    }
+    for (uint32 i = 0; i < ctrl.redo_count; i++) {
+        ret = log_group_add(ctrl.redo_group[i].name, ctrl.redo_group[i].size);
+        if (!ret) {
+            return FALSE;
+        }
+    }
+
     // buffer pool
     err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
     if (err != DB_SUCCESS) {
-        LOG_PRINT_FATAL("FATAL in initializing data buffer pool.");
+        LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool.");
         return DB_ERROR;
     }
 
@@ -99,6 +123,15 @@ bool32 knl_server_start(memory_area_t* marea)
         //os_thread_create(read_io_handler_thread, n + i, thread_ids + i);
     }
 
+    /*
+    char *name_prefix = "redo";
+    if (data_home[dirname_len - 1] != SRV_PATH_SEPARATOR) {
+        sprintf_s(group->name, log_file_name_len,
+            "%s%c%s%d", data_home, SRV_PATH_SEPARATOR, name_prefix, i+1);
+    } else {
+        sprintf_s(group->name, log_file_name_len, "%s%s%d", data_home, name_prefix, i+1);
+    }
+    */
 
     // redo buffer
 
@@ -117,7 +150,7 @@ bool32 knl_server_start(memory_area_t* marea)
 
     if (create_new_db) {
         mtr_t mtr;
-        uint64 sum_of_new_sizes = srv_system_space_size;
+        uint64 sum_of_new_sizes = srv_system_file_size;
 
         mtr_start(&mtr);
         fsp_header_init(0, sum_of_new_sizes, &mtr);
@@ -133,38 +166,39 @@ bool32 knl_server_start(memory_area_t* marea)
 
 }
 
-bool32 knl_server_initialize(memory_area_t* marea)
+bool32 knl_server_init_db(memory_area_t* marea)
 {
     dberr_t err;
+
+    if (!srv_create_ctrls(srv_data_home)) {
+        return FALSE;
+    }
+    if (srv_create_redo_logs(srv_data_home) != DB_SUCCESS) {
+        return FALSE;
+    }
+    if (srv_create_undo_log(srv_data_home) != DB_SUCCESS) {
+        return FALSE;
+    }
+    if (srv_create_temp(srv_data_home) != DB_SUCCESS) {
+        return FALSE;
+    }
+    if (srv_create_system(srv_data_home) != DB_SUCCESS) {
+        return FALSE;
+    }
 
     sync_init();
     // mini-transaction initialize
     mtr_init(marea);
+
     log_init();
 
 
     // buffer pool
-    err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
-    if (err != DB_SUCCESS) {
-        LOG_PRINT_FATAL("FATAL in initializing data buffer pool.");
-        return FALSE;
-    }
-
-    if (!srv_create_ctrls()) {
-        return FALSE;
-    }
-    if (srv_create_redo_logs() != DB_SUCCESS) {
-        return FALSE;
-    }
-    if (srv_create_undo_log() != DB_SUCCESS) {
-        return FALSE;
-    }
-    if (srv_create_temp() != DB_SUCCESS) {
-        return FALSE;
-    }
-    if (srv_create_system() != DB_SUCCESS) {
-        return FALSE;
-    }
+    //err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
+    //if (err != DB_SUCCESS) {
+   //     LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool.");
+   //     return FALSE;
+   // }
 
     return DB_SUCCESS;
 }

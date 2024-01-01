@@ -9,7 +9,7 @@
 #include "knl_mtr.h"
 #include "knl_page_size.h"
 #include "knl_server.h"
-
+//#include "knl_dict.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -322,7 +322,6 @@ typedef struct st_fil_space {
     char        *name;  /* space name */
     uint32       id;  /* space id */
     uint32       purpose;  // Space types
-    uint32       flags;
 
     uint32       size_in_header; /* FSP_SIZE in the tablespace header; 0 if not known yet */
     uint32       free_limit; /*!< contents of FSP_FREE_LIMIT */
@@ -352,7 +351,7 @@ typedef struct st_fil_system {
     uint32              fil_node_num;
     fil_node_t        **fil_nodes;
     uint32              space_max_count;
-    spinlock_t          lock;
+    mutex_t             lock;
 
     memory_context_t   *mem_context;
 
@@ -394,9 +393,9 @@ inline bool32 fsp_is_dd_tablespace(space_id_t space_id)
 inline bool32 fsp_is_undo_tablespace(space_id_t space_id)
 {
   /* Starting with v8, undo space_ids have a unique range. */
-  if (space_id >= UNDO_SPACE_MIN_ID && space_id <= UNDO_SPACE_MAX_ID) {
-    return (true);
-  }
+  //if (space_id >= UNDO_SPACE_MIN_ID && space_id <= UNDO_SPACE_MAX_ID) {
+  //  return (true);
+  //}
 
   /* If upgrading from 5.7, there may be a list of old-style
   undo tablespaces.  Search them. */
@@ -417,7 +416,8 @@ inline bool32 fsp_is_global_temporary(space_id_t space_id)
 // Check if the tablespace is session temporary.
 inline bool32 fsp_is_session_temporary(space_id_t space_id)
 {
-    return (space_id > TEMP_SPACE_MIN_ID && space_id <= TEMP_SPACE_MAX_ID);
+    //return (space_id > TEMP_SPACE_MIN_ID && space_id <= TEMP_SPACE_MAX_ID);
+    return FALSE;
 }
 
 // Check if tablespace is system temporary.

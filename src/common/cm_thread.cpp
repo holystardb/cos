@@ -22,7 +22,7 @@ os_thread_id_t os_thread_get_curr_id(void)
 }
 
 os_thread_t os_thread_create(
-    void*               (*start_f)(void*),     /* in: pointer to function  	from which to start */
+    void*               (*start_f)(void*), /* in: pointer to function from which to start */
     void*               arg,        /* in: argument to start function */
     os_thread_id_t     *thread_id)  /* out: id of created	thread */	
 {
@@ -47,6 +47,17 @@ os_thread_t os_thread_create(
         *thread_id = (os_thread_id_t)pthread_self();
     }
     return pthread;
+#endif
+}
+
+/*!< in: exit value; in Windows this void* is cast as a DWORD */
+void os_thread_exit(void* exit_value)
+{
+#ifdef __WIN__
+    ExitThread((DWORD) exit_value);
+#else
+    pthread_detach(pthread_self());
+    pthread_exit(exit_value);
 #endif
 }
 

@@ -181,7 +181,7 @@ static void srv_free_conn(connection_t* conn)
 static void srv_close_socket(connection_t* conn, Vio* vio)
 {
     if (vio->sock_fd != INVALID_SOCKET) {
-        LOG_PRINT_DEBUG("srv_close_socket: connection(%d : %d)", conn->id, vio->sock_fd);
+        LOGGER_DEBUG(LOGGER, "srv_close_socket: connection(%d : %d)", conn->id, vio->sock_fd);
         vio_close_socket(vio);
     }
 }
@@ -260,11 +260,11 @@ static bool32 srv_epoll_accept(reactor_t* reactor, my_socket listen_fd, my_socke
     
     conn = srv_alloc_conn(reactor);
     if (conn == NULL) {
-        LOG_PRINT_ERROR("epoll_accept: error for alloc conn, accept fd %d", accept_fd);
+        LOGGER_ERROR(LOGGER, "epoll_accept: error for alloc conn, accept fd %d", accept_fd);
         return FALSE;
     }
     
-    LOG_PRINT_DEBUG("epoll_accept: connection(id=%d, fd=%d) added event to epoll", conn->id, accept_fd);
+    LOGGER_DEBUG(LOGGER, "epoll_accept: connection(id=%d, fd=%d) added event to epoll", conn->id, accept_fd);
 
     conn->client_vio.sock_fd = accept_fd;
     conn->client_vio.inactive = FALSE;
@@ -272,7 +272,7 @@ static bool32 srv_epoll_accept(reactor_t* reactor, my_socket listen_fd, my_socke
         conn->status = SOCKS_CONN;
         epoll_data.ptr = conn;
         if (-1 == reactor_add_read(conn->reactor, accept_fd, &epoll_data, g_socks_mgr.poll_timeout_sec)) {
-            LOG_PRINT_ERROR("epoll_accept: connection(id=%d, fd=%d) can not add event to epoll", conn->id, accept_fd);
+            LOGGER_ERROR(LOGGER, "epoll_accept: connection(id=%d, fd=%d) can not add event to epoll", conn->id, accept_fd);
             srv_free_conn(conn);
             return FALSE;
         }
@@ -280,7 +280,7 @@ static bool32 srv_epoll_accept(reactor_t* reactor, my_socket listen_fd, my_socke
         conn->status = R_PROXY_CONTENT;
         epoll_data.ptr = conn;
         if (-1 == reactor_epoll_add_read(conn->reactor, accept_fd, &epoll_data)) {
-            LOG_PRINT_ERROR("epoll_accept: connection(id=%d, fd=%d) can not add event to epoll", conn->id, accept_fd);
+            LOGGER_ERROR(LOGGER, "epoll_accept: connection(id=%d, fd=%d) can not add event to epoll", conn->id, accept_fd);
             srv_free_conn(conn);
             return FALSE;
         }
@@ -295,7 +295,7 @@ static bool32 socks_handle_contents_req(uint32 events, connection_t *conn)
     epoll_data_t  epoll_data;
 
     if (events & EPOLLTIMEOUT) {
-        LOG_PRINT_ERROR("socks_handle_contents_req: timeout for client, connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "socks_handle_contents_req: timeout for client, connection(%d : %d)",
             conn->id, conn->server_vio.sock_fd);
         goto err_exit;
     }
@@ -304,10 +304,10 @@ static bool32 socks_handle_contents_req(uint32 events, connection_t *conn)
     ret = vio_try_read(&conn->client_vio, conn->buf, conn->buf_size, &conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_DEBUG("socks_handle_contents_req: connection(%d : %d) is closed by client.",
+            LOGGER_DEBUG(LOGGER, "socks_handle_contents_req: connection(%d : %d) is closed by client.",
             conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("socks_handle_contents_req: error for read from client. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_contents_req: error for read from client. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
@@ -316,7 +316,7 @@ static bool32 socks_handle_contents_req(uint32 events, connection_t *conn)
     ret = vio_write(&conn->server_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret)
     {
-        LOG_PRINT_ERROR("socks_handle_contents_req: error for send request to server, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_contents_req: error for send request to server, connection(%d : %d), error %d",
             conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         goto err_exit;
     }
@@ -348,10 +348,10 @@ static bool32 socks_handle_contents_rsp(uint32 events, connection_t *conn)
     ret = vio_try_read(&conn->server_vio, conn->buf, conn->buf_size, &conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_DEBUG("socks_handle_contents_rsp: connection(%d : %d) is closed by server.",
+            LOGGER_DEBUG(LOGGER, "socks_handle_contents_rsp: connection(%d : %d) is closed by server.",
                 conn->id, conn->server_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("socks_handle_contents_rsp: error for read from server. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_contents_rsp: error for read from server. connection(%d : %d), error %d",
                 conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         }
         goto err_exit;
@@ -359,7 +359,7 @@ static bool32 socks_handle_contents_rsp(uint32 events, connection_t *conn)
 
     ret = vio_write(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_contents_rsp: error for send result to client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_contents_rsp: error for send result to client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -396,19 +396,19 @@ static bool32 do_check_connection_status(uint32 events, connection_t *conn)
     }
 
     if (events & EPOLLTIMEOUT) {
-        LOG_PRINT_ERROR("do_check_connection_status: timeout for connect server(%s:%d), connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "do_check_connection_status: timeout for connect server(%s:%d), connection(%d : %d)",
             host, port, conn->id, conn->server_vio.sock_fd);
         return FALSE;
     }
     
     ret = vio_check_connection_status(&conn->server_vio);
     if (ret != VIO_SUCCESS) {
-        LOG_PRINT_ERROR("do_check_connection_status: error for connect server(%s:%d), connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "do_check_connection_status: error for connect server(%s:%d), connection(%d : %d), error %d",
             host, port, conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         return FALSE;
     }
 
-    LOG_PRINT_DEBUG("do_check_connection_status: connected to server(%s:%d), connection(%d : %d)",
+    LOGGER_DEBUG(LOGGER, "do_check_connection_status: connected to server(%s:%d), connection(%d : %d)",
         host, port, conn->id, conn->server_vio.sock_fd);
 
     return TRUE;
@@ -455,7 +455,7 @@ static void socks_async_connect_server(connection_t *conn)
         if (conn->atype == HOST_IPV4) {
             if (VIO_SUCCESS != vio_connect_async(&conn->server_vio, conn->host, conn->port, NULL))
             {
-                LOG_PRINT_ERROR("socks_async_connect_server: error for connect server(%s:%d), connection(%d), error %d",
+                LOGGER_ERROR(LOGGER, "socks_async_connect_server: error for connect server(%s:%d), connection(%d), error %d",
                     conn->host, conn->port, conn->id, conn->server_vio.error_no);
                 goto err_exit;
             }
@@ -466,7 +466,7 @@ static void socks_async_connect_server(connection_t *conn)
             phost = gethostbyname(conn->host);
             //getaddrinfo()
             if (phost == NULL) {
-                LOG_PRINT_ERROR("socks_async_connect_server: error for convert domain(%s:%d), connection(%d)",
+                LOGGER_ERROR(LOGGER, "socks_async_connect_server: error for convert domain(%s:%d), connection(%d)",
                     conn->host, conn->port, conn->id);
                 goto err_exit;
             }
@@ -477,7 +477,7 @@ static void socks_async_connect_server(connection_t *conn)
             ret = vio_connect_by_addr_async(&conn->server_vio, (struct sockaddr_in *)&sin, sizeof(struct sockaddr_in));
             if (VIO_SUCCESS != ret)
             {
-                LOG_PRINT_ERROR("socks_async_connect_server: error for connect server(%s:%d), connection(%d), error %d",
+                LOGGER_ERROR(LOGGER, "socks_async_connect_server: error for connect server(%s:%d), connection(%d), error %d",
                     conn->host, conn->port, conn->id, conn->server_vio.error_no);
                 goto err_exit;
             }
@@ -496,13 +496,13 @@ static void socks_async_connect_server(connection_t *conn)
         ret = vio_connect_async(&conn->server_vio, g_socks_mgr.remote_host, g_socks_mgr.remote_port, NULL);
         if (VIO_SUCCESS != ret)
         {
-            LOG_PRINT_ERROR("socks_async_connect_server: error for connect rproxy(%s:%d), connection(%d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_async_connect_server: error for connect rproxy(%s:%d), connection(%d), error %d",
                 g_socks_mgr.remote_host, g_socks_mgr.remote_port, conn->id, conn->server_vio.error_no);
             goto err_exit;
         }
     }
     
-    LOG_PRINT_DEBUG("socks_async_connect_server: connecting to server(%s:%d), connection(%d : %d)",
+    LOGGER_DEBUG(LOGGER, "socks_async_connect_server: connecting to server(%s:%d), connection(%d : %d)",
         conn->host, conn->port, conn->id, conn->server_vio.sock_fd);
 
     conn->status = SOCKS_CONN_SERVER_CHECK;
@@ -528,16 +528,16 @@ static void socks_handle_conn(connection_t *conn)
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_ERROR("socks_handle_conn: connection(%d : %d) is closed by client.",
+            LOGGER_ERROR(LOGGER, "socks_handle_conn: connection(%d : %d) is closed by client.",
                 conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("socks_handle_conn: error for read from client, connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_conn: error for read from client, connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
     }
     if (conn->buf[0] != 0x05 || conn->buf[1] == 0) {
-        LOG_PRINT_ERROR("socks_handle_conn: invalid request of socks, connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "socks_handle_conn: invalid request of socks, connection(%d : %d)",
             conn->id, conn->client_vio.sock_fd);
         goto err_exit;
     }
@@ -545,7 +545,7 @@ static void socks_handle_conn(connection_t *conn)
     conn->buf_len = conn->buf[1];
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_conn: error for read from client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_conn: error for read from client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -561,7 +561,7 @@ static void socks_handle_conn(connection_t *conn)
             }
         }
         if (is_allowed_auth == FALSE) {
-            LOG_PRINT_ERROR("socks_handle_conn: invalid authentication, connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_conn: invalid authentication, connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
             goto err_exit;
         }
@@ -573,7 +573,7 @@ static void socks_handle_conn(connection_t *conn)
     conn->buf_len = 2;
     ret = vio_write(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_conn: error for send result of socks, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_conn: error for send result of socks, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -606,10 +606,10 @@ static void socks_handle_auth(connection_t *conn)
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_ERROR("socks_handle_auth: connection(%d : %d) is closed by client.",
+            LOGGER_ERROR(LOGGER, "socks_handle_auth: connection(%d : %d) is closed by client.",
                 conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("socks_handle_auth: error for read from client, connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_auth: error for read from client, connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
@@ -617,14 +617,14 @@ static void socks_handle_auth(connection_t *conn)
     version = conn->buf[0];
     // user
     if (conn->buf[1] == 0) {
-        LOG_PRINT_ERROR("socks_handle_auth: invalid request of socks, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_auth: invalid request of socks, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
     user_len = conn->buf[1];
     ret = vio_read(&conn->client_vio, user, user_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_auth: error for read from client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_auth: error for read from client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -633,19 +633,19 @@ static void socks_handle_auth(connection_t *conn)
     conn->buf_len = 1;
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_auth: error for read from client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_auth: error for read from client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
     if (conn->buf[0] == 0) {
-        LOG_PRINT_ERROR("socks_handle_auth: invalid request of socks, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_auth: invalid request of socks, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
     passwd_len = conn->buf[0];
     ret = vio_read(&conn->client_vio, pwd, passwd_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_auth: error for read from client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_auth: error for read from client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -662,7 +662,7 @@ static void socks_handle_auth(connection_t *conn)
     conn->buf_len = 2;
     ret = vio_write(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("socks_handle_auth: error for send result of socks, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_auth: error for send result of socks, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -690,23 +690,23 @@ static void socks_handle_host(connection_t *conn)
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_ERROR("socks_handle_host: connection(%d : %d) is closed by client.",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: connection(%d : %d) is closed by client.",
                 conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("socks_handle_host: error for read from client. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: error for read from client. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
     }
     if (conn->buf[0] != 0x05) {
-        LOG_PRINT_ERROR("socks_handle_host: invalid request of socks. connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_host: invalid request of socks. connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
     
     cmd = conn->buf[1];  // 1:tcp   3:udp
     if (cmd != 0x01) {
-        LOG_PRINT_ERROR("socks_handle_host: UDP is not supported. connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_host: UDP is not supported. connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -718,7 +718,7 @@ static void socks_handle_host(connection_t *conn)
         conn->buf_len = 6;
         ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
         if (VIO_SUCCESS != ret) {
-            LOG_PRINT_ERROR("socks_handle_host: error for read domain from client. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: error for read domain from client. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
             goto err_exit;
         }
@@ -732,19 +732,19 @@ static void socks_handle_host(connection_t *conn)
         conn->buf_len = 1;
         ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
         if (VIO_SUCCESS != ret) {
-            LOG_PRINT_ERROR("socks_handle_host: error for read domain from client. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: error for read domain from client. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
             goto err_exit;
         }
         if (conn->buf[0] == 0) {
-            LOG_PRINT_ERROR("socks_handle_host: invalid request of socks. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: invalid request of socks. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
             goto err_exit;
         }
         conn->buf_len = conn->buf[0] + 2;
         ret = vio_read(&conn->client_vio, conn->host, conn->buf_len);
         if (VIO_SUCCESS != ret) {
-            LOG_PRINT_ERROR("socks_handle_host: error for read domain from client, connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: error for read domain from client, connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
             goto err_exit;
         }
@@ -756,11 +756,11 @@ static void socks_handle_host(connection_t *conn)
         conn->buf_len = 16;
         ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
         if (VIO_SUCCESS != ret) {
-            LOG_PRINT_ERROR("socks_handle_host: error for read domain from client. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "socks_handle_host: error for read domain from client. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
             goto err_exit;
         }
-        LOG_PRINT_ERROR("socks_handle_host: addr/ipv6 is not supported. connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_host: addr/ipv6 is not supported. connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -780,7 +780,7 @@ static void socks_handle_host(connection_t *conn)
     ret = vio_write(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret)
     {
-        LOG_PRINT_ERROR("socks_handle_host: error for send result of socks, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "socks_handle_host: error for send result of socks, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -806,7 +806,7 @@ static bool32 lproxy_handle_contents_req(uint32 events, connection_t *conn)
     uint32       pos;
 
     if (events & EPOLLTIMEOUT) {
-        LOG_PRINT_ERROR("lproxy_handle_contents_req: timeout for client, connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "lproxy_handle_contents_req: timeout for client, connection(%d : %d)",
             conn->id, conn->client_vio.sock_fd);
         goto err_exit;
     }
@@ -819,10 +819,10 @@ static bool32 lproxy_handle_contents_req(uint32 events, connection_t *conn)
     ret = vio_try_read(&conn->client_vio, conn->buf + pos, conn->buf_size, &conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_DEBUG("lproxy_handle_contents_req: connection(%d : %d) is closed by client.",
+            LOGGER_DEBUG(LOGGER, "lproxy_handle_contents_req: connection(%d : %d) is closed by client.",
             conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("lproxy_handle_contents_req: error for read from client. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "lproxy_handle_contents_req: error for read from client. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
@@ -843,14 +843,14 @@ static bool32 lproxy_handle_contents_req(uint32 events, connection_t *conn)
         pos += conn->host_len;
         mach_write_to_2((unsigned char*)conn->buf + pos, conn->port);
         pos += 2;
-        LOG_PRINT_DEBUG("lproxy_handle_contents_req: server(%s:%d)", conn->host, conn->port);
+        LOGGER_DEBUG(LOGGER, "lproxy_handle_contents_req: server(%s:%d)", conn->host, conn->port);
     }
 
     srv_encrypt(conn);
     ret = vio_write(&conn->server_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret)
     {
-        LOG_PRINT_ERROR("lproxy_handle_contents_req: error for send request to rproxy, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "lproxy_handle_contents_req: error for send request to rproxy, connection(%d : %d), error %d",
             conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         goto err_exit;
     }
@@ -882,10 +882,10 @@ static bool32 lproxy_handle_contents_rsp(uint32 events, connection_t *conn)
     ret = vio_read(&conn->server_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_DEBUG("lproxy_handle_contents_rsp: connection(%d : %d) is closed by rproxy.",
+            LOGGER_DEBUG(LOGGER, "lproxy_handle_contents_rsp: connection(%d : %d) is closed by rproxy.",
                 conn->id, conn->server_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("lproxy_handle_contents_rsp: error for read from rproxy. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "lproxy_handle_contents_rsp: error for read from rproxy. connection(%d : %d), error %d",
                 conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         }
         goto err_exit;
@@ -895,10 +895,10 @@ static bool32 lproxy_handle_contents_rsp(uint32 events, connection_t *conn)
     ret = vio_read(&conn->server_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_ERROR("lproxy_handle_contents_rsp: connection(%d : %d) is closed by rproxy.",
+            LOGGER_ERROR(LOGGER, "lproxy_handle_contents_rsp: connection(%d : %d) is closed by rproxy.",
                 conn->id, conn->server_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("lproxy_handle_contents_rsp: error for read from rproxy. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "lproxy_handle_contents_rsp: error for read from rproxy. connection(%d : %d), error %d",
                 conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         }
         goto err_exit;
@@ -907,7 +907,7 @@ static bool32 lproxy_handle_contents_rsp(uint32 events, connection_t *conn)
     srv_decrypt(conn);
     ret = vio_write(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("lproxy_handle_contents_rsp: error for send result to client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "lproxy_handle_contents_rsp: error for send result to client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -938,10 +938,10 @@ static bool32 rproxy_parse_contents_req(connection_t *conn, bool32 *is_first_con
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_DEBUG("rproxy_parse_contents_req: connection(%d : %d) is closed by lproxy.",
+            LOGGER_DEBUG(LOGGER, "rproxy_parse_contents_req: connection(%d : %d) is closed by lproxy.",
             conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("rproxy_parse_contents_req: error for read from lproxy. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "rproxy_parse_contents_req: error for read from lproxy. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
@@ -951,10 +951,10 @@ static bool32 rproxy_parse_contents_req(connection_t *conn, bool32 *is_first_con
     ret = vio_read(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_ERROR("rproxy_parse_contents_req: connection(%d : %d) is closed by lproxy.",
+            LOGGER_ERROR(LOGGER, "rproxy_parse_contents_req: connection(%d : %d) is closed by lproxy.",
             conn->id, conn->client_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("rproxy_parse_contents_req: error for read from lproxy. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "rproxy_parse_contents_req: error for read from lproxy. connection(%d : %d), error %d",
                 conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         }
         goto err_exit;
@@ -964,7 +964,7 @@ static bool32 rproxy_parse_contents_req(connection_t *conn, bool32 *is_first_con
     *is_first_content = mach_read_from_1((unsigned char*)conn->buf);
     pos = 1;
     if (memcmp(g_socks_mgr.auth_md5_buf, conn->buf + pos, MD5_BLOCK_SIZE) != 0) {
-        LOG_PRINT_ERROR("rproxy_parse_contents_req: invalid user or password. connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "rproxy_parse_contents_req: invalid user or password. connection(%d : %d)",
             conn->id, conn->client_vio.sock_fd);
         goto err_exit;
     }
@@ -977,13 +977,13 @@ static bool32 rproxy_parse_contents_req(connection_t *conn, bool32 *is_first_con
         pos += conn->host_len;
         conn->port = mach_read_from_2((unsigned char*)conn->buf + pos);
         pos += 2;
-        LOG_PRINT_DEBUG("rproxy_parse_contents_req: connection(%d : %d) SERVER(%s : %d)",
+        LOGGER_DEBUG(LOGGER, "rproxy_parse_contents_req: connection(%d : %d) SERVER(%s : %d)",
             conn->id, conn->client_vio.sock_fd, conn->host, conn->port);
     }
     
     conn->offset = pos;
     
-    LOG_PRINT_DEBUG("rproxy_parse_contents_req: connection(%d : %d : %d) SERVER(%s : %d)",
+    LOGGER_DEBUG(LOGGER, "rproxy_parse_contents_req: connection(%d : %d : %d) SERVER(%s : %d)",
         conn->id, conn->client_vio.sock_fd, conn->server_vio.sock_fd, conn->host, conn->port);
 
     return TRUE;
@@ -1001,7 +1001,7 @@ static bool32 rproxy_async_connect_server(connection_t *conn)
 
     phost = gethostbyname(conn->host);
     if (phost == NULL) {
-        LOG_PRINT_ERROR("rproxy_async_connect_server: error for convert domain, connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "rproxy_async_connect_server: error for convert domain, connection(%d : %d)",
             conn->id, conn->client_vio.sock_fd);
         goto err_exit;
     }
@@ -1013,12 +1013,12 @@ static bool32 rproxy_async_connect_server(connection_t *conn)
     ret = vio_connect_by_addr_async(&conn->server_vio, (struct sockaddr_in *)&sin, sizeof(struct sockaddr_in));
     if (VIO_SUCCESS != ret)
     {
-        LOG_PRINT_ERROR("rproxy_async_connect_server: error for connect server, connection(%d), error %d",
+        LOGGER_ERROR(LOGGER, "rproxy_async_connect_server: error for connect server, connection(%d), error %d",
             conn->id, conn->server_vio.error_no);
         goto err_exit;
     }
 
-    LOG_PRINT_DEBUG("rproxy_async_connect_server: connecting to server(%s:%d), connection(%d : %d)",
+    LOGGER_DEBUG(LOGGER, "rproxy_async_connect_server: connecting to server(%s:%d), connection(%d : %d)",
         conn->host, conn->port, conn->id, conn->server_vio.sock_fd);
 
     return TRUE;
@@ -1053,7 +1053,7 @@ static bool32 rproxy_handle_contents_req(uint32 events, connection_t *conn)
         ret = vio_write(&conn->server_vio, conn->buf + conn->offset, conn->buf_len - conn->offset);
         if (VIO_SUCCESS != ret)
         {
-            LOG_PRINT_ERROR("rproxy_handle_contents_req: error for send request to server, connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "rproxy_handle_contents_req: error for send request to server, connection(%d : %d), error %d",
                 conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
             goto err_exit;
         }
@@ -1092,7 +1092,7 @@ static bool32 rproxy_check_connection_status(uint32 events, connection_t *conn)
     ret = vio_write(&conn->server_vio, conn->buf + conn->offset, conn->buf_len - conn->offset);
     if (VIO_SUCCESS != ret)
     {
-        LOG_PRINT_ERROR("rproxy_check_connection_status: error for send request to server, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "rproxy_check_connection_status: error for send request to server, connection(%d : %d), error %d",
             conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         goto err_exit;
     }
@@ -1122,7 +1122,7 @@ static bool32 rproxy_handle_contents_rsp(uint32 events, connection_t *conn)
     int          ret;
 
     if (events & EPOLLTIMEOUT) {
-        LOG_PRINT_ERROR("rproxy_handle_contents_rsp: timeout for server, connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, "rproxy_handle_contents_rsp: timeout for server, connection(%d : %d)",
             conn->id, conn->server_vio.sock_fd);
         goto err_exit;
     }
@@ -1131,10 +1131,10 @@ static bool32 rproxy_handle_contents_rsp(uint32 events, connection_t *conn)
     ret = vio_try_read(&conn->server_vio, conn->buf + 4, conn->buf_size, &conn->buf_len);
     if (VIO_SUCCESS != ret) {
         if (VIO_CLOSE == ret) {
-            LOG_PRINT_DEBUG("rproxy_handle_contents_rsp: connection(%d : %d) is closed by server.",
+            LOGGER_DEBUG(LOGGER, "rproxy_handle_contents_rsp: connection(%d : %d) is closed by server.",
                 conn->id, conn->server_vio.sock_fd);
         } else {
-            LOG_PRINT_ERROR("rproxy_handle_contents_rsp: error for read from server. connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, "rproxy_handle_contents_rsp: error for read from server. connection(%d : %d), error %d",
                 conn->id, conn->server_vio.sock_fd, conn->server_vio.error_no);
         }
         goto err_exit;
@@ -1145,7 +1145,7 @@ static bool32 rproxy_handle_contents_rsp(uint32 events, connection_t *conn)
     srv_encrypt(conn);
     ret = vio_write(&conn->client_vio, conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOG_PRINT_ERROR("rproxy_handle_contents_rsp: error for send result to client, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, "rproxy_handle_contents_rsp: error for send result to client, connection(%d : %d), error %d",
             conn->id, conn->client_vio.sock_fd, conn->client_vio.error_no);
         goto err_exit;
     }
@@ -1176,7 +1176,7 @@ static void socks_epoll_events(my_socket fd, struct epoll_event* event)
     g_socks_mgr.req_count++;
     spin_unlock(&g_socks_mgr.lock);
 
-    LOG_PRINT_DEBUG("socks_epoll_events: connection(%d : %d : %d), fd %d status %d",
+    LOGGER_DEBUG(LOGGER, "socks_epoll_events: connection(%d : %d : %d), fd %d status %d",
         conn->id, conn->client_vio.sock_fd, conn->server_vio.sock_fd, fd, conn->status);
 
     switch (conn->status)
@@ -1282,7 +1282,7 @@ static void reload_config()
     g_socks_mgr.poll_timeout_sec = get_private_profile_int("general", "poll_timeout", 10, g_config_file);
 
     srv_create_auth_md5();
-    log_init((log_level_t)g_socks_mgr.log_level, NULL, NULL);
+    LOGGER.log_init((log_level_t)g_socks_mgr.log_level, NULL, NULL);
 }
 
 static bool32 load_config(int argc, char **argv)
@@ -1319,7 +1319,7 @@ static bool32 load_config(int argc, char **argv)
     srv_create_auth_md5();
     
     get_app_path(path);
-    log_init((log_level_t)g_socks_mgr.log_level, path, "socks");
+    LOGGER.log_init((log_level_t)g_socks_mgr.log_level, path, "socks");
 
     return TRUE;
 }
@@ -1364,13 +1364,13 @@ static void print_statistics()
     g_pre_req_count = g_socks_mgr.req_count;
     spin_unlock(&g_socks_mgr.lock);
 
-    LOG_PRINT_ERROR("-----------------------------------------------------------------------");
-    LOG_PRINT_ERROR("| connection count |   total % 8d     |   inprocess % 4d          |", alloc_count, inprocess_count);
-    LOG_PRINT_ERROR("-----------------------------------------------------------------------");
-    LOG_PRINT_ERROR("| thread count     |   free  % 8d     |   working   % 4d          |", free_threads, working_threads);
-    LOG_PRINT_ERROR("-----------------------------------------------------------------------");
-    LOG_PRINT_ERROR("| client request   |   count % 8d     |   tps       % 4d          |", req_count, tps);
-    LOG_PRINT_ERROR("-----------------------------------------------------------------------");
+    LOGGER_ERROR(LOGGER, "-----------------------------------------------------------------------");
+    LOGGER_ERROR(LOGGER, "| connection count |   total % 8d     |   inprocess % 4d          |", alloc_count, inprocess_count);
+    LOGGER_ERROR(LOGGER, "-----------------------------------------------------------------------");
+    LOGGER_ERROR(LOGGER, "| thread count     |   free  % 8d     |   working   % 4d          |", free_threads, working_threads);
+    LOGGER_ERROR(LOGGER, "-----------------------------------------------------------------------");
+    LOGGER_ERROR(LOGGER, "| client request   |   count % 8d     |   tps       % 4d          |", req_count, tps);
+    LOGGER_ERROR(LOGGER, "-----------------------------------------------------------------------");
 }
 
 int main1(int argc, char *argv[])
@@ -1388,7 +1388,7 @@ int main1(int argc, char *argv[])
         return -1;
     }
 
-    LOG_PRINT_INFO("service is started. host %s:%d", g_socks_mgr.local_host, g_socks_mgr.local_port);
+    LOGGER_INFO(LOGGER, "service is started. host %s:%d", g_socks_mgr.local_host, g_socks_mgr.local_port);
     
     while(1)
     {

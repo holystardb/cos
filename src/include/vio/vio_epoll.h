@@ -2,6 +2,7 @@
 #define _VIO_EPOLL_H
 
 #include "cm_type.h"
+#include "cm_memory.h"
 #include "vio_socket.h"
 
 #ifndef __WIN__
@@ -13,6 +14,7 @@
 extern "C" {
 #endif
 
+#define EPOLLTIMEOUT      (1u << 28)
 
 #ifdef __WIN__
 
@@ -49,17 +51,15 @@ struct epoll_event
     epoll_data_t    data;
 };
 
-int epoll_init();
+int epoll_init(memory_pool_t *mpool, uint32 event_count = 4096);
 int epoll_ctl(int epfd, int op, my_socket fd, struct epoll_event *event);
 int epoll_create1(int flags);
 int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout_ms);
 
 #endif
 
-#define EPOLLTIMEOUT      (1u << 28)
-
-
 int epoll_close(int epfd);
+
 
 #ifdef __cplusplus
 }

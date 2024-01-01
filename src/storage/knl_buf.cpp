@@ -93,7 +93,7 @@ buf_page_t *buf_page_alloc_descriptor(void)
 {
     buf_page_t *bpage;
 
-    bpage = (buf_page_t *)my_malloc(sizeof *bpage);
+    bpage = (buf_page_t *)my_malloc(NULL, sizeof *bpage);
     memset(bpage, 0x00, sizeof *bpage);
     ut_ad(bpage);
     //UNIV_MEM_ALLOC(bpage, sizeof *bpage);
@@ -104,7 +104,7 @@ buf_page_t *buf_page_alloc_descriptor(void)
 /** Free a buf_page_t descriptor. */
 void buf_page_free_descriptor(buf_page_t *bpage) /*!< in: bpage descriptor to free. */
 {
-    ut_free(bpage);
+    free(bpage);
 }
 
 /** Determine if a buffer block can be relocated in memory.
@@ -166,10 +166,10 @@ bool32 buf_pool_watch_is_sentinel(const buf_pool_t *buf_pool, const buf_page_t *
     ut_ad(buf_page_hash_lock_held_s_or_x(buf_pool, bpage));
     ut_ad(buf_page_in_file(bpage));
 
-    if (bpage < &buf_pool->watch[0] || bpage >= &buf_pool->watch[BUF_POOL_WATCH_SIZE]) {
+    //if (bpage < &buf_pool->watch[0] || bpage >= &buf_pool->watch[BUF_POOL_WATCH_SIZE]) {
         //ut_ad(buf_page_get_state(bpage) != BUF_BLOCK_ZIP_PAGE || bpage->zip.data != NULL);
-        return (FALSE);
-    }
+    //    return (FALSE);
+    //}
 
     ut_ad(buf_page_get_state(bpage) == BUF_BLOCK_ZIP_PAGE);
     //ut_ad(!bpage->in_zip_hash);
@@ -293,7 +293,7 @@ static void buf_page_init(buf_pool_t *buf_pool, const page_id_t &page_id,
         atomic32_add(&block->page.buf_fix_count, buf_fix_count);
         //buf_pool_watch_remove(buf_pool, hash_page);
     } else {
-        LOG_PRINT_ERROR("Page %s already found in the hash table: %s block", page_id, hash_page);
+        LOGGER_ERROR(LOGGER, "Page %s already found in the hash table: %s block", page_id, hash_page);
         //ut_d(buf_print());
         //ut_d(buf_LRU_print());
         //ut_d(buf_validate());
@@ -793,7 +793,7 @@ static void buf_pool_create(buf_pool_t *buf_pool, uint64 buf_pool_size, uint32 i
         buf_pool->n_chunks = buf_pool_size / srv_buf_pool_chunk_unit;
         chunk_size = srv_buf_pool_chunk_unit;
 
-        buf_pool->chunks = (buf_chunk_t *)my_malloc(buf_pool->n_chunks * sizeof(*chunk));
+        buf_pool->chunks = (buf_chunk_t *)my_malloc(NULL, buf_pool->n_chunks * sizeof(*chunk));
         buf_pool->chunks_old = NULL;
 
         UT_LIST_INIT(buf_pool->LRU);
@@ -817,7 +817,7 @@ static void buf_pool_create(buf_pool_t *buf_pool, uint64 buf_pool_size, uint32 i
                     }
                     //buf_pool->deallocate_chunk(chunk);
                 }
-                ut_free(buf_pool->chunks);
+                free(buf_pool->chunks);
                 buf_pool->chunks = nullptr;
 
                 *err = DB_ERROR;
@@ -865,10 +865,10 @@ static void buf_pool_create(buf_pool_t *buf_pool, uint64 buf_pool_size, uint32 i
     //  buf_pool->no_flush[i] = os_event_create(0);
     //}
 
-    buf_pool->watch = (buf_page_t *)my_malloc(sizeof(*buf_pool->watch) * BUF_POOL_WATCH_SIZE);
-    for (i = 0; i < BUF_POOL_WATCH_SIZE; i++) {
-        buf_pool->watch[i].buf_pool_index = buf_pool->instance_no;
-    }
+    //buf_pool->watch = (buf_page_t *)my_malloc(sizeof(*buf_pool->watch) * BUF_POOL_WATCH_SIZE);
+    //for (i = 0; i < BUF_POOL_WATCH_SIZE; i++) {
+    //    buf_pool->watch[i].buf_pool_index = buf_pool->instance_no;
+    //}
 
     /* All fields are initialized by ut_zalloc_nokey(). */
     buf_pool->try_LRU_scan = TRUE;
@@ -909,7 +909,7 @@ static void buf_pool_free_instance(buf_pool_t *buf_pool)
         //}
     }
 
-    ut_free(buf_pool->watch);
+    free(buf_pool->watch);
     buf_pool->watch = NULL;
     mutex_enter(&buf_pool->chunks_mutex, NULL);
     chunks = buf_pool->chunks;
@@ -956,7 +956,7 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
         ++srv_buf_pool_chunk_unit;
     }
 
-    buf_pool_ptr = (buf_pool_t *)my_malloc(n_instances * sizeof(buf_pool_t));
+    buf_pool_ptr = (buf_pool_t *)ut_malloc(n_instances * sizeof(buf_pool_t));
 
     /* Magic nuber 8 is from empirical testing on a 4 socket x 10 Cores x 2 HT host.
        128G / 16 instances takes about 4 secs, compared to 10 secs without this optimisation.. */
@@ -1009,5 +1009,49 @@ buf_pool_t *buf_pool_get(const page_id_t &page_id)
     uint32 i = id.fold() % srv_buf_pool_instances;
 
     return (&buf_pool_ptr[i]);
+}
+
+
+/********************************************************************//**
+Gets the smallest oldest_modification lsn for any page in the pool. Returns
+zero if all modified pages have been flushed to disk.
+@return oldest modification in pool, zero if none */
+lsn_t buf_pool_get_oldest_modification(void)
+{
+    uint32      i;
+    buf_page_t* bpage;
+    lsn_t       lsn = 0;
+    lsn_t       oldest_lsn = 0;
+
+    /* When we traverse all the flush lists we don't want another
+    thread to add a dirty page to any flush list. */
+    //log_flush_order_mutex_enter();
+
+    for (i = 0; i < srv_buf_pool_instances; i++) {
+        buf_pool_t* buf_pool;
+
+        //buf_pool = buf_pool_from_array(i);
+
+        //buf_flush_list_mutex_enter(buf_pool);
+
+        //bpage = UT_LIST_GET_LAST(buf_pool->flush_list);
+        //if (bpage != NULL) {
+        //    ut_ad(bpage->in_flush_list);
+        //    lsn = bpage->oldest_modification;
+        //}
+
+        //buf_flush_list_mutex_exit(buf_pool);
+
+        if (!oldest_lsn || oldest_lsn > lsn) {
+            oldest_lsn = lsn;
+        }
+    }
+
+    //log_flush_order_mutex_exit();
+
+    /* The returned answer may be out of date: the flush_list can
+    change after the mutex has been released. */
+
+    return(oldest_lsn);
 }
 

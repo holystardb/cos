@@ -21,30 +21,26 @@ static void free_timer(time_wheel_t* tw, tw_timer_t* timer)
     biqueue_free(tw->timer_pool, node);
 }
 
-time_wheel_t* time_wheel_create(uint32 timer_count)
+bool32 time_wheel_create(time_wheel_t* tw, uint32 timer_count, memory_pool_t *mpool)
 {
-    uint32        i;
-    time_wheel_t *tw;
-    
-    tw = (time_wheel_t *)malloc(sizeof(time_wheel_t));
+    if (tw == NULL) {
+        return NULL;
+    }
+
     tw->cur_slot = 0;
-    for(i = 0; i < TIME_WHEEL_N; i++) {
+    for(uint32 i = 0; i < TIME_WHEEL_N; i++) {
         tw->slots[i] = NULL;  /*初始化每个槽的头结点*/
     }
 
-    tw->timer_pool = biqueue_init(sizeof(tw_timer_t), timer_count);
-    if (tw->timer_pool == NULL) {
-        free(tw);
-        return NULL;
-    }
-    return tw;
+    tw->timer_pool = biqueue_init(sizeof(tw_timer_t), timer_count, mpool);
+
+    return tw->timer_pool ? TRUE : FALSE;
 }
 
 void time_wheel_destroy(time_wheel_t *tw)
 {
-    uint32      i;
     //遍历整个槽，
-    for(i = 0; i < TIME_WHEEL_N; i++) {
+    for(uint32 i = 0; i < TIME_WHEEL_N; i++) {
         tw_timer_t *tmp = tw->slots[i];
         while(tmp) {
             tw->slots[i] = tmp->next;
@@ -52,7 +48,8 @@ void time_wheel_destroy(time_wheel_t *tw)
             tmp = tw->slots[i];
         }
     }
-    free(tw);
+
+    biqueue_destroy(tw->timer_pool);
 }
 
 /*根据定时值timetout创建一个定时器，并插入它合适的槽中*/

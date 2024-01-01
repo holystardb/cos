@@ -3,6 +3,7 @@
 
 #include "cm_type.h"
 #include "cm_biqueue.h"
+#include "cm_memory.h"
 
 
 #define BUFFER_SIZE 64
@@ -50,7 +51,7 @@ typedef struct st_time_wheel
     biqueue_t     *timer_pool;
 } time_wheel_t;
 
-time_wheel_t* time_wheel_create(uint32 timer_count);
+bool32 time_wheel_create(time_wheel_t *tw, uint32 timer_count, memory_pool_t *mpool);
 void time_wheel_destroy(time_wheel_t *tw);
 
 /*根据定时值timetout创建一个定时器，并插入它合适的槽中*/

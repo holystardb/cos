@@ -6,28 +6,29 @@
 // Creates the file page for the dictionary header. This function is called only at the database creation.
 static bool32 dict_hdr_create(mtr_t* mtr)
 {
+    /*
 	buf_block_t* block;
 	dict_hdr_t*  dict_header;
 	uint32       root_page_no;
 
 	ut_ad(mtr);
 
-	/* Create the dictionary header file block in a new, allocated file segment in the system tablespace */
+	// Create the dictionary header file block in a new, allocated file segment in the system tablespace
 	block = fseg_create(DICT_HDR_SPACE, 0, DICT_HDR + DICT_HDR_FSEG_HEADER, mtr);
 
 	ut_a(DICT_HDR_PAGE_NO == buf_block_get_page_no(block));
 
 	dict_header = dict_hdr_get(mtr);
 
-	/* Start counting row, table, index, and tree ids from DICT_HDR_FIRST_ID */
+	/* Start counting row, table, index, and tree ids from DICT_HDR_FIRST_ID
 	mlog_write_uint64(dict_header + DICT_HDR_ROW_ID, DICT_HDR_FIRST_ID, mtr);
 	mlog_write_uint64(dict_header + DICT_HDR_TABLE_ID, DICT_HDR_FIRST_ID, mtr);
 	mlog_write_uint64(dict_header + DICT_HDR_INDEX_ID, DICT_HDR_FIRST_ID, mtr);
 	mlog_write_uint32(dict_header + DICT_HDR_MAX_SPACE_ID, 0, MLOG_4BYTES, mtr);
-	/* Obsolete, but we must initialize it anyway. */
+	// Obsolete, but we must initialize it anyway.
 	mlog_write_uint32(dict_header + DICT_HDR_MIX_ID_LOW, DICT_HDR_FIRST_ID, MLOG_4BYTES, mtr);
 
-	/* Create the B-tree roots for the clustered indexes of the basic system tables */
+	// Create the B-tree roots for the clustered indexes of the basic system tables
 	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, 0, DICT_TABLES_ID, dict_ind_redundant, mtr);
 	if (root_page_no == FIL_NULL) {
 		return(FALSE);
@@ -57,7 +58,7 @@ static bool32 dict_hdr_create(mtr_t* mtr)
 		return(FALSE);
 	}
 	mlog_write_uint32(dict_header + DICT_HDR_FIELDS, root_page_no, MLOG_4BYTES, mtr);
-
+    */
 	return(TRUE);
 }
 
@@ -65,6 +66,7 @@ static bool32 dict_hdr_create(mtr_t* mtr)
 // This function is also called when the data dictionary is created.
 dberr_t dict_boot(void)
 {
+    /*
 	dict_table_t*	table;
 	dict_index_t*	index;
 	dict_hdr_t*	dict_hdr;
@@ -72,8 +74,8 @@ dberr_t dict_boot(void)
 	mtr_t		mtr;
 	dberr_t		error;
 
-	/* Be sure these constants do not ever change.  To avoid bloat,
-	only check the *NUM_FIELDS* in each table */
+	// Be sure these constants do not ever change.  To avoid bloat,
+	// only check the *NUM_FIELDS* in each table
 
 	ut_ad(DICT_NUM_COLS__SYS_TABLES == 8);
 	ut_ad(DICT_NUM_FIELDS__SYS_TABLES == 10);
@@ -92,46 +94,44 @@ dberr_t dict_boot(void)
 
 	mtr_start(&mtr);
 
-	/* Create the hash tables etc. */
+	// Create the hash tables etc.
 	dict_init();
 
 	heap = mem_heap_create(450);
 
 	mutex_enter(&(dict_sys->mutex));
 
-	/* Get the dictionary header */
+	// Get the dictionary header
 	dict_hdr = dict_hdr_get(&mtr);
 
-	/* Because we only write new row ids to disk-based data structure
-	(dictionary header) when it is divisible by
-	DICT_HDR_ROW_ID_WRITE_MARGIN, in recovery we will not recover
-	the latest value of the row id counter. Therefore we advance
-	the counter at the database startup to avoid overlapping values.
-	Note that when a user after database startup first time asks for
-	a new row id, then because the counter is now divisible by
-	..._MARGIN, it will immediately be updated to the disk-based
-	header. */
+	// Because we only write new row ids to disk-based data structure
+	//(dictionary header) when it is divisible by
+	//DICT_HDR_ROW_ID_WRITE_MARGIN, in recovery we will not recover
+	//the latest value of the row id counter. Therefore we advance
+	//the counter at the database startup to avoid overlapping values.
+	//Note that when a user after database startup first time asks for
+	//a new row id, then because the counter is now divisible by
+	//..._MARGIN, it will immediately be updated to the disk-based header.
 
 	dict_sys->row_id = DICT_HDR_ROW_ID_WRITE_MARGIN
 		+ ut_uint64_align_up(mach_read_from_8(dict_hdr + DICT_HDR_ROW_ID),
 				     DICT_HDR_ROW_ID_WRITE_MARGIN);
 
-	/* Insert into the dictionary cache the descriptions of the basic
-	system tables */
-	/*-------------------------*/
+	// Insert into the dictionary cache the descriptions of the basic system tables
+	//
 	table = dict_mem_table_create("SYS_TABLES", DICT_HDR_SPACE, 8, 0, 0);
 
 	dict_mem_table_add_col(table, heap, "NAME", DATA_BINARY, 0, 0);
 	dict_mem_table_add_col(table, heap, "ID", DATA_BINARY, 0, 0);
-	/* ROW_FORMAT = (N_COLS >> 31) ? COMPACT : REDUNDANT */
+	// ROW_FORMAT = (N_COLS >> 31) ? COMPACT : REDUNDANT
 	dict_mem_table_add_col(table, heap, "N_COLS", DATA_INT, 0, 4);
-	/* The low order bit of TYPE is always set to 1.  If the format
-	is UNIV_FORMAT_B or higher, this field matches table->flags. */
+	// The low order bit of TYPE is always set to 1.  If the format
+	// is UNIV_FORMAT_B or higher, this field matches table->flags.
 	dict_mem_table_add_col(table, heap, "TYPE", DATA_INT, 0, 4);
 	dict_mem_table_add_col(table, heap, "MIX_ID", DATA_BINARY, 0, 0);
-	/* MIX_LEN may contain additional table flags when
-	ROW_FORMAT!=REDUNDANT.  Currently, these flags include
-	DICT_TF2_TEMPORARY. */
+	// MIX_LEN may contain additional table flags when
+	// ROW_FORMAT!=REDUNDANT.  Currently, these flags include
+	// DICT_TF2_TEMPORARY. 
 	dict_mem_table_add_col(table, heap, "MIX_LEN", DATA_INT, 0, 4);
 	dict_mem_table_add_col(table, heap, "CLUSTER_NAME", DATA_BINARY, 0, 0);
 	dict_mem_table_add_col(table, heap, "SPACE", DATA_INT, 0, 4);
@@ -157,7 +157,7 @@ dberr_t dict_boot(void)
 					FALSE);
 	ut_a(error == DB_SUCCESS);
 
-	/*-------------------------*/
+	//
 	index = dict_mem_index_create("SYS_TABLES", "ID_IND",
 				      DICT_HDR_SPACE, DICT_UNIQUE, 1);
 	dict_mem_index_add_field(index, "ID", 0);
@@ -170,7 +170,7 @@ dberr_t dict_boot(void)
 					FALSE);
 	ut_a(error == DB_SUCCESS);
 
-	/*-------------------------*/
+	//
 	table = dict_mem_table_create("SYS_COLUMNS", DICT_HDR_SPACE, 7, 0, 0);
 
 	dict_mem_table_add_col(table, heap, "TABLE_ID", DATA_BINARY, 0, 0);
@@ -202,7 +202,7 @@ dberr_t dict_boot(void)
 					FALSE);
 	ut_a(error == DB_SUCCESS);
 
-	/*-------------------------*/
+	//
 	table = dict_mem_table_create("SYS_INDEXES", DICT_HDR_SPACE, 7, 0, 0);
 
 	dict_mem_table_add_col(table, heap, "TABLE_ID", DATA_BINARY, 0, 0);
@@ -234,7 +234,7 @@ dberr_t dict_boot(void)
 					FALSE);
 	ut_a(error == DB_SUCCESS);
 
-	/*-------------------------*/
+	//
 	table = dict_mem_table_create("SYS_FIELDS", DICT_HDR_SPACE, 3, 0, 0);
 
 	dict_mem_table_add_col(table, heap, "INDEX_ID", DATA_BINARY, 0, 0);
@@ -264,9 +264,9 @@ dberr_t dict_boot(void)
 
 	mtr_commit(&mtr);
 
-	/*-------------------------*/
+	//
 
-	/* Initialize the insert buffer table and index for each tablespace */
+	// Initialize the insert buffer table and index for each tablespace
 
 	ibuf_init_at_db_start();
 
@@ -280,7 +280,7 @@ dberr_t dict_boot(void)
 
 		err = DB_ERROR;
 	} else {
-		/* Load definitions of other indexes on system tables */
+		// Load definitions of other indexes on system tables
 
 		dict_load_sys_table(dict_sys->sys_tables);
 		dict_load_sys_table(dict_sys->sys_columns);
@@ -291,6 +291,8 @@ dberr_t dict_boot(void)
 	mutex_exit(&(dict_sys->mutex));
 
 	return(err);
+    */
+return DB_ERROR;
 }
 
 

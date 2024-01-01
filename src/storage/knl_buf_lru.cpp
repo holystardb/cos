@@ -48,7 +48,7 @@ bool32 buf_flush_ready_for_replace(buf_page_t *bpage)
     return (bpage->oldest_modification == 0 && bpage->buf_fix_count == 0 && buf_page_get_io_fix(bpage) == BUF_IO_NONE);
   }
 
-  LOG_PRINT_ERROR("Buffer block %lu state %lu in the LRU list!", bpage, bpage->state);
+  LOGGER_ERROR(LOGGER, "Buffer block %lu state %lu in the LRU list!", bpage, bpage->state);
 
   return (FALSE);
 }
@@ -106,7 +106,7 @@ bool buf_LRU_free_page(buf_page_t *bpage)
     ut_ad(bpage->in_LRU_list);
     ut_ad(!bpage->in_flush_list == !bpage->oldest_modification);
 
-    LOG_PRINT_DEBUG("free page %lu : %lu", bpage->id.space(), bpage->id.page_no());
+    LOGGER_DEBUG(LOGGER, "free page %lu : %lu", bpage->id.space(), bpage->id.page_no());
 
     spin_unlock(block_lock);
 

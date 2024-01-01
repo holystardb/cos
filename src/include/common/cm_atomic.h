@@ -41,7 +41,7 @@ inline atomic64_t atomic64_add(atomic64_t *ptr, int64 val)
 
 inline bool32 atomic64_compare_and_swap(atomic64_t *ptr, int64 oldval, int64 newval)
 {
-    return InterlockedCompareExchange64(ptr, newval, oldval) == oldval ? true : false;
+    return InterlockedCompareExchange64(ptr, newval, oldval) == oldval ? TRUE : FALSE;
 }
 
 inline atomic32_t atomic32_get(atomic32_t *ptr)
@@ -71,15 +71,19 @@ inline atomic32_t atomic32_add(atomic32_t *ptr, int32 val)
 
 inline bool32 atomic32_compare_and_swap(atomic32_t *ptr, int32 oldval, int32 newval)
 {
-    return InterlockedCompareExchange(ptr, newval, oldval) == oldval ? true : false;
+    return InterlockedCompareExchange(ptr, newval, oldval) == oldval ? TRUE : FALSE;
 }
 
 #else
 
 typedef volatile int32 atomic32_t;
+typedef volatile int128 atomic128_t;
 
 
 #if defined(__arm__) || defined(__aarch64__)
+
+
+
 
 inline atomic64_t atomic64_get(atomic64_t *ptr)
 {
@@ -119,7 +123,7 @@ inline atomic64_t atomic64_add(atomic64_t *ptr, int64 count)
 
 inline bool32 atomic64_compare_and_swap(atomic64_t *ptr, int64 oldval, int64 newval)
 {
-    return __atomic_compare_exchange(ptr, &oldval, &newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) == oldval ? true : false;
+    return __atomic_compare_exchange(ptr, &oldval, &newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) == oldval ? TRUE : FALSE;
 }
 
 inline atomic32_t atomic32_get(atomic32_t *ptr)
@@ -155,12 +159,18 @@ inline atomic32_t atomic32_dec(atomic32_t *ptr)
 
 inline bool32 atomic32_compare_and_swap(atomic32_t *ptr, int32 oldval, int32 newval)
 {
-    return __atomic_compare_exchange(ptr, &oldval, &newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) == oldval ? true : false;
+    return __atomic_compare_exchange(ptr, &oldval, &newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) == oldval ? TRUE : FALSE;
 }
 
 
 
 #else
+
+
+inline bool32 atomic128_compare_and_swap(atomic128_t *ptr, int128 oldval, int128 newval)
+{
+    return __sync_val_compare_and_swap(ptr, oldval, newval) == oldval ? TRUE : FALSE;
+}
 
 inline atomic64_t atomic64_get(atomic64_t *ptr)
 {
@@ -189,7 +199,7 @@ inline atomic64_t atomic64_add(atomic64_t *ptr, int64 count)
 
 inline bool32 atomic64_compare_and_swap(atomic64_t *ptr, int64 oldval, int64 newval)
 {
-    return __sync_bool_compare_and_swap(ptr, oldval, newval) == oldval ? true : false;
+    return __sync_bool_compare_and_swap(ptr, oldval, newval) == oldval ? TRUE : FALSE;
 }
 
 inline atomic32_t atomic32_get(atomic64_t *ptr)
@@ -219,7 +229,7 @@ inline atomic32_t atomic32_add(atomic32_t *ptr, int32 count)
 
 inline bool32 atomic32_compare_and_swap(atomic32_t *ptr, int32 oldval, int32 newval)
 {
-    return __sync_bool_compare_and_swap(ptr, oldval, newval) == oldval ? true : false;
+    return __sync_bool_compare_and_swap(ptr, oldval, newval) == oldval ? TRUE : FALSE;
 }
 
 #endif

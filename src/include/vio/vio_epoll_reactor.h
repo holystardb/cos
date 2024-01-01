@@ -63,6 +63,7 @@ typedef struct st_reactor_pool
     os_thread_t           acpt_thread;
     os_thread_id_t        acpt_thread_id;
     accept_callback_func  acpt_func;
+    memory_pool_t        *mem_pool;
 
     void (*reactor_pool_destroy) (struct st_reactor_pool*);
     reactor_t* (*get_roubin_reactor) (struct st_reactor_pool*);
@@ -81,7 +82,7 @@ int reactor_epoll_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data)
 int reactor_epoll_del(reactor_t *reactor, my_socket fd);
 int reactor_epoll_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data);
 
-reactor_pool_t* reactor_pool_create(uint32 reactor_count);
+reactor_pool_t* reactor_pool_create(uint32 reactor_count, memory_pool_t *mem_pool = NULL);
 void reactor_pool_destroy(reactor_pool_t* pool);
 
 reactor_t* get_roubin_reactor(reactor_pool_t* pool);

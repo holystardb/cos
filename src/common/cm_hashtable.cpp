@@ -67,7 +67,7 @@ static hash_cell_data_t* hash_table_get_free_cell_data(hash_table_t *table, uint
     }
 
     if (data == NULL) {
-        data = (hash_cell_data_t *)mcontext_alloc(table->contexts[cell_index % HASH_CELLS_LOCK_COUNT],
+        data = (hash_cell_data_t *)my_malloc(table->contexts[cell_index % HASH_CELLS_LOCK_COUNT],
             ut_align8(sizeof(hash_cell_data_t)));
     }
 

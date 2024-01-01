@@ -4,6 +4,8 @@
 #include "cm_type.h"
 #include "cm_error.h"
 #include "cm_counter.h"
+#include "m_ctype.h"
+
 
 /** Maximum number of srv_n_log_files, or innodb_log_files_in_group */
 #define SRV_N_LOG_FILES_MAX 100
@@ -24,17 +26,27 @@ typedef uint16              page_type_t;
 
 typedef byte                buf_frame_t;
 
+/* Type used for all log sequence number storage and arithmetics */
+typedef uint64          lsn_t;
+#define LSN_MAX         uint64
+#define LSN_PF          UINT64PF
+
+typedef ib_id_t         table_id_t;
+typedef ib_id_t         index_id_t;
+
+
 /*------------------------- global config ------------------------ */
 
 extern char *srv_data_home;
 extern uint64 srv_system_file_size;
 extern uint64 srv_system_file_max_size;
 extern uint64 srv_system_file_auto_extend_size;
+extern bool32 srv_auto_extend_last_data_file;
 extern char *srv_system_charset_name;
 
-extern uint64 srv_redo_log_buffer_size;
-extern uint64 srv_redo_log_file_size;
-extern uint64 srv_redo_log_file_count;
+extern uint32 srv_redo_log_buffer_size;
+extern uint32 srv_redo_log_file_size;
+extern uint32 srv_redo_log_file_count;
 
 extern uint64 srv_undo_buffer_size;
 extern uint64 srv_undo_file_max_size;
@@ -65,13 +77,36 @@ extern uint32 srv_write_io_threads;
 
 /*-------------------------------------------------- */
 
+#define DB_CTRL_FILE_MAX_COUNT    16
+#define DB_CTRL_FILE_VERSION      1
 
+typedef struct st_db_ctrl_file {
+    char    *name;
+    uint64   size;
+    uint64   max_size;
+    bool32   autoextend;
+} db_ctrl_file_t;
 
-extern db_charset_info_t srv_db_charset_info[];
+typedef struct st_db_ctrl {
+    uint64         version;
+    char          *database_name;
+    char          *charset_name;
+    CHARSET_INFO  *charset_info;
+    uint8          redo_count;
+    uint8          undo_count;
+    uint8          temp_count;
+    db_ctrl_file_t redo_group[DB_CTRL_FILE_MAX_COUNT];
+    db_ctrl_file_t undo_group[DB_CTRL_FILE_MAX_COUNT];
+    db_ctrl_file_t temp_group[DB_CTRL_FILE_MAX_COUNT];
+    db_ctrl_file_t system;
 
-extern srv_stats_t  srv_stats;
+} db_ctrl_t;
 
-extern db_ctrl_t srv_db_ctrl;
+typedef struct st_db_charset_info {
+    const char* name;
+    CHARSET_INFO *charset_info;
+} db_charset_info_t;
+
 
 /** Types of threads existing in the system. */
 enum srv_thread_type {
@@ -112,6 +147,8 @@ typedef struct st_srv_stats {
     typedef counter_t<uint64, 1> uint64_ctr_1_t;
     typedef counter_t<uint64, 1> lsn_ctr_1_t;
 
+
+
     /** Count the amount of data written in total (in bytes) */
     uint64_ctr_1_t      data_written;
 
@@ -133,6 +170,16 @@ typedef struct st_srv_stats {
     /** We increase this counter, when we don't have enough
     space in the log buffer and have to flush it */
     uint64_ctr_1_t      log_waits;
+
+    /** We increase this counter, when we don't have enough log_slot for log_buffer */
+    uint64_ctr_1_t      log_slot_waits;
+
+    /** We increase this counter, when we don't have enough space in the log file and have to checkpoint */
+    uint64_ctr_1_t      log_checkpoint_waits;
+
+    /** We increase this counter, when we have to wait for log sync to file */
+    uint64_ctr_1_t      trx_sync_log_waits;
+
 
     /** Count the number of times the doublewrite buffer was flushed */
     uint64_ctr_1_t      dblwr_writes;
@@ -185,10 +232,34 @@ dberr_t srv_start(bool32 create_new_db);
 
 //------------------------------------------------------------------
 extern bool32 srv_create_ctrls(char *data_home);
-extern bool32 srv_create_redo_logs(char *data_home);
-extern bool32 srv_create_undo_log(char *data_home);
-extern bool32 srv_create_temp(char *data_home);
-extern bool32 srv_create_system(char *data_home);
+extern dberr_t srv_create_redo_logs(char *data_home);
+extern dberr_t srv_create_undo_log(char *data_home);
+extern dberr_t srv_create_temp(char *data_home);
+extern dberr_t srv_create_system(char *data_home);
+
+
+extern bool32 db_ctrl_createdatabase(char *database_name, char *charset_name);
+extern bool32 db_ctrl_add_system(char *name, uint64 size, uint64 max_size, bool32 autoextend);
+extern bool32 db_ctrl_add_redo(char *name, uint64 size, uint64 max_size, bool32 autoextend);
+
+
+
+extern bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl);
+
+
+//------------------------------------------------------------------
+
+extern db_charset_info_t srv_db_charset_info[];
+
+extern srv_stats_t  srv_stats;
+
+extern bool32 recv_no_log_write;
+
+extern bool32 srv_read_only_mode;
+
+
+
+//extern db_ctrl_t srv_db_ctrl;
 
 
 #endif  /* _KNL_SERVER_H */

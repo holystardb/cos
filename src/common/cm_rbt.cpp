@@ -19,12 +19,28 @@ red-black properties:
    However, any number of black nodes may appear in a sequence.
  */
 
-#define ROOT(t)		(t->root->left)
-#define	SIZEOF_NODE(t)	((sizeof(ib_rbt_node_t) + t->sizeof_value) - 1)
+#define ROOT(t)         (t->root->left)
+#define SIZEOF_NODE(t)  ((sizeof(ib_rbt_node_t) + t->sizeof_value) - 1)
+
+static void free_rbt_node(ib_rbt_t *tree, ib_rbt_node_t *node)
+{
+    tree->count++;
+    node->left = tree->end;
+    node->right = NULL;
+    if (tree->end != NULL) {
+        tree->end->right = node;
+    }
+    tree->end = node;
+    if (tree->start == NULL) {
+        tree->start = node;
+    }
+}
 
 static ib_rbt_node_t* alloc_rbt_node(ib_rbt_t *tree)
 {
-    ib_rbt_node_t     *data;
+    ib_rbt_node_t *data;
+
+retry:
 
     data = tree->start;
     if (data != NULL) {
@@ -41,45 +57,53 @@ static ib_rbt_node_t* alloc_rbt_node(ib_rbt_t *tree)
         }
     }
 
-    if (data == NULL) {
-        data = (ib_rbt_node_t *)malloc(SIZEOF_NODE(tree));
+    if (data) {
+        return data;
     }
-    
-    return data;
-}
 
-static void free_rbt_node(ib_rbt_t *tree, ib_rbt_node_t *node)
-{
-	tree->count++;
-	node->left = tree->end;
-	node->right = NULL;
-	if (tree->end != NULL) {
-		tree->end->right = node;
-	}
-	tree->end = node;
-	if (tree->start == NULL) {
-		tree->start = node;
-	}
+    if (tree->mpool == NULL) {
+        data = (ib_rbt_node_t *)ut_malloc(SIZEOF_NODE(tree));
+        return data;
+    }
+
+    memory_page_t *page = mpool_alloc_page(tree->mpool);
+    if (page == NULL) {
+        return NULL;
+    }
+    UT_LIST_ADD_LAST(list_node, tree->used_pages, page);
+
+    uint32 num = tree->mpool->page_size / (uint32)SIZEOF_NODE(tree);
+    char *ptr = (char *)MEM_PAGE_DATA_PTR(page);
+    for (uint32 i = 0; i < num; i++) {
+        data = (ib_rbt_node_t *)(ptr + SIZEOF_NODE(tree) * i);
+        free_rbt_node(tree, data);
+    }
+
+    goto retry;
 }
 
 static void destroy_ibt_nodes(ib_rbt_t *tree)
 {
-	ib_rbt_node_t *node, *tmp;
+    memory_page_t *page;
+    ib_rbt_node_t *node, *tmp;
 
-	node = tree->start;
-	while (node != NULL) {
-		tmp = node->right;
-		ut_free(node);
-		node = tmp;
-	}
+    if (tree->mpool) {
+        while ((page = UT_LIST_GET_FIRST(tree->used_pages))) {
+            UT_LIST_REMOVE(list_node, tree->used_pages, page);
+            mpool_free_page(tree->mpool, page);
+        }
+    } else {
+        node = tree->start;
+        while (node != NULL) {
+            tmp = node->right;
+            ut_free(node);
+            node = tmp;
+        }
+    }
 }
 
-/**********************************************************************//**
-Print out the sub-tree recursively. */
-static
-void
-rbt_print_subtree(
-/*==============*/
+//Print out the sub-tree recursively
+static void rbt_print_subtree(
 	const ib_rbt_t*		tree,		/*!< in: tree to traverse */
 	const ib_rbt_node_t*	node,		/*!< in: node to print */
 	ib_rbt_print_node	print)		/*!< in: print key function */
@@ -95,11 +119,7 @@ rbt_print_subtree(
 /**********************************************************************//**
 Verify that the keys are in order.
 @return	TRUE of OK. FALSE if not ordered */
-static
-bool32
-rbt_check_ordering(
-/*===============*/
-	const ib_rbt_t*		tree)		/*!< in: tree to verfify */
+static bool32 rbt_check_ordering(const ib_rbt_t* tree) /*!< in: tree to verfify */
 {
 	const ib_rbt_node_t*	node;
 	const ib_rbt_node_t*	prev = NULL;
@@ -121,10 +141,7 @@ rbt_check_ordering(
 Check that every path from the root to the leaves has the same count.
 Count is expressed in the number of black nodes.
 @return	0 on failure else black height of the subtree */
-static
-bool32
-rbt_count_black_nodes(
-/*==================*/
+static bool32 rbt_count_black_nodes(
 	const ib_rbt_t*		tree,		/*!< in: tree to verify */
 	const ib_rbt_node_t*	node)		/*!< in: start of sub-tree */
 {
@@ -168,10 +185,7 @@ rbt_count_black_nodes(
 /**********************************************************************//**
 Turn the node's right child's left sub-tree into node's right sub-tree.
 This will also make node's right child it's parent. */
-static
-void
-rbt_rotate_left(
-/*============*/
+static void rbt_rotate_left(
 	const ib_rbt_node_t*	nil,		/*!< in: nil node of the tree */
 	ib_rbt_node_t*		node)		/*!< in: node to rotate */
 {
@@ -204,10 +218,7 @@ rbt_rotate_left(
 /**********************************************************************//**
 Turn the node's left child's right sub-tree into node's left sub-tree.
 This also make node's left child it's parent. */
-static
-void
-rbt_rotate_right(
-/*=============*/
+static void rbt_rotate_right(
 	const ib_rbt_node_t*	nil,		/*!< in: nil node of tree */
 	ib_rbt_node_t*		node)		/*!< in: node to rotate */
 {
@@ -239,10 +250,7 @@ rbt_rotate_right(
 
 /**********************************************************************//**
 Append a node to the tree. */
-static
-ib_rbt_node_t*
-rbt_tree_add_child(
-/*===============*/
+static ib_rbt_node_t* rbt_tree_add_child(
 	const ib_rbt_t*	tree,
 	ib_rbt_bound_t*	parent,
 	ib_rbt_node_t*	node)
@@ -266,10 +274,7 @@ rbt_tree_add_child(
 
 /**********************************************************************//**
 Generic binary tree insert */
-static
-ib_rbt_node_t*
-rbt_tree_insert(
-/*============*/
+static ib_rbt_node_t* rbt_tree_insert(
 	ib_rbt_t*	tree,
 	const void*	key,
 	ib_rbt_node_t*	node)
@@ -302,10 +307,7 @@ rbt_tree_insert(
 
 /**********************************************************************//**
 Balance a tree after inserting a node. */
-static
-void
-rbt_balance_tree(
-/*=============*/
+static void rbt_balance_tree(
 	const ib_rbt_t*	tree,			/*!< in: tree to balance */
 	ib_rbt_node_t*	node)			/*!< in: node that was inserted */
 {
@@ -393,10 +395,7 @@ rbt_balance_tree(
 /**********************************************************************//**
 Find the given node's successor.
 @return	successor node or NULL if no successor */
-static
-ib_rbt_node_t*
-rbt_find_successor(
-/*===============*/
+static ib_rbt_node_t* rbt_find_successor(
 	const ib_rbt_t*		tree,		/*!< in: rb tree */
 	const ib_rbt_node_t*	current)	/*!< in: this is declared const
 						because it can be called via
@@ -433,10 +432,7 @@ rbt_find_successor(
 /**********************************************************************//**
 Find the given node's precedecessor.
 @return	predecessor node or NULL if no predecesor */
-static
-ib_rbt_node_t*
-rbt_find_predecessor(
-/*=================*/
+static ib_rbt_node_t* rbt_find_predecessor(
 	const ib_rbt_t*		tree,		/*!< in: rb tree */
 	const ib_rbt_node_t*	current)	/*!< in: this is declared const
 						because it can be called via
@@ -473,10 +469,7 @@ rbt_find_predecessor(
 /**********************************************************************//**
 Replace node with child. After applying transformations eject becomes
 an orphan. */
-static
-void
-rbt_eject_node(
-/*===========*/
+static void rbt_eject_node(
 	ib_rbt_node_t*	eject,			/*!< in: node to eject */
 	ib_rbt_node_t*	node)			/*!< in: node to replace with */
 {
@@ -496,10 +489,7 @@ rbt_eject_node(
 
 /**********************************************************************//**
 Replace a node with another node. */
-static
-void
-rbt_replace_node(
-/*=============*/
+static void rbt_replace_node(
 	ib_rbt_node_t*	replace,		/*!< in: node to replace */
 	ib_rbt_node_t*	node)			/*!< in: node to replace with */
 {
@@ -524,10 +514,7 @@ rbt_replace_node(
 /**********************************************************************//**
 Detach node from the tree replacing it with one of it's children.
 @return	the child node that now occupies the position of the detached node */
-static
-ib_rbt_node_t*
-rbt_detach_node(
-/*============*/
+static ib_rbt_node_t* rbt_detach_node(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_node_t*	node)			/*!< in: node to detach */
 {
@@ -567,10 +554,7 @@ rbt_detach_node(
 /**********************************************************************//**
 Rebalance the right sub-tree after deletion.
 @return	node to rebalance if more rebalancing required else NULL */
-static
-ib_rbt_node_t*
-rbt_balance_right(
-/*==============*/
+static ib_rbt_node_t* rbt_balance_right(
 	const ib_rbt_node_t*	nil,		/*!< in: rb tree nil node */
 	ib_rbt_node_t*		parent,		/*!< in: parent node */
 	ib_rbt_node_t*		sibling)	/*!< in: sibling node */
@@ -627,10 +611,7 @@ rbt_balance_right(
 /**********************************************************************//**
 Rebalance the left sub-tree after deletion.
 @return	node to rebalance if more rebalancing required else NULL */
-static
-ib_rbt_node_t*
-rbt_balance_left(
-/*=============*/
+static ib_rbt_node_t* rbt_balance_left(
 	const ib_rbt_node_t*	nil,		/*!< in: rb tree nil node */
 	ib_rbt_node_t*		parent,		/*!< in: parent node */
 	ib_rbt_node_t*		sibling)	/*!< in: sibling node */
@@ -686,10 +667,7 @@ rbt_balance_left(
 
 /**********************************************************************//**
 Delete the node and rebalance the tree if necessary */
-static
-void
-rbt_remove_node_and_rebalance(
-/*==========================*/
+static void rbt_remove_node_and_rebalance(
 	ib_rbt_t*		tree,		/*!< in: rb tree */
 	ib_rbt_node_t*		node)		/*!< in: node to remove */
 {
@@ -738,10 +716,7 @@ rbt_remove_node_and_rebalance(
 
 /**********************************************************************//**
 Recursively free the nodes. */
-static
-void
-rbt_free_node(
-/*==========*/
+static void rbt_free_node(
 	ib_rbt_t*	tree,
 	ib_rbt_node_t*	node,			/*!< in: node to free */
 	ib_rbt_node_t*	nil)			/*!< in: rb tree nil node */
@@ -754,68 +729,59 @@ rbt_free_node(
 	}
 }
 
-/**********************************************************************//**
-Free all the nodes and free the tree. */
-
-void
-rbt_free(
-/*=====*/
-	ib_rbt_t*	tree)			/*!< in: rb tree to free */
+// Free all the nodes and free the tree
+void rbt_free(ib_rbt_t* tree) /*!< in: rb tree to free */
 {
-	rbt_free_node(tree, tree->root->left, tree->nil);
-	rbt_free_node(tree, tree->root->right, tree->nil);
-	ut_free(tree->root);
-	ut_free(tree->nil);
-	destroy_ibt_nodes(tree);
-	ut_free(tree);
+    rbt_free_node(tree, tree->root->left, tree->nil);
+    rbt_free_node(tree, tree->root->right, tree->nil);
+    ut_free(tree->root);
+    ut_free(tree->nil);
+    destroy_ibt_nodes(tree);
+    ut_free(tree);
 }
 
-/**********************************************************************//**
-Create an instance of a red black tree.
-@return	an empty rb tree */
-
-ib_rbt_t*
-rbt_create(
-	size_t		sizeof_value,		/*!< in: sizeof data item */
-	ib_rbt_compare	compare)		/*!< in: fn to compare items */
+// Create an instance of a red black tree.
+ib_rbt_t* rbt_create(
+    size_t sizeof_value,    /*!< in: sizeof data item */
+    ib_rbt_compare compare, /*!< in: fn to compare items */
+    memory_pool_t *mpool)
 {
-	ib_rbt_t*	tree;
-	ib_rbt_node_t*	node;
+    ib_rbt_t* tree;
+    ib_rbt_node_t* node;
 
-	tree = (ib_rbt_t*) ut_malloc(sizeof(*tree));
-	memset(tree, 0, sizeof(*tree));
-	tree->count = 0;
-	tree->start = NULL;
-	tree->end = NULL;
-	tree->sizeof_value = sizeof_value;
+    tree = (ib_rbt_t*)ut_malloc(sizeof(*tree));
+    memset(tree, 0, sizeof(*tree));
+    tree->count = 0;
+    tree->start = NULL;
+    tree->end = NULL;
+    tree->sizeof_value = sizeof_value;
+    tree->mpool = mpool;
+    UT_LIST_INIT(tree->used_pages);
 
-	/* Create the sentinel (NIL) node. */
-	node = tree->nil = (ib_rbt_node_t*) ut_malloc(sizeof(*node));
-	memset(node, 0, sizeof(*node));
+    /* Create the sentinel (NIL) node. */
+    node = tree->nil = (ib_rbt_node_t*)ut_malloc(sizeof(*node));
+    memset(node, 0, sizeof(*node));
 
-	node->color = IB_RBT_BLACK;
-	node->parent = node->left = node->right = node;
+    node->color = IB_RBT_BLACK;
+    node->parent = node->left = node->right = node;
 
-	/* Create the "fake" root, the real root node will be the
-	left child of this node. */
-	node = tree->root = (ib_rbt_node_t*) ut_malloc(sizeof(*node));
-	memset(node, 0, sizeof(*node));
+    /* Create the "fake" root, the real root node will be the
+    left child of this node. */
+    node = tree->root = (ib_rbt_node_t*)ut_malloc(sizeof(*node));
+    memset(node, 0, sizeof(*node));
 
-	node->color = IB_RBT_BLACK;
-	node->parent = node->left = node->right = tree->nil;
+    node->color = IB_RBT_BLACK;
+    node->parent = node->left = node->right = tree->nil;
 
-	tree->compare = compare;
+    tree->compare = compare;
 
-	return(tree);
+    return(tree);
 }
 
 /**********************************************************************//**
 Generic insert of a value in the rb tree.
 @return	inserted node */
-
-const ib_rbt_node_t*
-rbt_insert(
-/*=======*/
+const ib_rbt_node_t* rbt_insert(
 	ib_rbt_t*	tree,			/*!< in: rb tree */
 	const void*	key,			/*!< in: key for ordering */
 	const void*	value)			/*!< in: value of key, this value
@@ -825,6 +791,9 @@ rbt_insert(
 
 	/* Create the node that will hold the value data. */
 	node = (ib_rbt_node_t*) alloc_rbt_node(tree);
+    if (node == NULL) {
+        return NULL;
+    }
 
 	memcpy(node->value, value, tree->sizeof_value);
 	node->parent = node->left = node->right = tree->nil;
@@ -841,10 +810,7 @@ rbt_insert(
 /**********************************************************************//**
 Add a new node to the tree, useful for data that is pre-sorted.
 @return	appended node */
-
-const ib_rbt_node_t*
-rbt_add_node(
-/*=========*/
+const ib_rbt_node_t* rbt_add_node(
 	ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: bounds */
 	const void*	value)			/*!< in: this value is copied
@@ -879,10 +845,7 @@ rbt_add_node(
 /**********************************************************************//**
 Find a matching node in the rb tree.
 @return	NULL if not found else the node where key was found */
-
-const ib_rbt_node_t*
-rbt_lookup(
-/*=======*/
+const ib_rbt_node_t* rbt_lookup(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	const void*	key)			/*!< in: key to use for search */
 {
@@ -907,10 +870,7 @@ rbt_lookup(
 /**********************************************************************//**
 Delete a node indentified by key.
 @return	TRUE if success FALSE if not found */
-
-bool32
-rbt_delete(
-/*=======*/
+bool32 rbt_delete(
 	ib_rbt_t*	tree,			/*!< in: rb tree */
 	const void*	key)			/*!< in: key to delete */
 {
@@ -931,10 +891,7 @@ rbt_delete(
 Remove a node from the rb tree, the node is not free, that is the
 callers responsibility.
 @return	deleted node but without the const */
-
-ib_rbt_node_t*
-rbt_remove_node(
-/*============*/
+ib_rbt_node_t* rbt_remove_node(
 	ib_rbt_t*		tree,		/*!< in: rb tree */
 	const ib_rbt_node_t*	const_node)	/*!< in: node to delete, this
 						is a fudge and declared const
@@ -954,10 +911,7 @@ rbt_remove_node(
 /**********************************************************************//**
 Find the node that has the lowest key that is >= key.
 @return	node satisfying the lower bound constraint or NULL */
-
-const ib_rbt_node_t*
-rbt_lower_bound(
-/*============*/
+const ib_rbt_node_t* rbt_lower_bound(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	const void*	key)			/*!< in: key to search */
 {
@@ -988,10 +942,7 @@ rbt_lower_bound(
 /**********************************************************************//**
 Find the node that has the greatest key that is <= key.
 @return	node satisfying the upper bound constraint or NULL */
-
-const ib_rbt_node_t*
-rbt_upper_bound(
-/*============*/
+const ib_rbt_node_t* rbt_upper_bound(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	const void*	key)			/*!< in: key to search */
 {
@@ -1022,10 +973,7 @@ rbt_upper_bound(
 /**********************************************************************//**
 Find the node that has the greatest key that is <= key.
 @return	value of result */
-
-int
-rbt_search(
-/*=======*/
+int rbt_search(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: search bounds */
 	const void*	key)			/*!< in: key to search */
@@ -1057,10 +1005,7 @@ rbt_search(
 Find the node that has the greatest key that is <= key. But use the
 supplied comparison function.
 @return	value of result */
-
-int
-rbt_search_cmp(
-/*===========*/
+int rbt_search_cmp(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: search bounds */
 	const void*	key,			/*!< in: key to search */
@@ -1090,13 +1035,8 @@ rbt_search_cmp(
 }
 
 /**********************************************************************//**
-Return the left most node in the tree. */
-
-const ib_rbt_node_t*
-rbt_first(
-/*======*/
-						/* out leftmost node or NULL */
-	const ib_rbt_t*	tree)			/* in: rb tree */
+Return the left most node in the tree or NULL. */
+const ib_rbt_node_t* rbt_first(const ib_rbt_t* tree)
 {
 	ib_rbt_node_t*	first = NULL;
 	ib_rbt_node_t*	current = ROOT(tree);
@@ -1112,11 +1052,7 @@ rbt_first(
 /**********************************************************************//**
 Return the right most node in the tree.
 @return	the rightmost node or NULL */
-
-const ib_rbt_node_t*
-rbt_last(
-/*=====*/
-	const ib_rbt_t*	tree)			/*!< in: rb tree */
+const ib_rbt_node_t* rbt_last(const ib_rbt_t* tree)
 {
 	ib_rbt_node_t*	last = NULL;
 	ib_rbt_node_t*	current = ROOT(tree);
@@ -1132,10 +1068,7 @@ rbt_last(
 /**********************************************************************//**
 Return the next node.
 @return	node next from current */
-
-const ib_rbt_node_t*
-rbt_next(
-/*=====*/
+const ib_rbt_node_t* rbt_next(
 	const ib_rbt_t*		tree,		/*!< in: rb tree */
 	const ib_rbt_node_t*	current)	/*!< in: current node */
 {
@@ -1145,10 +1078,7 @@ rbt_next(
 /**********************************************************************//**
 Return the previous node.
 @return	node prev from current */
-
-const ib_rbt_node_t*
-rbt_prev(
-/*=====*/
+const ib_rbt_node_t* rbt_prev(
 	const ib_rbt_t*		tree,		/*!< in: rb tree */
 	const ib_rbt_node_t*	current)	/*!< in: current node */
 {
@@ -1157,11 +1087,7 @@ rbt_prev(
 
 /**********************************************************************//**
 Reset the tree. Delete all the nodes. */
-
-void
-rbt_clear(
-/*======*/
-	ib_rbt_t*	tree)			/*!< in: rb tree */
+void rbt_clear(ib_rbt_t* tree)
 {
 	rbt_free_node(tree, ROOT(tree), tree->nil);
 	
@@ -1172,10 +1098,7 @@ rbt_clear(
 /**********************************************************************//**
 Merge the node from dst into src. Return the number of nodes merged.
 @return	no. of recs merged */
-
-uint32
-rbt_merge_uniq(
-/*===========*/
+uint32 rbt_merge_uniq(
 	ib_rbt_t*	dst,			/*!< in: dst rb tree */
 	const ib_rbt_t*	src)			/*!< in: src rb tree */
 {
@@ -1203,10 +1126,7 @@ Merge the node from dst into src. Return the number of nodes merged.
 Delete the nodes from src after copying node to dst. As a side effect
 the duplicates will be left untouched in the src.
 @return	no. of recs merged */
-
-uint32
-rbt_merge_uniq_destructive(
-/*=======================*/
+uint32 rbt_merge_uniq_destructive(
 	ib_rbt_t*	dst,			/*!< in: dst rb tree */
 	ib_rbt_t*	src)			/*!< in: src rb tree */
 {
@@ -1250,11 +1170,7 @@ rbt_merge_uniq_destructive(
 Check that every path from the root to the leaves has the same count and
 the tree nodes are in order.
 @return	TRUE if OK FALSE otherwise */
-
-bool32
-rbt_validate(
-/*=========*/
-	const ib_rbt_t*	tree)		/*!< in: RB tree to validate */
+bool32 rbt_validate(const ib_rbt_t* tree)
 {
 	if (rbt_count_black_nodes(tree, ROOT(tree)) > 0) {
 		return(rbt_check_ordering(tree));
@@ -1265,12 +1181,10 @@ rbt_validate(
 
 /**********************************************************************//**
 Iterate over the tree in depth first order. */
-
-void
-rbt_print(
-/*======*/
+void rbt_print(
 	const ib_rbt_t*		tree,		/*!< in: tree to traverse */
 	ib_rbt_print_node	print)		/*!< in: print function */
 {
 	rbt_print_subtree(tree, ROOT(tree), print);
 }
+

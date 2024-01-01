@@ -48,10 +48,10 @@ static sync_array_t* sync_array_create(uint32 n_cells)  /*!< in: number of cells
     ut_a(n_cells > 0);
 
     /* Allocate memory for the data structures */
-    arr = (sync_array_t*)my_malloc(sizeof(*arr));
+    arr = (sync_array_t*)malloc(sizeof(*arr));
     memset(arr, 0x0, sizeof(*arr));
 
-    arr->array = (sync_cell_t*)my_malloc(sizeof(sync_cell_t) * n_cells);
+    arr->array = (sync_cell_t*)malloc(sizeof(sync_cell_t) * n_cells);
     memset(arr->array, 0x0, sizeof(sync_cell_t) * n_cells);
 
     arr->n_cells = n_cells;
@@ -77,7 +77,7 @@ static void sync_array_init(uint32 n_threads)
     ut_a(sync_wait_array == NULL);
     ut_a(n_threads > 0);
 
-    sync_wait_array = (sync_array_t**)(my_malloc(sizeof(*sync_wait_array) * sync_array_size));
+    sync_wait_array = (sync_array_t**)(malloc(sizeof(*sync_wait_array) * sync_array_size));
 
     n_slots = 1 + (n_threads - 1) / sync_array_size;
     for (uint32 i = 0; i < sync_array_size; ++i) {
@@ -177,7 +177,7 @@ static sync_cell_t* sync_array_reserve_cell(
     os_event_t event = sync_cell_get_event(cell);
     cell->signal_count = os_event_reset(event);
 
-    LOG_PRINT_DEBUG("sync_array_reserve_cell: arr %p cell %p rwlock %p thread %lu\n",
+    LOGGER_DEBUG(LOGGER, "sync_array_reserve_cell: arr %p cell %p rwlock %p thread %lu\n",
         arr, cell, object, cell->thread_id);
 
     return(cell);
@@ -395,17 +395,17 @@ static sync_cell_t* sync_array_find_thread(
     for (uint32 i = 0; i < arr->n_cells; i++) {
         cell = sync_array_get_nth_cell(arr, i);
         if (cell->wait_object.lock) {
-            LOG_PRINT_DEBUG("sync_array_find_thread: i %lu  arr %p thread %llu cell %p rw lock %p\n",
+            LOGGER_DEBUG(LOGGER, "sync_array_find_thread: i %lu  arr %p thread %llu cell %p rw lock %p\n",
                 i, arr, cell->thread_id, cell, cell->wait_object.lock);
         }
         if (cell->wait_object.lock != NULL && os_thread_eq(cell->thread_id, thread)) {
-            LOG_PRINT_DEBUG("sync_array_find_thread: arr %p thread %lu cell %p rw lock %p\n",
+            LOGGER_DEBUG(LOGGER, "sync_array_find_thread: arr %p thread %lu cell %p rw lock %p\n",
                 arr, thread, cell, cell->wait_object.lock);
             return(cell); /* Found */
         }
     }
 
-    LOG_PRINT_DEBUG("sync_array_find_thread: arr %p thread %lu not found cell\n", arr, thread);
+    LOGGER_DEBUG(LOGGER, "sync_array_find_thread: arr %p thread %lu not found cell\n", arr, thread);
 
     return NULL; /* Not found */
 }
@@ -468,7 +468,7 @@ static bool32 sync_array_detect_deadlock(
         return(FALSE); /* No deadlock here */
     }
 
-    LOG_PRINT_DEBUG("sync_array_detect_deadlock: arr %p cell %p rwlock %p thread %lu\n",
+    LOGGER_DEBUG(LOGGER, "sync_array_detect_deadlock: arr %p cell %p rwlock %p thread %lu\n",
         arr, cell, cell->wait_object.lock, os_thread_get_curr_id());
 
     switch (cell->request_type) {
@@ -479,7 +479,7 @@ static bool32 sync_array_detect_deadlock(
              debug != NULL;
              debug = UT_LIST_GET_NEXT(list_node, debug)) {
 
-            LOG_PRINT_DEBUG("sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
+            LOGGER_DEBUG(LOGGER, "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
                 arr, debug->lock, debug->thread_id);
 
             thread = debug->thread_id;
@@ -510,7 +510,7 @@ static bool32 sync_array_detect_deadlock(
              debug != 0;
              debug = UT_LIST_GET_NEXT(list_node, debug)) {
 
-            LOG_PRINT_DEBUG("sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
+            LOGGER_DEBUG(LOGGER, "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
                 arr, debug->lock, debug->thread_id);
 
             thread = debug->thread_id;
@@ -656,7 +656,7 @@ void rw_lock_add_debug_info(
 {
     ut_ad(file_name != NULL);
 
-    rw_lock_debug_t *info = (rw_lock_debug_t *)my_malloc(sizeof(rw_lock_debug_t));
+    rw_lock_debug_t *info = (rw_lock_debug_t *)malloc(sizeof(rw_lock_debug_t));
 
     rw_lock_debug_mutex_enter();
 
@@ -668,7 +668,7 @@ void rw_lock_add_debug_info(
     info->thread_id = os_thread_get_curr_id();
     UT_LIST_ADD_FIRST(list_node, lock->debug_list, info);
 
-    LOG_PRINT_DEBUG("rw_lock_add_debug_info: rwlock %p lock type %s\n",
+    LOGGER_DEBUG(LOGGER, "rw_lock_add_debug_info: rwlock %p lock type %s\n",
         lock, rw_lock_type_desc[info->lock_type]);
 
     rw_lock_debug_mutex_exit();

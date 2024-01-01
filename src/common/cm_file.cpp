@@ -7,9 +7,11 @@
 #include "io.h"
 #endif // __WIN__
 
+/*================================================ file io  ==================================================*/
+
 
 /* We use these mutexes to protect lseek + file i/o operation, if the OS does not provide an atomic pread or pwrite, or similar */
-#define OS_FILE_N_SEEK_MUTEXES          16
+#define OS_FILE_N_SEEK_MUTEXES          13
 os_mutex_t os_file_seek_mutexes[OS_FILE_N_SEEK_MUTEXES];
 bool32     is_os_file_mutexs_inited = FALSE;
 
@@ -55,7 +57,7 @@ try_again:
 
     *file = CreateFile(name,
         GENERIC_READ | GENERIC_WRITE, /* read and write access */
-        FILE_SHARE_READ,/* file can be read by other processes */
+        FILE_SHARE_READ | FILE_SHARE_WRITE,/* file can be read by other processes */
         NULL,    /* default security attributes */
         create_flag,
         attributes,
@@ -275,8 +277,6 @@ bool32 os_fsync_file(os_file_t file)
 
 #endif
 
-    os_file_handle_error(file, NULL);
-
     return FALSE;
 }
 
@@ -332,6 +332,43 @@ bool32 os_truncate_file(os_file_t file, uint64 offset)
         return FALSE;
     }
     return TRUE;
+}
+
+void os_file_get_last_error_desc(char *desc, uint32 size)
+{
+    uint32   err;
+
+#ifdef __WIN__
+    err = (uint32) GetLastError();
+    if (err == ERROR_FILE_NOT_FOUND) {
+        sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
+    } else if (err == ERROR_DISK_FULL) {
+        sprintf_s(desc, size, "OS_FILE_DISK_FULL");
+    } else if (err == ERROR_FILE_EXISTS) {
+        sprintf_s(desc, size, "OS_FILE_ALREADY_EXISTS");
+    } else if (err == ERROR_PATH_NOT_FOUND) {
+        sprintf_s(desc, size, "OS_FILE_PATH_NOT_FOUND");
+    } else if (err == ERROR_ACCESS_DENIED) {
+        sprintf_s(desc, size, "OS_FILE_ACCESS_DENIED");
+    } else {
+        sprintf_s(desc, size, "unknow error %d", err);
+    }
+#else
+    err = (uint32) errno;
+    if (err == ENOSPC ) {
+        sprintf_s(desc, size, "OS_FILE_DISK_FULL");
+    } else if (err == EAGAIN) {
+        sprintf_s(desc, size, "OS_FILE_AIO_RESOURCES_RESERVED");
+    } else if (err == ENOENT) {
+        sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
+    } else if (err == EEXIST) {
+        sprintf_s(desc, size, "OS_FILE_ALREADY_EXISTS");
+    } else if (err == EACCES) {
+        sprintf_s(desc, size, "OS_FILE_ACCESS_DENIED");
+    } else {
+        sprintf_s(desc, size, "unknow error %d", err);
+    }
+#endif
 }
 
 //If the number is not known to this program, the OS error number + 100 is returned.
@@ -454,6 +491,128 @@ bool32 os_file_get_size(os_file_t file, uint64 *size)
     return TRUE;
 }
 
+bool32 os_file_rename(const char* oldpath, const char* newpath)
+{
+#ifdef DBUG_OUTPUT
+    os_file_type_t type;
+    bool32 exists;
+
+    /* New path must not exist. */
+    ut_ad(os_file_status(newpath, &exists, &type));
+    ut_ad(!exists);
+
+    /* Old path must exist. */
+    ut_ad(os_file_status(oldpath, &exists, &type));
+    ut_ad(exists);
+#endif /* DBUG_OUTPUT */
+
+#ifdef __WIN__
+    bool32 ret;
+    ret = MoveFile((LPCTSTR) oldpath, (LPCTSTR) newpath);
+    if (ret) {
+        return(TRUE);
+    }
+
+    return(FALSE);
+#else
+    int ret;
+    ret = rename(oldpath, newpath);
+    if (ret != 0) {
+        return(FALSE);
+    }
+
+    return(TRUE);
+#endif /* __WIN__ */
+}
+
+bool32 os_file_status(const char* path, bool32 *exists, os_file_type_t *type)
+{
+#ifdef __WIN__
+    int ret;
+    struct _stat64 statinfo;
+
+    ret = _stat64(path, &statinfo);
+    if (ret && (errno == ENOENT || errno == ENOTDIR)) {
+        /* file does not exist */
+        *exists = FALSE;
+        return(TRUE);
+    } else if (ret) {
+        /* file exists, but stat call failed */
+        return(FALSE);
+    }
+
+    if (_S_IFDIR & statinfo.st_mode) {
+        *type = OS_FILE_TYPE_DIR;
+    } else if (_S_IFREG & statinfo.st_mode) {
+        *type = OS_FILE_TYPE_FILE;
+    } else {
+        *type = OS_FILE_TYPE_UNKNOWN;
+    }
+
+    *exists = TRUE;
+
+    return(TRUE);
+#else
+    int ret;
+    struct stat statinfo;
+
+    ret = stat(path, &statinfo);
+    if (ret && (errno == ENOENT || errno == ENOTDIR)) {
+        /* file does not exist */
+        *exists = FALSE;
+        return(TRUE);
+    } else if (ret) {
+        /* file exists, but stat call failed */
+        return(FALSE);
+    }
+
+    if (S_ISDIR(statinfo.st_mode)) {
+        *type = OS_FILE_TYPE_DIR;
+    } else if (S_ISLNK(statinfo.st_mode)) {
+        *type = OS_FILE_TYPE_LINK;
+    } else if (S_ISREG(statinfo.st_mode)) {
+        *type = OS_FILE_TYPE_FILE;
+    } else {
+        *type = OS_FILE_TYPE_UNKNOWN;
+    }
+
+    *exists = TRUE;
+
+    return(TRUE);
+#endif
+}
+
+bool32 os_file_set_eof(os_file_t file)
+{
+#ifdef __WIN__
+    //HANDLE h = (HANDLE) _get_osfhandle(fileno(file));
+    return(SetEndOfFile(file));
+#else /* __WIN__ */
+    return(!ftruncate(fileno(file), ftell(file)));
+#endif /* __WIN__ */
+}
+
+bool32 os_file_create_directory(const char *pathname, bool32 fail_if_exists)
+{
+#ifdef __WIN__
+    BOOL rcode;
+    rcode = CreateDirectory((LPCTSTR) pathname, NULL);
+    if (!(rcode != 0 || (GetLastError() == ERROR_ALREADY_EXISTS && !fail_if_exists))) {
+        return(FALSE);
+    }
+
+    return(TRUE);
+#else
+    int rcode;
+    rcode = mkdir(pathname, 0770);
+    if (!(rcode == 0 || (errno == EEXIST && !fail_if_exists))) {
+        /* failure */
+        return(FALSE);
+    }
+
+    return (TRUE);
+#endif /* __WIN__ */
+}
 
 
 bool32 get_app_path(char* str)
@@ -488,9 +647,9 @@ int32 get_file_size(char *file_name, long long *file_byte_size)
 
 
 
-/***********************************************************************************************
-*                                         aio                                                  *
-***********************************************************************************************/
+/*================================================ aio ==================================================*/
+
+
 
 #define AIO_GET_EVENTS_MAX_COUNT     256
 
@@ -500,7 +659,8 @@ typedef int (*os_aio_setup)(int max_events, io_context_t *ctx);
 typedef int (*os_aio_destroy)(io_context_t ctx);
 typedef int (*os_aio_submit)(io_context_t ctx, long nr, struct iocb *ios[]);
 typedef int (*os_aio_cancel)(io_context_t ctx, struct iocb *iocb, io_event_t *event);
-typedef int (*os_aio_getevents)(io_context_t ctx, long min_nr, long nr, io_event_t *events, struct timespec *timeout);
+typedef int (*os_aio_getevents)(io_context_t ctx, long min_nr, long nr,
+    io_event_t *events, struct timespec *timeout);
 
 static os_aio_setup aio_setup_func = NULL;
 static os_aio_destroy aio_destroy_func = NULL;
@@ -548,6 +708,7 @@ static os_aio_slot_t* os_aio_array_alloc_slot(
     uint64          offset, /* in: file offset */
     uint32          len)    /* in: length of the block to read or write */
 {
+    uint64          signal_count = 0;
     os_aio_slot_t*  slot = NULL;
 #ifdef __WIN__
     OVERLAPPED*     control;
@@ -565,7 +726,8 @@ loop:
     mutex_enter(&aio_array->mutex);
     if (UT_LIST_GET_LEN(aio_array->free_slots) == 0) {
         mutex_exit(&aio_array->mutex);
-        os_event_wait_time(aio_array->aio_slot_event, 1000);
+        os_event_wait_time(aio_array->aio_slot_event, 1000, signal_count);
+        signal_count = os_event_reset(aio_array->aio_slot_event);
         goto loop;
     }
     slot = UT_LIST_GET_FIRST(aio_array->free_slots);
@@ -884,7 +1046,8 @@ int os_file_aio_wait(os_aio_context_t* aio_context, uint32 microseconds)
 
 os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* aio_array)
 {
-    os_aio_context_t* ctx;
+    uint64            signal_count = 0;
+    os_aio_context_t *ctx;
 
 retry:
 
@@ -897,7 +1060,8 @@ retry:
     mutex_exit(&aio_array->mutex);
 
     if (ctx == NULL) {
-        os_event_wait_time(aio_array->aio_context_event, 1000);
+        os_event_wait_time(aio_array->aio_context_event, 1000, signal_count);
+        signal_count = os_event_reset(aio_array->aio_context_event);
         goto retry;
     }
 
@@ -940,7 +1104,7 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
     ut_a(max_io_operation_count > 0);
     ut_a(io_context_count > 0);
 
-    array = (os_aio_array_t *)ut_malloc(sizeof(os_aio_array_t));
+    array = (os_aio_array_t *)malloc(sizeof(os_aio_array_t));
     memset(array, 0x0, sizeof(os_aio_array_t));
     UT_LIST_INIT(array->free_slots);
     UT_LIST_INIT(array->free_contexts);
@@ -952,7 +1116,7 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
     array->io_context_count = io_context_count;
 
     //
-    array->aio_contexts = (os_aio_context_t *)ut_malloc(io_context_count * sizeof(os_aio_context_t));
+    array->aio_contexts = (os_aio_context_t *)malloc(io_context_count * sizeof(os_aio_context_t));
     memset(array->aio_contexts, 0x0, sizeof(io_context_count * sizeof(os_aio_context_t)));
     for (uint32 i = 0; i < io_context_count; i++) {
         os_aio_context_t *ctx = array->aio_contexts + i;
@@ -966,7 +1130,7 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
 
 #else
     /* Initialize the io_context array. One io_context per segment in the array. */
-    array->aio_ctxs = (io_context_t **)ut_malloc(io_context_count * sizeof(io_context_t));
+    array->aio_ctxs = (io_context_t **)malloc(io_context_count * sizeof(io_context_t));
     for (uint32 i = 0; i < io_context_count; ++i) {
         if (aio_setup_func(max_events, &array->aio_ctxs[i]) != 0) {
             goto err_exit;
@@ -980,7 +1144,7 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
 #endif /* __WIN__ */
 
     //
-    array->aio_slots = (os_aio_slot_t *)ut_malloc(max_io_operation_count * sizeof(os_aio_slot_t));
+    array->aio_slots = (os_aio_slot_t *)malloc(max_io_operation_count * sizeof(os_aio_slot_t));
     memset(array->aio_slots, 0x0, sizeof(max_io_operation_count * sizeof(os_aio_slot_t)));
     for (uint32 i = 0; i < max_io_operation_count; i++) {
         os_aio_slot_t* slot;
@@ -1015,10 +1179,10 @@ void os_aio_array_free(os_aio_array_t* aio_array)
         os_aio_slot_t* slot = os_aio_array_get_nth_slot(aio_array, i);
         CloseHandle(slot->handle);
     }
-    //ut_free(aio_array->handles);
+    //free(aio_array->handles);
 #else
-    //ut_free(aio_array->aio_events);
-    ut_free(aio_array->aio_ctxs);
+    //free(aio_array->aio_events);
+    free(aio_array->aio_ctxs);
 #endif /* __WIN__ */
 
     mutex_destroy(&aio_array->mutex);
@@ -1026,9 +1190,9 @@ void os_aio_array_free(os_aio_array_t* aio_array)
     os_event_destroy(aio_array->aio_slot_event);
     os_event_destroy(aio_array->aio_context_event);
 
-    ut_free(aio_array->aio_slots);
-    ut_free(aio_array->aio_contexts);
-    ut_free(aio_array);
+    free(aio_array->aio_slots);
+    free(aio_array->aio_contexts);
+    free(aio_array);
 }
 
 

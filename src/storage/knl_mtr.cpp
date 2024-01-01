@@ -1,5 +1,6 @@
 #include "knl_mtr.h"
 #include "cm_dbug.h"
+#include "cm_queue.h"
 #include "cm_util.h"
 #include "knl_buf.h"
 #include "knl_page.h"
@@ -13,6 +14,24 @@
 memory_pool_t    *mtr_mem_pools[MTR_MEM_POOL_COUNT];
 
 static atomic32_t  n_mtr_mem_pools_index = 0;
+
+
+void* mtr_queue_next_node(void *current);
+void** mtr_queue_next_node_address(void *current);
+
+log_t*    log_sys = NULL;
+dyn_queue mtr_queue(mtr_queue_next_node, mtr_queue_next_node_address);
+
+void* mtr_queue_next_node(void *current)
+{
+    return ((mtr_t *)current)->queue_next_mtr;
+}
+
+void** mtr_queue_next_node_address(void *current)
+{
+    return (void **)(&((mtr_t *)current)->queue_next_mtr);
+}
+
 
 bool32 mtr_init(memory_area_t *area)
 {
@@ -459,25 +478,10 @@ static void mtr_memo_note_modifications(mtr_t *mtr)
 // Append the dirty pages to the flush list
 static void mtr_add_dirtied_pages_to_flush_list(mtr_t *mtr)
 {
-    //ut_ad(!srv_read_only_mode);
-
-    /* No need to acquire log_flush_order_mutex if this mtr has not dirtied a clean page.
-       log_flush_order_mutex is used to ensure ordered insertions in the flush_list.
-       We need to insert in the flush_list iff the page in question was clean before modifications. */
-    if (mtr->made_dirty) {
-        log_flush_order_mutex_enter();
-    }
-
-    /* It is now safe to release the log mutex,
-       because the flush_order mutex will ensure that we are the first one to insert into the flush list. */
-    log_release();
+    ut_ad(!srv_read_only_mode);
 
     if (mtr->modifications) {
         mtr_memo_note_modifications(mtr);
-    }
-
-    if (mtr->made_dirty) {
-        log_flush_order_mutex_exit();
     }
 }
 
@@ -488,6 +492,7 @@ static void mtr_log_reserve_and_write(mtr_t *mtr)
     dyn_block_t *first_block;
     uint32 data_size;
     byte *first_data;
+    uint64 start_lsn;
 
     //ut_ad(!srv_read_only_mode);
 
@@ -501,35 +506,38 @@ static void mtr_log_reserve_and_write(mtr_t *mtr)
         *first_data = (byte)((uint32)*first_data | MLOG_SINGLE_REC_FLAG);
     }
 
-    if (UT_LIST_GET_LEN(mlog->used_blocks) == 1) {
-        uint32 len;
-        len = mtr->log_mode != MTR_LOG_NO_REDO ? dyn_block_get_used(first_block) : 0;
-        mtr->end_lsn = log_reserve_and_write_fast(first_data, len, &mtr->start_lsn);
-        if (mtr->end_lsn) {
-            /* Success. We have the log mutex. Add pages to flush list and exit */
-            mtr_add_dirtied_pages_to_flush_list(mtr);
-            return;
-        }
-    }
+    // If the queue was empty: we're the leader for this batch
+    //bool32 leader= mtr_queue.append(mtr);
+
+    /*
+      If the queue was not empty, we're a follower and wait for the
+      leader to process the queue. If we were holding a mutex, we have
+      to release it before going to sleep.
+    */
+    //if (!leader) {
+        //os_event_wait(os_event_t event, uint64 reset_sig_count);
+    //}
 
     data_size = dyn_array_get_data_size(mlog);
-    /* Open the database log for log_write_low */
-    mtr->start_lsn = log_reserve_and_open(data_size);
-
+    mtr->start_buf_lsn = log_buffer_reserve(data_size);
+    mtr->end_lsn = mtr->start_buf_lsn.val.lsn + mtr->start_buf_lsn.data_len;
     if (mtr->log_mode == MTR_LOG_ALL) {
+        start_lsn = mtr->start_buf_lsn.val.lsn;
         for (dyn_block_t* block = first_block;
              block != 0;
              block = dyn_array_get_next_block(mlog, block)) {
-            log_write_low(dyn_block_get_data(block), dyn_block_get_used(block));
+            start_lsn = log_buffer_write(start_lsn, dyn_block_get_data(block), dyn_block_get_used(block));
         }
+        log_write_complete(&mtr->start_buf_lsn);
     } else {
         ut_ad(mtr->log_mode == MTR_LOG_NONE || mtr->log_mode == MTR_LOG_NO_REDO);
         /* Do nothing */
     }
 
-    mtr->end_lsn = log_close();
     mtr_add_dirtied_pages_to_flush_list(mtr);
 }
+
+
 
 /*
  * Writes the initial part of a log record (3..11 bytes).
@@ -897,7 +905,7 @@ void mtr_s_lock_func(rw_lock_t* lock, /*!< in: rw-lock */
     ut_ad(mtr);
     ut_ad(lock);
 
-    rw_lock_s_lock(lock, 0, file, line);
+    rw_lock_s_lock(lock);
     mtr_memo_push(mtr, lock, MTR_MEMO_S_LOCK);
 }
 
@@ -909,7 +917,7 @@ void mtr_x_lock_func(rw_lock_t* lock, /*!< in: rw-lock */
     ut_ad(mtr);
     ut_ad(lock);
 
-    rw_lock_x_lock(lock, 0, file, line);
+    rw_lock_x_lock(lock);
     mtr_memo_push(mtr, lock, MTR_MEMO_X_LOCK);
 }
 

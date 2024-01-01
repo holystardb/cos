@@ -518,6 +518,7 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances);
 buf_pool_t* buf_pool_get(const page_id_t &page_id);
 buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
 buf_pool_t* buf_pool_from_block(const buf_block_t *block);
+lsn_t buf_pool_get_oldest_modification(void);
 
 
 

@@ -1,5 +1,9 @@
 #include "cm_queue.h"
 
+/*******************************************************************
+ *                            number queue                         *
+ ******************************************************************/
+
 queue_t* queue_init(uint32 count)
 {
     uint32   index;
@@ -83,5 +87,70 @@ void queue_free(queue_t *queue)
     if (NULL != queue) {
         free(queue);
     }
+}
+
+
+
+
+
+/*******************************************************************
+ *                          dynamic queue                          *
+ ******************************************************************/
+
+bool32 dyn_queue::append(void *first)
+{
+    mutex_enter(&m_lock, NULL);
+
+    bool32 empty = (m_first == NULL);
+    *m_last = first;
+
+    /*
+      Go to the last instance of the list. We expect lists to be
+      moderately short. If they are not, we need to track the end of
+      the queue as well.
+    */
+    while (m_next_node_func(first)) {
+        first = m_next_node_func(first);
+    }
+    m_last = m_next_node_address_func(first);
+
+    mutex_exit(&m_lock);
+
+    return empty;
+}
+
+void* dyn_queue::fetch_and_empty()
+{
+    mutex_enter(&m_lock, NULL);
+
+    void *result = m_first;
+    m_first = NULL;
+    m_last = &m_first;
+
+    ut_a(m_first || m_last == &m_first);
+
+    mutex_exit(&m_lock);
+
+    return result;
+}
+
+void* dyn_queue::pop_front()
+{
+    mutex_enter(&m_lock, NULL);
+
+    void *result = m_first;
+    if (result) {
+        m_first = m_next_node_func(result);
+    }
+
+    if (m_first == NULL) {
+        m_last = &m_first;
+    }
+
+    ut_a(m_first || m_last == &m_first);
+
+    mutex_exit(&m_lock);
+
+    return result;
 }
 

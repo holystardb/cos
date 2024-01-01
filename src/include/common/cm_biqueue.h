@@ -5,6 +5,8 @@
 #include "cm_type.h"
 #include "cm_mutex.h"
 #include "cm_list.h"
+#include "cm_memory.h"
+
 
 #define BIQUEUE_MAGIC       123461526
 
@@ -31,10 +33,13 @@ typedef struct
     char            **slot;
     uint32            slot_index;
     spinlock_t        lock;
+    memory_pool_t    *mpool;
+    uint32            slot_size;
     UT_LIST_BASE_NODE_T(biqueue_node_t) free_list;
+    UT_LIST_BASE_NODE_T(memory_page_t) used_pages;
 } biqueue_t;
 
-biqueue_t* biqueue_init(uint32 node_size, uint32 count);
+biqueue_t* biqueue_init(uint32 node_size, uint32 count, memory_pool_t *mpool);
 biqueue_node_t* biqueue_alloc(biqueue_t *queue);
 biqueue_node_t* biqueue_get_node(biqueue_t *queue, uint32 node_id);
 bool32 biqueue_free(biqueue_t *queue, biqueue_node_t* node);
