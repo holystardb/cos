@@ -336,12 +336,21 @@ typedef enum status_stuct
 *                                      DEBUG OUTPUT                                            *
 ***********************************************************************************************/
 
-#if 0
+#ifndef UNIV_DEBUG
 #define UNIV_DEBUG              /*  */
+#endif
+#ifndef UNIV_MEMORY_DEBUG
 #define UNIV_MEMORY_DEBUG       /* detect memory leaks etc */
-#define UNIV_MEMROY_VALGRIND    /* Enable extra Valgrind instrumentation */
-#define UNIV_DEBUG_OUTPUT       /* DBUG_*, ut_ad, ut_d */
+#endif
+#ifndef UNIV_MEMROY_VALGRIND
+//#define UNIV_MEMROY_VALGRIND    /* Enable extra Valgrind instrumentation */
+#endif
+#ifndef UNIV_DEBUG_OUTPUT
+#define UNIV_DEBUG_OUTPUT       /* DBUG_*, ut_ad, ut_d */\
+#endif
+#ifndef UNIV_MUTEX_DEBUG
 #define UNIV_MUTEX_DEBUG        /* mutex and latch */
+#endif
 
 
 #endif

@@ -81,6 +81,7 @@ bool32 knl_server_start(memory_area_t* marea)
     dberr_t   err;
     db_ctrl_t ctrl;
     bool32    ret;
+    char      name[1024];
 
     for (uint32 i = 1; i <= 3; i++) {
         ret = read_ctrl_file(name, &ctrl);
@@ -109,7 +110,7 @@ bool32 knl_server_start(memory_area_t* marea)
     // buffer pool
     err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
     if (err != DB_SUCCESS) {
-        LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool.");
+        LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool");
         return DB_ERROR;
     }
 
@@ -140,7 +141,6 @@ bool32 knl_server_start(memory_area_t* marea)
     // dictionary table
 
     //
-    bool32 ret;
     bool32 create_new_db;
 
     ret = knl_open_or_create_data_file(marea, &create_new_db);
@@ -168,37 +168,107 @@ bool32 knl_server_start(memory_area_t* marea)
 
 bool32 knl_server_init_db(memory_area_t* marea)
 {
+    mtr_t   mtr;
     dberr_t err;
+    bool32  ret;
 
     if (!srv_create_ctrls(srv_data_home)) {
         return FALSE;
     }
-    if (srv_create_redo_logs(srv_data_home) != DB_SUCCESS) {
+    if (srv_create_redo_logs() != DB_SUCCESS) {
         return FALSE;
     }
-    if (srv_create_undo_log(srv_data_home) != DB_SUCCESS) {
+    if (srv_create_undo_log() != DB_SUCCESS) {
         return FALSE;
     }
-    if (srv_create_temp(srv_data_home) != DB_SUCCESS) {
+    if (srv_create_temp() != DB_SUCCESS) {
         return FALSE;
     }
-    if (srv_create_system(srv_data_home) != DB_SUCCESS) {
+    if (srv_create_system() != DB_SUCCESS) {
         return FALSE;
     }
 
-    sync_init();
-    // mini-transaction initialize
-    mtr_init(marea);
+    sync_init();   
+    mtr_init(marea);  // mini-transaction initialize
 
-    log_init();
-
+    if (!log_init()) {  // redo log
+        return FALSE;
+    }
+    for (uint32 i = 0; i < srv_db_ctrl.redo_count; i++) {
+        ret = log_group_add(srv_db_ctrl.redo_group[i].name, srv_db_ctrl.redo_group[i].size);
+        if (!ret) {
+            return FALSE;
+        }
+    }
 
     // buffer pool
-    //err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
-    //if (err != DB_SUCCESS) {
-   //     LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool.");
-   //     return FALSE;
-   // }
+    err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
+    if (err != DB_SUCCESS) {
+        LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool.");
+        return FALSE;
+    }
+
+    memory_pool_t* fil_mpool;
+    uint32 local_page_count = 8;
+    uint32 max_page_count = MEM_POOL_PAGE_UNLIMITED;
+    uint32 page_size = 1024 * 8;
+    fil_mpool = mpool_create(marea, local_page_count, max_page_count, page_size);
+
+
+    // file system
+    ret = fil_system_init(fil_mpool, srv_max_n_open, srv_space_max_count, srv_fil_node_max_count);
+    if (!ret) {
+        return DB_ERROR;
+    }
+
+    fil_space_t *space = fil_space_create("system", SRV_SYSTEM_SPACE_ID, 0);
+    if (!space) {
+        return DB_ERROR;
+    }
+    fil_node_t *node = fil_node_create(space, srv_db_ctrl.system.name,
+        srv_db_ctrl.system.max_size / UNIV_PAGE_SIZE, UNIV_PAGE_SIZE, srv_db_ctrl.system.autoextend);
+    if (!node) {
+        return DB_ERROR;
+    }
+
+
+    mtr_start(&mtr);
+    fsp_header_init(SRV_SYSTEM_SPACE_ID, UNIV_PAGE_SIZE, &mtr);
+    mtr_commit(&mtr);
+
+    uint64 lsn = mtr.end_lsn;
+    log_write_up_to(lsn);
+
+    /* To maintain backward compatibility we create only
+    the first rollback segment before the double write buffer.
+    All the remaining rollback segments will be created later,
+    after the double write buffer has been created. */
+    //trx_sys_create_sys_pages();
+
+    //ib_bh = trx_sys_init_at_db_start();
+    //n_recovered_trx = UT_LIST_GET_LEN(trx_sys->rw_trx_list);
+    
+    /* The purge system needs to create the purge view and
+    therefore requires that the trx_sys is inited. */
+    //trx_purge_sys_create(srv_n_purge_threads, ib_bh);
+
+    //if (dict_create() != DB_SUCCESS) {
+    //    return(err);
+    //}
+
+    //srv_startup_is_before_trx_rollback_phase = FALSE;
+
+    //bool success = buf_flush_list(ULINT_MAX, LSN_MAX, NULL);
+    //ut_a(success);
+
+    //min_flushed_lsn = max_flushed_lsn = log_get_lsn();
+    //buf_flush_wait_batch_end(NULL, BUF_FLUSH_LIST);
+    /* Stamp the LSN to the data files. */
+    //fil_write_flushed_lsn_to_data_files(max_flushed_lsn, 0);
+    //fil_flush_file_spaces(FIL_TABLESPACE);
+
+    //create_log_files_rename(logfilename, dirnamelen, max_flushed_lsn, logfile0);
+
 
     return DB_SUCCESS;
 }

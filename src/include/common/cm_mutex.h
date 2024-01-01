@@ -110,7 +110,9 @@ inline void spin_lock(spinlock_t *lock, spinlock_stats_t *stats = NULL)
     uint64 thread_yield_count = 0, spin_round_count = 0;
 
     if (atomic32_compare_and_swap(&lock->lock, 0, 1)) {
+#ifdef UNIV_MUTEX_DEBUG
         ut_ad(lock->thread_id = os_thread_get_curr_id());
+#endif
         return;
     }
 
@@ -131,7 +133,9 @@ lock_loop:
 
     /* We try once again to obtain the lock */
     if (atomic32_compare_and_swap(&lock->lock, 0, 1)) {
+#ifdef UNIV_MUTEX_DEBUG
         ut_ad(lock->thread_id = os_thread_get_curr_id());
+#endif
         if (stats) {
             stats->spin_round_count.add(spin_round_count);
             stats->spin_thread_yield_count.add(thread_yield_count);

@@ -404,7 +404,7 @@ struct st_dict_index{
 				blobs_mutex; @see btr_blob_dbg_t */
 #endif /* UNIV_BLOB_DEBUG */
 #ifdef UNIV_DEBUG
-	ulint		magic_n;/*!< magic number */
+	uint32		magic_n;/*!< magic number */
 /** Value of dict_index_t::magic_n */
 # define DICT_INDEX_MAGIC_N	76789786
 #endif
@@ -505,7 +505,7 @@ struct st_dict_table{
 				the tables it had an IX lock on */
 #ifdef UNIV_DEBUG
 	/*----------------------*/
-	ibool		does_not_fit_in_memory;
+	bool32		does_not_fit_in_memory;
 				/*!< this field is used to specify in
 				simulations tables which are so big
 				that disk should be accessed: disk
@@ -683,7 +683,7 @@ struct st_dict_table{
 #endif /* !UNIV_HOTBACKUP */
 
 #ifdef UNIV_DEBUG
-	ulint		magic_n;/*!< magic number */
+	uint32		magic_n;/*!< magic number */
 /** Value of dict_table_t::magic_n */
 # define DICT_TABLE_MAGIC_N	76333786
 #endif /* UNIV_DEBUG */

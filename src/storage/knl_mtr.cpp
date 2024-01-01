@@ -285,7 +285,7 @@ uint32 dyn_array_get_data_size(dyn_array_t *arr)
     /* Get the first array block */
     block = dyn_array_get_first_block(arr);
     while (block != NULL) {
-        sum += block->used;
+        sum += dyn_block_get_used(block);
         block = dyn_array_get_next_block(arr, block);
     }
 
@@ -387,13 +387,6 @@ void mtr_memo_push(mtr_t *mtr,	/*!< in: mtr */
     ut_ad(mtr->magic_n == MTR_MAGIC_N);
     ut_ad(mtr->state == MTR_ACTIVE);
 
-    /* If this mtr has x-fixed a clean page then we set the made_dirty flag.
-       This tells us if we need to grab log_flush_order_mutex at mtr_commit
-       so that we can insert the dirtied page to the flush list. */
-    if (type == MTR_MEMO_PAGE_X_FIX && !mtr->made_dirty) {
-        mtr->made_dirty = mtr_block_dirtied((const buf_block_t*) object);
-    }
-
     memo = &(mtr->memo);
     slot = (mtr_memo_slot_t*) dyn_array_push(memo, sizeof(mtr_memo_slot_t));
     slot->object = object;
@@ -443,8 +436,6 @@ static void mtr_memo_slot_note_modification(mtr_t *mtr, mtr_memo_slot_t *slot)
 
     if (slot->object != NULL && slot->type == MTR_MEMO_PAGE_X_FIX) {
         buf_block_t *block = (buf_block_t*) slot->object;
-
-        ut_ad(!mtr->made_dirty || log_flush_order_mutex_own());
         //buf_flush_note_modification(block, mtr);
     }
 }

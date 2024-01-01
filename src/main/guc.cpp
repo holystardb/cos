@@ -1,5 +1,5 @@
 #include "guc.h"
-
+#include "cm_config.h"
 
 bool32      g_read_only;
 bool32      g_flush_log_at_commit;
@@ -694,3 +694,28 @@ bool32 set_guc_option_value(config_generic *gconfig, char* value)
     return TRUE;
 }
 
+void initialize_guc_options(char *config_file)
+{
+    char *section = NULL, *key = NULL, *value = NULL;
+    config_lines* lines;
+
+    lines = read_lines_from_config_file(config_file);
+
+    build_guc_variables();
+    for (int i = 0; i < lines->num_lines; i++) {
+        if (!parse_key_value_from_config_line(lines->lines[i], &section, &key, &value)) {
+            printf("Invalid config: %s\n", key);
+            return;
+        }
+        if (key == NULL) {
+            continue;
+        }
+        printf("config: key %s value %s\n", key, value);
+        config_generic* conf = find_guc_variable(key);
+        if (conf == NULL) {
+            printf("Invalid config: not found %s\n", key);
+            continue;
+        }
+        set_guc_option_value(conf, value);
+    }
+}

@@ -3,111 +3,44 @@
 #include "cm_getopt.h"
 #include "cm_log.h"
 #include "cm_dbug.h"
-#include "cm_config.h"
 #include "cm_file.h"
-#include "cm_thread.h"
 
 #include "knl_handler.h"
 #include "knl_server.h"
 #include "guc.h"
 
-static int get_options(int argc, char **argv)
+
+int main(int argc, const char *argv[])
 {
-    struct option long_options[] = {
-         { "config",   required_argument,   NULL,    'c'},
-         { "help",     no_argument,         NULL,    'h'},
-         {      0,     0,                   0,       0},
-    };
+    os_file_init(); // only for windows platform
 
-    int ch;
-    while ((ch = getopt_long(argc, argv, "c:h", long_options, NULL)) != -1)
-    {
-        switch (ch)
-        {
-        case 'c':
-            //strcpy_s(g_config_file, 255, optarg);
-            break;
-        case 'h':
-            printf("socks -c socks.ini\n");
-            break;
-        default:
-            printf("unknow option:%c\n", ch);
-        }
-    }
-    return 0;
-}
+    srv_buf_pool_size = 100 * 1024 * 1024; // 100MB
+    srv_buf_pool_instances = 1;
 
+    srv_data_home = "D:\\MyWork\\cos\\data";
 
-void initialize_guc_options(char *config_file)
-{
-    char *section = NULL, *key = NULL, *value = NULL;
-    config_lines* lines;
-
-    lines = read_lines_from_config_file(config_file);
-
-    build_guc_variables();
-    for (int i = 0; i < lines->num_lines; i++) {
-        if (!parse_key_value_from_config_line(lines->lines[i], &section, &key, &value)) {
-            printf("Invalid config: %s\n", key);
-            return;
-        }
-        if (key == NULL) {
-            continue;
-        }
-        printf("config: key %s value %s\n", key, value);
-        config_generic* conf = find_guc_variable(key);
-        if (conf == NULL) {
-            printf("Invalid config: not found %s\n", key);
-            continue;
-        }
-        set_guc_option_value(conf, value);
-    }
-}
-
-bool32 knl_server_init(void)
-{
-    dberr_t err;
-
-    srv_buf_pool_size = (g_buffer_pool_size * 1024 * 1024) / g_buffer_pool_instances;
-    srv_buf_pool_size = srv_buf_pool_size * g_buffer_pool_instances;
-    srv_buf_pool_instances = g_buffer_pool_instances;
-
-    srv_data_home = g_base_directory;
     srv_system_file_size = 1024 * 1024;
-    srv_system_file_max_size = 10 * 1024 * 1024;
+    srv_system_file_max_size = 100 * 1024 * 1024;
     srv_system_file_auto_extend_size = 1024 * 1024;
 
-    srv_redo_log_buffer_size = g_redo_log_buffer_size * 1024 * 1024;
-    srv_redo_log_file_size = g_redo_log_file_size * 1024 * 1024;
-    srv_redo_log_file_count = g_redo_log_files;
+    srv_redo_log_buffer_size = 8 * 1024 * 1024; // 8MB
+    srv_redo_log_file_size = 8 * 1024 * 1024;
+    srv_redo_log_file_count = 3;
 
-    srv_undo_buffer_size = g_undo_buffer_size * 1024 * 1024;
+    srv_undo_buffer_size = 8 * 1024 * 1024;
+    srv_undo_file_max_size = 8 * 1024 * 1024;
+    srv_undo_file_auto_extend_size = 3;
 
-    srv_max_n_open = g_open_files_limit;
+    srv_max_n_open = 256;
     srv_space_max_count = 10;
     srv_fil_node_max_count = 10;
 
 
-    return DB_SUCCESS;
-}
+    //
+    uint64 total_memory_size = 64 * 1024 * 1024;  // 64MB
+    memory_area_t* marea = marea_create(total_memory_size, FALSE);
 
-int main(int argc, const char *argv[])
-{
-    char *config_file = "D:\\MyWork\\cos\\etc\\server.ini";
-
-    initialize_guc_options(config_file);
-
-    os_file_init();
-
-
-    memory_area_t* marea;
-    uint64 total_memory_size = 1024 * 1024;
-    bool32 is_extend = FALSE;
-    marea = marea_create(total_memory_size, is_extend);
-
-
-    knl_server_init();
-
+    //
     db_ctrl_createdatabase("cosdb", "utf8mb4_bin");
 
     db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf",

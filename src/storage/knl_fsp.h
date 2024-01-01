@@ -427,6 +427,8 @@ inline bool32 fsp_is_system_temporary(space_id_t space_id)
 }
 
 
+//-----------------------------------------------------------------------------------------------------
+
 bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 space_max_count, uint32 fil_node_max_count);
 fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
 void fil_space_destroy(uint32 space_id);

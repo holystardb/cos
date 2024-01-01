@@ -154,6 +154,8 @@ extern int         g_session_wait_timeout;
 
 extern double      g_sample_rate;
 
+//------------------------------------------------------------------------------
 
+extern void initialize_guc_options(char *config_file);
 
 #endif  /* _GUC_H */

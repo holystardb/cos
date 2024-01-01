@@ -59,7 +59,7 @@ extern uint64 srv_temp_file_auto_extend_size;
 
 extern uint64 srv_buf_pool_size;
 extern uint32 srv_buf_pool_instances;
-extern uint32 srv_buf_pool_chunk_unit;
+
 extern bool32 buf_pool_should_madvise;
 extern uint32 srv_n_page_hash_locks; /*!< number of locks to protect buf_pool->page_hash */
 
@@ -232,10 +232,10 @@ dberr_t srv_start(bool32 create_new_db);
 
 //------------------------------------------------------------------
 extern bool32 srv_create_ctrls(char *data_home);
-extern dberr_t srv_create_redo_logs(char *data_home);
-extern dberr_t srv_create_undo_log(char *data_home);
-extern dberr_t srv_create_temp(char *data_home);
-extern dberr_t srv_create_system(char *data_home);
+extern dberr_t srv_create_redo_logs();
+extern dberr_t srv_create_undo_log();
+extern dberr_t srv_create_temp();
+extern dberr_t srv_create_system();
 
 
 extern bool32 db_ctrl_createdatabase(char *database_name, char *charset_name);
@@ -259,7 +259,7 @@ extern bool32 srv_read_only_mode;
 
 
 
-//extern db_ctrl_t srv_db_ctrl;
+extern db_ctrl_t srv_db_ctrl;
 
 
 #endif  /* _KNL_SERVER_H */

@@ -229,7 +229,7 @@ static void sync_array_free_cell(sync_array_t *arr, sync_cell_t *&cell)
 
     if (arr->next_free_slot > arr->n_cells / 2 && arr->n_reserved == 0) {
 #ifdef UNIV_DEBUG
-        for (ulint i = 0; i < arr->next_free_slot; ++i) {
+        for (uint32 i = 0; i < arr->next_free_slot; ++i) {
             cell = sync_array_get_nth_cell(arr, i);
 
             ut_ad(!cell->waiting);
@@ -639,7 +639,7 @@ void rw_lock_remove_debug_info(
 
             rw_lock_debug_mutex_exit();
 
-            my_free(info);
+            ut_free(info);
             return;
         }
     }
@@ -656,7 +656,7 @@ void rw_lock_add_debug_info(
 {
     ut_ad(file_name != NULL);
 
-    rw_lock_debug_t *info = (rw_lock_debug_t *)malloc(sizeof(rw_lock_debug_t));
+    rw_lock_debug_t *info = (rw_lock_debug_t *)ut_malloc(sizeof(rw_lock_debug_t));
 
     rw_lock_debug_mutex_enter();
 

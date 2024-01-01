@@ -320,19 +320,6 @@ struct buf_block_t {
   //const char *get_page_type_str() const;
 };
 
-
-
-/** A chunk of buffers. The buffer pool is allocated in chunks. */
-typedef struct st_buf_chunk {
-  uint64 size;           /*!< size of frames[] and blocks[] */
-  unsigned char *mem;   /*!< pointer to the memory area which was allocated for the frames */
-
-  buf_block_t *blocks;  /*!< array of buffer control blocks */
-  uint64 mem_size;
-
-
-} buf_chunk_t;
-
 /** @brief The buffer pool statistics structure. */
 struct buf_pool_stat_t {
   uint32 n_page_gets;            /*!< number of page gets performed;
@@ -362,30 +349,26 @@ enum buf_flush_t {
 };
 
 struct buf_pool_t {
-  spinlock_t    lock;      /*!< Buffer pool mutex of this instance */
+    spinlock_t    lock;      /*!< Buffer pool mutex of this instance */
 
-  mutex_t chunks_mutex;    /*!< protects (de)allocation of chunks:
-                                - changes to chunks, n_chunks are performed
-                                  while holding this latch,
-                                - reading buf_pool_should_madvise requires
-                                  holding this latch for any buf_pool_t
-                                - writing to buf_pool_should_madvise requires
-                                  holding these latches for all buf_pool_t-s
-                                */
-  mutex_t LRU_list_mutex;  /*!< LRU list mutex */
-  mutex_t free_list_mutex; /*!< free and withdraw list mutex */
-  mutex_t flush_state_mutex; /*!< Flush state protection mutex */
+    mutex_t LRU_list_mutex;  /*!< LRU list mutex */
+    mutex_t free_list_mutex; /*!< free and withdraw list mutex */
+    mutex_t flush_state_mutex; /*!< Flush state protection mutex */
+
+
+    uint64         size;           /*!< size of frames[] and blocks[] */
+    unsigned char *mem;   /*!< pointer to the memory area which was allocated for the frames */
+    buf_block_t   *blocks;  /*!< array of buffer control blocks */
+    uint64         mem_size;
+
+
+
 
   uint32 instance_no;            /*!< Array index of this buffer pool instance */
   uint32 curr_pool_size;         /*!< Current pool size in bytes */
   uint32 LRU_old_ratio;          /*!< Reserve this much of the buffer pool for "old" blocks */
 
-  volatile uint32 n_chunks;     /*!< number of buffer pool chunks */
-  volatile uint32 n_chunks_new; /*!< new number of buffer pool chunks */
-  buf_chunk_t *chunks;         /*!< buffer pool chunks */
-  buf_chunk_t *chunks_old;     /*!< old buffer pool chunks to be freed after resizing buffer pool */
-  uint32 curr_size;             /*!< current pool size in pages */
-  uint32 old_size;              /*!< previous pool size in pages */
+
   page_no_t read_ahead_area;   /*!< size in pages of the area which
                                the read-ahead algorithms read if invoked */
   HASH_TABLE *page_hash;     /*!< hash table of buf_page_t or buf_block_t file pages,
@@ -491,25 +474,6 @@ struct buf_pool_t {
   individual watch page is protected by
   a corresponding individual page_hash
   latch. */
-
-  /** A wrapper for buf_pool_t::allocator.alocate_large which also advices the
-  OS that this chunk should not be dumped to a core file if that was requested.
-  Emits a warning to the log and disables @@global.core_file if advising was
-  requested but could not be performed, but still return true as the allocation
-  itself succeeded.
-  @param[in]	  mem_size  number of bytes to allocate
-  @param[in,out]  chunk     mem and mem_pfx fields of this chunk will be updated
-                            to contain information about allocated memory region
-  @return true iff allocated successfully */
-  bool allocate_chunk(ulonglong mem_size, buf_chunk_t *chunk);
-
-  /** A wrapper for buf_pool_t::allocator.deallocate_large which also advices
-  the OS that this chunk can be dumped to a core file.
-  Emits a warning to the log and disables @@global.core_file if advising was
-  requested but could not be performed.
-  @param[in]  chunk   mem and mem_pfx fields of this chunk will be used to
-                      locate the memory region to free */
-  void deallocate_chunk(buf_chunk_t *chunk);
 
 };
 

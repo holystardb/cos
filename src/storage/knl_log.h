@@ -155,11 +155,12 @@ typedef struct st_log {
     uint32           max_buf_free; /*!< recommended maximum value of buf_free, after which the buffer is flushed */
     uint32           buf_free; /*!< first free offset within the log buffer */
 
-    os_aio_array_t  *aio_array;
     uint8            group_count; // number of log file
     uint8            current_write_group;
     uint8            current_flush_group;
     log_group_t      groups[LOG_GROUP_MAX_COUNT];
+    uint64           file_size;
+    os_aio_array_t  *aio_array;
 
     log_slot_t      *slots;
     volatile uint64  slot_write_pos;

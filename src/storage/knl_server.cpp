@@ -31,9 +31,9 @@ uint64 srv_temp_file_auto_extend_size;
 
 uint64 srv_buf_pool_size;
 uint32 srv_buf_pool_instances;
-uint32 srv_buf_pool_chunk_unit;
+
 bool32 buf_pool_should_madvise;
-uint32 srv_n_page_hash_locks; /*!< number of locks to protect buf_pool->page_hash */
+uint32 srv_n_page_hash_locks = 16; /*!< number of locks to protect buf_pool->page_hash */
 
 uint32 srv_max_n_open;
 uint32 srv_space_max_count;
@@ -251,13 +251,19 @@ bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl)
     uint32    size = 1024 * 1024;
     uint64    checksum = 0;
 
+    buf = (uchar *)malloc(size);
+    memset(buf, 0x00, size);
+    ptr = buf;
+
     ret = os_open_file(name, OS_FILE_OPEN, 0, &file);
     if (!ret) {
+        free(buf);
         LOGGER_FATAL(LOGGER, "invalid control file, can not open ctrl file, name = %s", name);
         return FALSE;
     }
     ret = os_pread_file(file, 0, buf, 512, &size);
     if (!ret || size <= 4 || mach_read_from_4(buf) != size) {
+        free(buf);
         os_close_file(file);
         LOGGER_FATAL(LOGGER, "invalid control file, size = %d", size);
         return FALSE;
@@ -269,12 +275,14 @@ bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl)
         checksum += buf[i];
     }
     if (checksum != mach_read_from_8(buf + size - 4)) {
+        free(buf);
         LOGGER_FATAL(LOGGER, "invalid control file, wrong checksum = %lu", checksum);
         return FALSE;
     }
 
     // magic
     if (mach_read_from_8(buf+4) != DB_CTRL_FILE_MAGIC) {
+        free(buf);
         LOGGER_FATAL(LOGGER, "invalid control file, wrong magic = %lu", mach_read_from_8(buf + 4));
         return FALSE;
     }
@@ -346,9 +354,12 @@ bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl)
         }
     }
     if (ctrl->charset_info == NULL) {
+        free(buf);
         LOGGER_FATAL(LOGGER, "invalid control file, not found charset name");
         return FALSE;
     }
+
+    free(buf);
 
     return TRUE;
 }
@@ -463,7 +474,7 @@ static dberr_t create_db_file(db_ctrl_file_t *ctrl_file)
     return DB_SUCCESS;
 }
 
-dberr_t srv_create_redo_logs(char *data_home)
+dberr_t srv_create_redo_logs()
 {
     db_ctrl_file_t *ctrl_file;
 
@@ -486,56 +497,34 @@ dberr_t srv_create_redo_logs(char *data_home)
     return DB_SUCCESS;
 }
 
-dberr_t srv_create_undo_log(char *data_home)
+dberr_t srv_create_undo_log()
 {
     return DB_SUCCESS;
 }
 
-dberr_t srv_create_temp(char *data_home)
+dberr_t srv_create_temp()
 {
     return DB_SUCCESS;
 }
 
-dberr_t srv_create_system(char *data_home)
+dberr_t srv_create_system()
 {
-    bool32 ret;
+    db_ctrl_file_t *ctrl_file;
 
-    uint32 dirname_len = (uint32)strlen(data_home);
+    ctrl_file = &srv_db_ctrl.system;
 
-    char *filename_prefix = "system", *filename;
-    uint32 filename_size = (uint32)strlen(data_home) + 1 /*PATH_SEPARATOR*/
-        + (uint32)strlen(filename_prefix) + 1 /*'\0'*/;
-    filename = (char *)malloc(filename_size);
+    /* Remove any old system file */
+#ifdef __WIN__
+    DeleteFile((LPCTSTR)ctrl_file->name);
+#else
+    unlink(ctrl_file->name);
+#endif
 
-    char *page = (char *)malloc(UNIV_PAGE_SIZE_DEF);
-    uint64 page_no = 0;
-    uint64 page_count = srv_db_ctrl.system.size / UNIV_PAGE_SIZE_DEF;
-    while (page_no < page_count) {
-        
-        page_no++;
+    dberr_t err = create_db_file(ctrl_file);
+    if (err != DB_SUCCESS) {
+        return err;
     }
 
-/*
-    os_file_t file;
-    ret = os_open_file(filename, OS_FILE_CREATE, 0, &file);
-    if (!ret) {
-        return DB_ERROR;
-    }
-
-    ret = os_pwrite_file(file, 0, buf, size);
-    if (!ret) {
-        os_close_file(file);
-        return DB_ERROR;
-    }
-
-    ret = os_fsync_file(file);
-    if (!ret) {
-        os_close_file(file);
-        return DB_ERROR;
-    }
-
-    os_close_file(file);
-*/
     return DB_SUCCESS;
 }
 

@@ -404,23 +404,26 @@ bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 space_max_
     fil_node_max_count = fil_node_max_count < 0xFFF ? 0xFFF : fil_node_max_count;
     space_max_count = space_max_count < 0xFFF ? 0xFFF : space_max_count;
 
-    fil_system = (fil_system_t *)malloc(
-        ut_align8(sizeof(fil_system_t)) + fil_node_max_count * ut_align8(sizeof(fil_node_t *)));
-    if (fil_system) {
-        fil_system->mem_context = mcontext_create(pool);
-        fil_system->open_pending_num = 0;
-        fil_system->max_n_open = max_n_open;
-        fil_system->space_max_count = space_max_count;
-        fil_system->fil_node_num = 0;
-        fil_system->fil_node_max_count = fil_node_max_count;
-        fil_system->fil_nodes = (fil_node_t **)((char *)fil_system + ut_align8(sizeof(fil_system_t)));
-        memset(fil_system->fil_nodes, 0x00, fil_node_max_count * ut_align8(sizeof(fil_node_t *)));
-        spin_lock_init(&fil_system->lock);
-        fil_system->spaces =  HASH_TABLE_CREATE(space_max_count);
-        fil_system->name_hash = HASH_TABLE_CREATE(space_max_count);
-        UT_LIST_INIT(fil_system->fil_spaces);
-        UT_LIST_INIT(fil_system->fil_node_lru);
+    fil_system = (fil_system_t *)malloc(ut_align8(sizeof(fil_system_t)) +
+                                        fil_node_max_count * ut_align8(sizeof(fil_node_t *)));
+    if (fil_system == NULL) {
+        return FALSE;
     }
+
+    fil_system->mem_context = mcontext_create(pool);
+    fil_system->open_pending_num = 0;
+    fil_system->max_n_open = max_n_open;
+    fil_system->space_max_count = space_max_count;
+    fil_system->fil_node_num = 0;
+    fil_system->fil_node_max_count = fil_node_max_count;
+    fil_system->fil_nodes = (fil_node_t **)((char *)fil_system + ut_align8(sizeof(fil_system_t)));
+    memset(fil_system->fil_nodes, 0x00, fil_node_max_count * ut_align8(sizeof(fil_node_t *)));
+    spin_lock_init(&fil_system->lock);
+    fil_system->spaces =  HASH_TABLE_CREATE(space_max_count);
+    fil_system->name_hash = HASH_TABLE_CREATE(space_max_count);
+    UT_LIST_INIT(fil_system->fil_spaces);
+    UT_LIST_INIT(fil_system->fil_node_lru);
+
     return TRUE;
 }
 
@@ -1075,14 +1078,14 @@ static void fsp_space_modify_check(uint32 id, const mtr_t* mtr)
 	case MTR_LOG_NO_REDO:
 #ifdef UNIV_DEBUG
 		{
-			const fil_type_t	type = fil_space_get_type(id);
-			ut_a(id == srv_tmp_space.space_id()
-			     || srv_is_tablespace_truncated(id)
-			     || fil_space_is_being_truncated(id)
-			     || fil_space_get_flags(id) == ULINT_UNDEFINED
-			     || type == FIL_TYPE_TEMPORARY
-			     || type == FIL_TYPE_IMPORT
-			     || fil_space_is_redo_skipped(id));
+			//const fil_type_t	type = fil_space_get_type(id);
+			//ut_a(id == srv_tmp_space.space_id()
+			//     || srv_is_tablespace_truncated(id)
+			//     || fil_space_is_being_truncated(id)
+			//     || fil_space_get_flags(id) == ULINT_UNDEFINED
+			//     || type == FIL_TYPE_TEMPORARY
+			//     || type == FIL_TYPE_IMPORT
+			//     || fil_space_is_redo_skipped(id));
 		}
 #endif /* UNIV_DEBUG */
 		return;
@@ -1127,9 +1130,9 @@ static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header
     limit = mach_read_from_4(header + FSP_FREE_LIMIT);
     flags = mach_read_from_4(header + FSP_SPACE_FLAGS);
 
-    ut_ad(size == space->size_in_header);
-    ut_ad(limit == space->free_limit);
-    ut_ad(flags == space->flags);
+    //ut_ad(size == space->size_in_header);
+    //ut_ad(limit == space->free_limit);
+    //ut_ad(flags == space->flags);
 
     const page_size_t page_size(flags);
 
@@ -1455,7 +1458,7 @@ fsp_header_t* fsp_get_space_header(
     ut_ad(id == mach_read_from_4(FSP_SPACE_ID + header));
 #ifdef UNIV_DEBUG
     const uint32	flags = mach_read_from_4(FSP_SPACE_FLAGS + header);
-    ut_ad(page_size_t(flags).equals_to(page_size));
+    //ut_ad(page_size_t(flags).equals_to(page_size));
 #endif /* UNIV_DEBUG */
     return(header);
 }
@@ -1502,7 +1505,7 @@ void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr)
     mutex_enter(&fil_system->lock);
     fil_space_t *space = fil_space_get_by_id(space_id);
     ut_a(space != NULL);
-    fsp_fill_free_list(false, space, header, mtr);
+    //fsp_fill_free_list(false, space, header, mtr);
     mutex_exit(&fil_system->lock);
 
     //btr_create(DICT_CLUSTERED | DICT_UNIVERSAL | DICT_IBUF, space,

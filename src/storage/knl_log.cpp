@@ -48,7 +48,6 @@ uint64 log_block_get_hdr_no(const byte* log_block)
 
 void log_block_set_hdr_no(byte* log_block, uint64 n)
 {
-    ut_ad(n > 0);
     mach_write_to_8(log_block + LOG_BLOCK_HDR_NO, n);
 }
 
@@ -76,7 +75,8 @@ void log_block_set_first_rec_group(byte* log_block, uint32 offset)
 
 uint64 log_block_convert_lsn_to_no(lsn_t lsn)
 {
-    return lsn / OS_FILE_LOG_BLOCK_SIZE;
+    //return lsn / OS_FILE_LOG_BLOCK_SIZE;
+    return lsn;
 }
 
 //Calculates the checksum for a log block.
@@ -126,11 +126,7 @@ static void log_block_store_checksum(byte* block) //in/out: pointer to a log blo
 static void log_block_init(byte* log_block, lsn_t lsn)
 {
     uint64 no;
-
-    ut_ad(mutex_own(&(log_sys->mutex)));
-
     no = log_block_convert_lsn_to_no(lsn);
-
     log_block_set_hdr_no(log_block, no);
 
     log_block_set_data_len(log_block, LOG_BLOCK_HDR_SIZE);
@@ -143,6 +139,7 @@ void log_write_up_to(lsn_t lsn)
     uint64   trx_sync_log_waits = 0, signal_count = 0;
     uint32   idx;
     uint32   timeout_microseconds = 1000;
+    int      ret;
 
     ut_ad(!srv_read_only_mode);
 
@@ -150,36 +147,24 @@ void log_write_up_to(lsn_t lsn)
 
     while (log_sys->flusher_flushed_lsn < lsn) {
         trx_sync_log_waits++;
-        os_event_wait_time(log_sys->session_wait_event[idx], timeout_microseconds, signal_count);
+        ret = os_event_wait_time(log_sys->session_wait_event[idx], timeout_microseconds, signal_count);
         signal_count = os_event_reset(log_sys->session_wait_event[idx]);
     }
 
-    srv_stats.trx_sync_log_waits.add(trx_sync_log_waits);
+    if (trx_sync_log_waits > 0) {
+        srv_stats.trx_sync_log_waits.add(trx_sync_log_waits);
+    }
 }
 
-static bool32 log_writer_write_to_file(log_group_t *group, uint64 start_pos, uint64 end_pos)
+static bool32 log_writer_write_to_file(log_group_t *group, uint64 start_pos, uint64 data_len)
 {
     uint64 log_checkpoint_waits = 0;
     uint32 timeout_seconds = 300; // 300 seconds
     uint64 offset = group->write_offset;
 
-retry_loop:
-
-    if (group->status == LogGroupStatus::INACTIVE) {
-        // modify log file status
-    } else if (group->status == LogGroupStatus::ACTIVE) {
-        log_checkpoint_waits++;
-        //os_event_set(checkpoint_event);
-        os_thread_sleep(1000); // 0.1 second
-        goto retry_loop;
-    }
-
-    srv_stats.log_checkpoint_waits.add(log_checkpoint_waits);
-
-    if (start_pos < end_pos) {
+    if (start_pos + data_len <= log_sys->buf_size) {
         if (!os_file_aio_submit(group->aio_ctx, OS_FILE_WRITE, group->name, group->handle,
-            (void *)(log_sys->buf + start_pos), (uint32)(end_pos - start_pos), offset,
-            NULL, NULL)) {
+            (void *)(log_sys->buf + start_pos), (uint32)data_len, offset, NULL, NULL)) {
             char errinfo[1024];
             os_file_get_last_error_desc(errinfo, 1024);
             LOGGER_FATAL(LOGGER, "fail to write redo file, name %s error %s", group->name, errinfo);
@@ -196,7 +181,8 @@ retry_loop:
         }
         offset += log_sys->buf_size - start_pos;
         if (!os_file_aio_submit(group->aio_ctx, OS_FILE_WRITE, group->name, group->handle,
-                                (void *)log_sys->buf, (uint32)end_pos, offset, NULL, NULL)) {
+                                (void *)log_sys->buf, (uint32)(data_len - (log_sys->buf_size - (uint32)start_pos)),
+                                offset, NULL, NULL)) {
             char errinfo[1024];
             os_file_get_last_error_desc(errinfo, 1024);
             LOGGER_FATAL(LOGGER, "fail to write redo file, name %s error %s", group->name, errinfo);
@@ -219,9 +205,9 @@ retry_loop:
         goto err_exit;
     }
 
-    group->write_offset += (end_pos - start_pos);
+    group->write_offset += data_len;
 
-    return ret;
+    return TRUE;
 
 err_exit:
 
@@ -237,8 +223,9 @@ static void log_writer_wait_for_checkpoint(uint64 write_lsn)
 
     checkpoint_lsn = ut_uint64_align_down(log_sys->last_checkpoint_lsn, OS_FILE_LOG_BLOCK_SIZE);
     write_up_lsn = ut_uint64_align_up(write_lsn, OS_FILE_LOG_BLOCK_SIZE);
+    ut_ad(write_up_lsn >= checkpoint_lsn);
 
-    while (write_up_lsn >= checkpoint_lsn) {
+    while (write_up_lsn - checkpoint_lsn >= log_sys->file_size) {
         log_checkpoint_waits++;
 
         //os_event_set(log_sys->checkpoint_event);
@@ -248,7 +235,16 @@ static void log_writer_wait_for_checkpoint(uint64 write_lsn)
         signal_count = os_event_reset(log_sys->writer_event);
     }
 
-    srv_stats.log_checkpoint_waits.add(log_checkpoint_waits);
+    //if (group->status == LogGroupStatus::INACTIVE) {
+        // modify log file status
+    //} else if (group->status == LogGroupStatus::ACTIVE) {
+        //os_thread_sleep(1000); // 0.1 second
+    //}
+
+
+    if (log_checkpoint_waits > 0) {
+        srv_stats.log_checkpoint_waits.add(log_checkpoint_waits);
+    }
 }
 
 static void log_block_set_data_len_and_first_rec_group(log_slot_t *slot)
@@ -452,7 +448,7 @@ static uint32 log_calc_data_size(uint64 start_lsn, uint32 len)
         first_part_len = OS_FILE_LOG_BLOCK_SIZE - offset - LOG_BLOCK_TRL_SIZE;
         left_part_len = len - first_part_len;
         data_len = first_part_len;
-        data_len += left_part_len / LOG_BLOCK_DATA_SIZE * OS_FILE_LOG_BLOCK_SIZE;
+        data_len += (left_part_len / LOG_BLOCK_DATA_SIZE) * OS_FILE_LOG_BLOCK_SIZE;
         if (left_part_len % LOG_BLOCK_DATA_SIZE > 0) {
             data_len += left_part_len % LOG_BLOCK_DATA_SIZE + LOG_BLOCK_HDR_SIZE;
         }
@@ -476,13 +472,15 @@ log_buf_lsn_t log_buffer_reserve(uint32 len) /*!< in: length of data to be caten
         os_thread_sleep(100);
     }
 
-    srv_stats.log_waits.add(log_waits);
+    if (log_waits > 0) {
+        srv_stats.log_waits.add(log_waits);
+    }
 
 #ifdef __WIN__
 
     mutex_enter(&(log_sys->mutex));
     cur_log_lsn = log_sys->buf_lsn;
-    cur_log_lsn.data_len += log_calc_data_size(log_sys->buf_lsn.val.lsn, len);
+    cur_log_lsn.data_len = log_calc_data_size(log_sys->buf_lsn.val.lsn, len);
     log_sys->buf_lsn.val.lsn += cur_log_lsn.data_len;
     log_sys->buf_lsn.val.slot_index++;
     mutex_exit(&(log_sys->mutex));
@@ -526,7 +524,9 @@ retry_check:
         goto retry_check;
     }
 
-    srv_stats.log_waits.add(log_waits);
+    if (log_waits > 0) {
+        srv_stats.log_waits.add(log_waits);
+    }
 }
 
 
@@ -595,7 +595,7 @@ void log_write_complete(log_buf_lsn_t *log_lsn)
     uint64 wait_slot_count = 0;
 
     // wait free slot
-    ut_a(log_lsn->val.slot_index > log_sys->slot_write_pos);
+    ut_a(log_lsn->val.slot_index >= log_sys->slot_write_pos);
     while (log_lsn->val.slot_index - log_sys->slot_write_pos >= LOG_SLOT_MAX_COUNT) {
         wait_slot_count++;
         os_thread_sleep(100);
@@ -608,7 +608,9 @@ void log_write_complete(log_buf_lsn_t *log_lsn)
     slot->data_len = log_lsn->data_len;
     slot->status = LogSlotStatus::COPIED;
 
-    srv_stats.log_slot_waits.add(wait_slot_count);
+    if (wait_slot_count > 0) {
+        srv_stats.log_slot_waits.add(wait_slot_count);
+    }
 }
 
 // Initializes the log
@@ -635,6 +637,7 @@ bool32 log_group_add(char *name, uint64 file_size)
     group->aio_ctx = os_aio_array_alloc_context(log_sys->aio_array);
     group->file_size = file_size;
     group->write_offset = LOG_BUF_WRITE_MARGIN;
+    log_sys->file_size += group->file_size - LOG_BUF_WRITE_MARGIN;
     group->base_lsn = 0;
     group->name = (char*)malloc(strlen(name) + 1);
     sprintf_s(group->name, strlen(name) + 1, "%s", name);
@@ -668,8 +671,9 @@ bool32 log_init()
     log_sys->buf_size = (uint32)srv_redo_log_buffer_size;
     log_sys->buf_free = LOG_BLOCK_HDR_SIZE;
 
-    log_sys->buf_lsn.val.lsn = LOG_START_LSN + LOG_BLOCK_HDR_SIZE;
+    log_sys->buf_lsn.val.lsn = LOG_BLOCK_HDR_SIZE;
     log_sys->buf_lsn.val.slot_index = 0;
+    log_sys->buf_lsn.data_len = 0;
     log_sys->writer_writed_lsn = 0;
     log_sys->flusher_flushed_lsn = 0;
     log_sys->buf_base_lsn = 0;
@@ -677,9 +681,11 @@ bool32 log_init()
     //rw_lock_create(&log_sys->checkpoint_lock);
     //log_sys->checkpoint_buf_ptr = (byte*)malloc(2 * OS_FILE_LOG_BLOCK_SIZE);
     //log_sys->checkpoint_buf = (byte*)ut_align(log_sys->checkpoint_buf_ptr, OS_FILE_LOG_BLOCK_SIZE);
+    log_sys->last_checkpoint_lsn = 0;
 
-    log_block_init(log_sys->buf, log_sys->buf_lsn.val.lsn);
-    log_block_set_first_rec_group(log_sys->buf, LOG_BLOCK_HDR_SIZE);
+
+    log_block_init(log_sys->buf, 0);
+    //log_block_set_first_rec_group(log_sys->buf, LOG_BLOCK_HDR_SIZE);
 
     log_sys->writer_event = os_event_create(NULL);
     os_event_set(log_sys->writer_event);
@@ -723,6 +729,7 @@ bool32 log_init()
     log_sys->current_write_group = 0;
     log_sys->current_flush_group = 0;
     log_sys->group_count = 0;
+    log_sys->file_size = 0;
 
     return TRUE;
 }

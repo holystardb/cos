@@ -161,7 +161,7 @@ extern uint32 MemoryBufHeaderSize;
 #define ut_free(size)           free(size)
 
 #ifdef UNIV_MEMROY_VALGRIND
-#define my_malloc(size)         malloc(size)
+#define my_malloc(mctx, size)   malloc(size)
 #define my_free(size)           free(size)
 #define my_realloc(ptr, size)   realloc(ptr, size)
 #else

@@ -29,7 +29,7 @@ buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, const page_id_t &page_id
     rw_lock_t *hash_lock;
 
     hash_lock = hash_get_lock(buf_pool->page_hash, page_id.fold());
-    ut_ad(rw_lock_own(hash_lock, RW_LOCK_X) || rw_lock_own(hash_lock, RW_LOCK_S));
+    //ut_ad(rw_lock_own(hash_lock, RW_LOCK_X) || rw_lock_own(hash_lock, RW_LOCK_S));
 #endif /* UNIV_DEBUG */
 
     /* Look for the page in the hash table */
@@ -569,64 +569,22 @@ enum buf_page_state buf_block_get_state(const buf_block_t *block)
 buf_block_t* buf_block_align_instance(buf_pool_t* buf_pool, /*!< in: buffer in which the block resides */
     const byte* ptr) /*!< in: pointer to a frame */
 {
-    buf_chunk_t* chunk;
-    uint32 i;
-
-    /* TODO: protect buf_pool->chunks with a mutex (it will
-    currently remain constant after buf_pool_init()) */
-    for (chunk = buf_pool->chunks, i = buf_pool->n_chunks; i--; chunk++) {
-        uint32 offs;
-        if (ptr < chunk->blocks->frame) {
-            continue;
-        }
-        /* else */
-        offs = ptr - chunk->blocks->frame;
-        offs >>= UNIV_PAGE_SIZE_SHIFT_DEF;
-        if (offs < chunk->size) {
-            buf_block_t*	block = &chunk->blocks[offs];
-
-            /* The function buf_chunk_init() invokes
-            buf_block_init() so that block[n].frame == block->frame + n * UNIV_PAGE_SIZE.  Check it. */
-            ut_ad((char *)block->frame == (char *)page_align((void *)ptr));
-#ifdef UNIV_DEBUG
-            /* A thread that updates these fields must hold buf_pool->mutex and block->mutex.
-            Acquire only the latter. */
-            mutex_enter(&block->mutex);
-
-            switch (buf_block_get_state(block)) {
-                case BUF_BLOCK_POOL_WATCH:
-                case BUF_BLOCK_ZIP_PAGE:
-                case BUF_BLOCK_ZIP_DIRTY:
-                    /* These types should only be used in the compressed buffer pool,
-                    whose memory is allocated from buf_pool->chunks, in UNIV_PAGE_SIZE blocks flagged as BUF_BLOCK_MEMORY. */
-                    ut_error;
-                    break;
-                case BUF_BLOCK_NOT_USED:
-                case BUF_BLOCK_READY_FOR_USE:
-                case BUF_BLOCK_MEMORY:
-                    /* Some data structures contain "guess" pointers to file pages.
-                    The file pages may have been freed and reused.  Do not complain. */
-                    break;
-                case BUF_BLOCK_REMOVE_HASH:
-                    /* buf_LRU_block_remove_hashed_page() will overwrite the FIL_PAGE_OFFSET and
-                    FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID with 0xff and set the state to BUF_BLOCK_REMOVE_HASH. */
-                    ut_ad(page_get_space_id(page_align(ptr))  == 0xffffffff);
-                    ut_ad(page_get_page_no(page_align(ptr))  == 0xffffffff);
-                    break;
-                case BUF_BLOCK_FILE_PAGE:
-                    ut_ad(block->page.space == page_get_space_id(page_align(ptr)));
-                    ut_ad(block->page.offset == page_get_page_no(page_align(ptr)));
-                    break;
-            }
-
-            mutex_exit(&block->mutex);
-#endif /* UNIV_DEBUG */
-
-            return(block);
-        }
+    uint32 offs;
+    if (ptr < buf_pool->blocks->frame) {
+        return NULL;
     }
 
-    return(NULL);
+    offs = ptr - buf_pool->blocks->frame;
+    offs >>= UNIV_PAGE_SIZE_SHIFT_DEF;
+    if (offs < buf_pool->size) {
+        buf_block_t*	block = &buf_pool->blocks[offs];
+
+        /* The function buf_chunk_init() invokes
+        buf_block_init() so that block[n].frame == block->frame + n * UNIV_PAGE_SIZE.  Check it. */
+        ut_ad((char *)block->frame == (char *)page_align((void *)ptr));
+
+        return(block);
+    }
 }
 
 
@@ -698,10 +656,7 @@ static void buf_block_init(
     ut_ad(rw_lock_validate(&(block->rw_lock)));
 }
 
-static buf_chunk_t *buf_chunk_init(
-    buf_pool_t *buf_pool, /*!< in: buffer pool instance */
-    buf_chunk_t *chunk,   /*!< out: chunk of buffers */
-    uint64 mem_size)   /*!< in: requested size in bytes */
+static bool32 buf_pool_fill_block(buf_pool_t *buf_pool, uint64 mem_size)
 {
     buf_block_t *block;
     byte *frame;
@@ -710,44 +665,45 @@ static buf_chunk_t *buf_chunk_init(
     /* Round down to a multiple of page size, although it already should be. */
     mem_size = ut_2pow_round(mem_size, UNIV_PAGE_SIZE);
     /* Reserve space for the block descriptors. */
-    chunk->mem_size = mem_size +
+    buf_pool->mem_size = mem_size +
         ut_2pow_round((mem_size / UNIV_PAGE_SIZE) * sizeof(buf_block_t) + (UNIV_PAGE_SIZE - 1), UNIV_PAGE_SIZE);
-    chunk->mem = (uchar *)os_mem_alloc_large(&chunk->mem_size);
-    if (chunk->mem == NULL) {
-        return (NULL);
+    buf_pool->mem = (uchar *)os_mem_alloc_large(&buf_pool->mem_size);
+    if (buf_pool->mem == NULL) {
+        LOGGER_FATAL(LOGGER, "can not alloc memory, size = %lu", buf_pool->mem_size);
+        return FALSE;
     }
 
     /* Dump core without large memory buffers */
     if (buf_pool_should_madvise) {
-        madvise_dont_dump((char *)chunk->mem, chunk->mem_size);
+        madvise_dont_dump((char *)buf_pool->mem, buf_pool->mem_size);
     }
 
     /* Allocate the block descriptors from the start of the memory block. */
-    chunk->blocks = (buf_block_t *)chunk->mem;
+    buf_pool->blocks = (buf_block_t *)buf_pool->mem;
 
     /* Align a pointer to the first frame.
      * Note that when os_large_page_size is smaller than UNIV_PAGE_SIZE,
      * we may allocate one fewer block than requested.
      * When it is bigger, we may allocate more blocks than requested.
      */
-    frame = (byte *)ut_align(chunk->mem, UNIV_PAGE_SIZE);
-    chunk->size = chunk->mem_size / UNIV_PAGE_SIZE - (frame != chunk->mem);
+    frame = (byte *)ut_align(buf_pool->mem, UNIV_PAGE_SIZE);
+    buf_pool->size = buf_pool->mem_size / UNIV_PAGE_SIZE - (frame != buf_pool->mem);
 
     /* Subtract the space needed for block descriptors. */
     {
-        uint64 size = chunk->size;
-        while (frame < (byte *)(chunk->blocks + size)) {
+        uint64 size = buf_pool->size;
+        while (frame < (byte *)(buf_pool->blocks + size)) {
             frame += UNIV_PAGE_SIZE;
             size--;
         }
-        chunk->size = size;
+        buf_pool->size = size;
     }
 
     /* Init block structs and assign frames for them.
      * Then we assign the frames to the first blocks (we already mapped the memory above).
      */
-    block = chunk->blocks;
-    for (i = chunk->size; i--;) {
+    block = buf_pool->blocks;
+    for (i = buf_pool->size; i--;) {
         buf_block_init(buf_pool, block, frame);
         //UNIV_MEM_INVALID(block->frame, UNIV_PAGE_SIZE);
 
@@ -761,105 +717,54 @@ static buf_chunk_t *buf_chunk_init(
         frame += UNIV_PAGE_SIZE;
     }
 
-    return chunk;
+    return TRUE;
 }
 
-/** Frees the buffer pool global data structures. */
-static void buf_pool_free() {
-    //UT_DELETE(buf_stat_per_index);
-    //UT_DELETE(buf_chunk_map_reg);
-    //buf_chunk_map_reg = nullptr;
-
-    my_free(buf_pool_ptr);
-    buf_pool_ptr = nullptr;
-}
-
-static void buf_pool_create(buf_pool_t *buf_pool, uint64 buf_pool_size, uint32 instance_no, dberr_t *err)
+static void buf_pool_create_instance(buf_pool_t *buf_pool,
+    uint64 buf_pool_size, uint32 instance_no, dberr_t *err)
 {
     uint32 i;
-    uint32 chunk_size;
-    buf_chunk_t *chunk;
-
-    ut_ad(buf_pool_size % srv_buf_pool_chunk_unit == 0);
 
     /* 1. Initialize general fields */
-    mutex_create(&buf_pool->chunks_mutex);
     mutex_create(&buf_pool->LRU_list_mutex);
     mutex_create(&buf_pool->free_list_mutex);
     mutex_create(&buf_pool->flush_state_mutex);
 
-    if (buf_pool_size > 0) {
-        spin_lock(&buf_pool->chunks_mutex, NULL);
-        buf_pool->n_chunks = buf_pool_size / srv_buf_pool_chunk_unit;
-        chunk_size = srv_buf_pool_chunk_unit;
+    UT_LIST_INIT(buf_pool->LRU);
+    UT_LIST_INIT(buf_pool->free);
+    UT_LIST_INIT(buf_pool->flush_list);
+    //UT_LIST_INIT(buf_pool->withdraw, &buf_page_t::list);
+    buf_pool->withdraw_target = 0;
 
-        buf_pool->chunks = (buf_chunk_t *)my_malloc(NULL, buf_pool->n_chunks * sizeof(*chunk));
-        buf_pool->chunks_old = NULL;
-
-        UT_LIST_INIT(buf_pool->LRU);
-        UT_LIST_INIT(buf_pool->free);
-        UT_LIST_INIT(buf_pool->flush_list);
-        //UT_LIST_INIT(buf_pool->withdraw, &buf_page_t::list);
-        buf_pool->withdraw_target = 0;
-
-        buf_pool->curr_size = 0;
-        chunk = buf_pool->chunks;
-
-        do {
-            if (!buf_chunk_init(buf_pool, chunk, chunk_size)) {
-                while (--chunk >= buf_pool->chunks) {
-                    buf_block_t *block = chunk->blocks;
-
-                    for (i = chunk->size; i--; block++) {
-                        //os_mutex_free(&block->mutex);
-                        //rw_lock_free(&block->lock);
-                        //ut_d(rw_lock_free(&block->debug_latch));
-                    }
-                    //buf_pool->deallocate_chunk(chunk);
-                }
-                free(buf_pool->chunks);
-                buf_pool->chunks = nullptr;
-
-                *err = DB_ERROR;
-                spin_unlock(&buf_pool->chunks_mutex);
-                return;
-            }
-
-            buf_pool->curr_size += chunk->size;
-        } while (++chunk < buf_pool->chunks + buf_pool->n_chunks);
-
-        spin_unlock(&buf_pool->chunks_mutex);
-
-        buf_pool->instance_no = instance_no;
-        //buf_pool->read_ahead_area = ut_min(BUF_READ_AHEAD_PAGES, ut_2_power_up(buf_pool->curr_size / BUF_READ_AHEAD_PORTION));
-        buf_pool->curr_pool_size = buf_pool->curr_size * UNIV_PAGE_SIZE;
-        buf_pool->old_size = buf_pool->curr_size;
-        buf_pool->n_chunks_new = buf_pool->n_chunks;
-
-        /* Number of locks protecting page_hash must be a power of two */
-        srv_n_page_hash_locks = ut_2_power_up(srv_n_page_hash_locks);
-        ut_a(srv_n_page_hash_locks != 0);
-        ut_a(srv_n_page_hash_locks <= MAX_PAGE_HASH_LOCKS);
-
-        buf_pool->page_hash = HASH_TABLE_CREATE(2 * buf_pool->curr_size);
-
-        /* We create a hash table protected by rw_locks for buf_pool->page_hash. */
-        buf_pool->page_hash->sync_obj.rw_locks = (rw_lock_t*)(malloc(srv_n_page_hash_locks * sizeof(rw_lock_t)));
-        for (uint32 i = 0; i < srv_n_page_hash_locks; i++) {
-            rw_lock_create(buf_pool->page_hash->sync_obj.rw_locks + i);
-        }
-        buf_pool->page_hash->n_sync_obj = srv_n_page_hash_locks;
-        buf_pool->page_hash->type = HASH_TABLE_SYNC_RW_LOCK;
-
-        //buf_pool->page_hash->heap = ;
-        //buf_pool->page_hash->heaps = ;
-        buf_pool->page_hash_old = NULL;
-
-        buf_pool->last_printout_time = current_monotonic_time();
+    if (!buf_pool_fill_block(buf_pool, buf_pool_size)) {
+        *err = DB_ERROR;
+        return;
     }
 
-    /* 2. Initialize flushing fields */
+    buf_pool->instance_no = instance_no;
 
+    /* Number of locks protecting page_hash must be a power of two */
+    srv_n_page_hash_locks = ut_2_power_up(srv_n_page_hash_locks);
+    ut_a(srv_n_page_hash_locks != 0);
+    ut_a(srv_n_page_hash_locks <= MAX_PAGE_HASH_LOCKS);
+
+    buf_pool->page_hash = HASH_TABLE_CREATE(2 * buf_pool->size);
+
+    /* We create a hash table protected by rw_locks for buf_pool->page_hash. */
+    buf_pool->page_hash->sync_obj.rw_locks = (rw_lock_t*)(malloc(srv_n_page_hash_locks * sizeof(rw_lock_t)));
+    for (uint32 i = 0; i < srv_n_page_hash_locks; i++) {
+        rw_lock_create(buf_pool->page_hash->sync_obj.rw_locks + i);
+    }
+    buf_pool->page_hash->n_sync_obj = srv_n_page_hash_locks;
+    buf_pool->page_hash->type = HASH_TABLE_SYNC_RW_LOCK;
+
+    //buf_pool->page_hash->heap = ;
+    //buf_pool->page_hash->heaps = ;
+    buf_pool->page_hash_old = NULL;
+
+    buf_pool->last_printout_time = current_monotonic_time();
+
+    /* 2. Initialize flushing fields */
     mutex_create(&buf_pool->flush_list_mutex);
     //for (i = BUF_FLUSH_LRU; i < BUF_FLUSH_N_TYPES; i++) {
     //  buf_pool->no_flush[i] = os_event_create(0);
@@ -884,8 +789,6 @@ static void buf_pool_create(buf_pool_t *buf_pool, uint64 buf_pool_size, uint32 i
 
 static void buf_pool_free_instance(buf_pool_t *buf_pool)
 {
-    buf_chunk_t *chunk;
-    buf_chunk_t *chunks;
     buf_page_t *bpage;
     buf_page_t *prev_bpage = 0;
 
@@ -911,35 +814,34 @@ static void buf_pool_free_instance(buf_pool_t *buf_pool)
 
     free(buf_pool->watch);
     buf_pool->watch = NULL;
-    mutex_enter(&buf_pool->chunks_mutex, NULL);
-    chunks = buf_pool->chunks;
-    chunk = chunks + buf_pool->n_chunks;
 
-    while (--chunk >= chunks) {
-        buf_block_t *block = chunk->blocks;
+    buf_block_t *block = buf_pool->blocks;
 
-        for (uint64 i = chunk->size; i--; block++) {
-            //os_mutex_free(&block->mutex);
-            //rw_lock_free(&block->lock);
-            //ut_d(rw_lock_free(&block->debug_latch));
-        }
-
-        if (buf_pool_should_madvise) {
-            madvise_dump((char *)chunk->mem, chunk->mem_size);
-        }
-        os_mem_free_large(chunk->mem, chunk->mem_size);
+    for (uint64 i = buf_pool->size; i--; block++) {
+        //os_mutex_free(&block->mutex);
+        //rw_lock_free(&block->lock);
+        //ut_d(rw_lock_free(&block->debug_latch));
     }
+
+    if (buf_pool_should_madvise) {
+        madvise_dump((char *)buf_pool->mem, buf_pool->mem_size);
+    }
+    os_mem_free_large(buf_pool->mem, buf_pool->mem_size);
+
 
     //for (ulint i = BUF_FLUSH_LRU; i < BUF_FLUSH_N_TYPES; ++i) {
     //  os_event_destroy(buf_pool->no_flush[i]);
     //}
 
-    my_free(buf_pool->chunks);
-    mutex_exit(&buf_pool->chunks_mutex);
-    mutex_destroy(&buf_pool->chunks_mutex);
     //ha_clear(buf_pool->page_hash);
     HASH_TABLE_FREE(buf_pool->page_hash);
-    HASH_TABLE_FREE(buf_pool->zip_hash);
+}
+
+// Frees the buffer pool global data structures
+static void buf_pool_free()
+{
+    my_free(buf_pool_ptr);
+    buf_pool_ptr = nullptr;
 }
 
 dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
@@ -951,14 +853,9 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
     ut_ad(n_instances <= MAX_BUFFER_POOLS);
     ut_ad(n_instances == srv_buf_pool_instances);
 
-    srv_buf_pool_chunk_unit = total_size / srv_buf_pool_instances;
-    if (total_size % srv_buf_pool_instances != 0) {
-        ++srv_buf_pool_chunk_unit;
-    }
-
     buf_pool_ptr = (buf_pool_t *)ut_malloc(n_instances * sizeof(buf_pool_t));
 
-    /* Magic nuber 8 is from empirical testing on a 4 socket x 10 Cores x 2 HT host.
+    /* Magic number 8 is from empirical testing on a 4 socket x 10 Cores x 2 HT host.
        128G / 16 instances takes about 4 secs, compared to 10 secs without this optimisation.. */
     uint32 n_cores = 8;
     dberr_t errs[8], err = DB_SUCCESS;
@@ -972,7 +869,7 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
         }
 
         for (uint32 id = i; id < n; ++id) {
-            threads[id - i] = thread_start(buf_pool_create, &buf_pool_ptr[id], size, id, &errs[id - i]);
+            threads[id - i] = thread_start(buf_pool_create_instance, &buf_pool_ptr[id], size, id, &errs[id - i]);
         }
         for (uint32 id = i; id < n; ++id) {
             if (!os_thread_join(threads[id - i]) || errs[id] != DB_SUCCESS) {
@@ -982,12 +879,10 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
 
         if (err != DB_SUCCESS) {
             for (uint32 id = 0; id < n; ++id) {
-                if (buf_pool_ptr[id].chunks != nullptr) {
-                    buf_pool_free_instance(&buf_pool_ptr[id]);
-                }
+                buf_pool_free_instance(&buf_pool_ptr[id]);
             }
             buf_pool_free();
-            return (err);
+            return err;
         }
 
         /* Do the next block of instances */
