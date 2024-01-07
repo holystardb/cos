@@ -64,6 +64,94 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
 }
 
 
+/*******************************************************************//**
+Initializes the old blocks pointer in the LRU list. This function should be
+called when the LRU list grows to BUF_LRU_OLD_MIN_LEN length. */
+static void buf_LRU_old_init(buf_pool_t *buf_pool)
+{
+	buf_page_t*	bpage;
+
+	ut_ad(mutex_own(&buf_pool->mutex));
+	ut_a(UT_LIST_GET_LEN(buf_pool->LRU) == BUF_LRU_OLD_MIN_LEN);
+
+	/* We first initialize all blocks in the LRU list as old and then use
+	the adjust function to move the LRU_old pointer to the right
+	position */
+
+	for (bpage = UT_LIST_GET_LAST(buf_pool->LRU); bpage != NULL;
+	     bpage = UT_LIST_GET_PREV(LRU, bpage)) {
+		ut_ad(bpage->in_LRU_list);
+		ut_ad(buf_page_in_file(bpage));
+		/* This loop temporarily violates the
+		assertions of buf_page_set_old(). */
+		bpage->old = TRUE;
+	}
+
+	buf_pool->LRU_old = UT_LIST_GET_FIRST(buf_pool->LRU);
+	buf_pool->LRU_old_len = UT_LIST_GET_LEN(buf_pool->LRU);
+
+	buf_LRU_old_adjust_len(buf_pool);
+}
+
+
+/******************************************************************//**
+Adds a block to the LRU list. Please make sure that the zip_size is
+already set into the page zip when invoking the function, so that we
+can get correct zip_size from the buffer page when adding a block
+into LRU */
+void buf_LRU_add_block_low(
+	buf_page_t*	bpage,	/*!< in: control block */
+	bool32		old)	/*!< in: TRUE if should be put to the old blocks
+				in the LRU list, else put to the start; if the
+				LRU list is very short, the block is added to
+				the start, regardless of this parameter */
+{
+	buf_pool_t*	buf_pool = buf_pool_from_bpage(bpage);
+
+	ut_ad(buf_pool);
+	ut_ad(bpage);
+	ut_ad(mutex_own(&buf_pool->mutex));
+
+	ut_a(buf_page_in_file(bpage));
+	ut_ad(!bpage->in_LRU_list);
+
+	if (!old || (UT_LIST_GET_LEN(buf_pool->LRU) < BUF_LRU_OLD_MIN_LEN)) {
+
+		UT_LIST_ADD_FIRST(LRU, buf_pool->LRU, bpage);
+
+		bpage->freed_page_clock = buf_pool->freed_page_clock;
+	} else {
+#ifdef UNIV_LRU_DEBUG
+		/* buf_pool->LRU_old must be the first item in the LRU list
+		whose "old" flag is set. */
+		ut_a(buf_pool->LRU_old->old);
+		ut_a(!UT_LIST_GET_PREV(LRU, buf_pool->LRU_old)
+		     || !UT_LIST_GET_PREV(LRU, buf_pool->LRU_old)->old);
+		ut_a(!UT_LIST_GET_NEXT(LRU, buf_pool->LRU_old)
+		     || UT_LIST_GET_NEXT(LRU, buf_pool->LRU_old)->old);
+#endif /* UNIV_LRU_DEBUG */
+		UT_LIST_ADD_AFTER(LRU, buf_pool->LRU, buf_pool->LRU_old, bpage);
+		buf_pool->LRU_old_len++;
+	}
+
+	ut_d(bpage->in_LRU_list = TRUE);
+
+    buf_pool->stat.LRU_bytes += UNIV_PAGE_SIZE;
+
+	if (UT_LIST_GET_LEN(buf_pool->LRU) > BUF_LRU_OLD_MIN_LEN) {
+		ut_ad(buf_pool->LRU_old);
+		/* Adjust the length of the old block list if necessary */
+		buf_page_set_old(bpage, old);
+		buf_LRU_old_adjust_len(buf_pool);
+	} else if (UT_LIST_GET_LEN(buf_pool->LRU) == BUF_LRU_OLD_MIN_LEN) {
+		/* The LRU list is now long enough for LRU_old to become defined: init it */
+		buf_LRU_old_init(buf_pool);
+	} else {
+		buf_page_set_old(bpage, buf_pool->LRU_old != NULL);
+	}
+}
+
+
 /** Try to free a block.  If bpage is a descriptor of a compressed-only
 page, the descriptor object will be freed as well.
 NOTE: this function may temporarily release and relock the
@@ -273,7 +361,7 @@ static bool buf_LRU_free_from_common_LRU_list(buf_pool_t *buf_pool, bool scan_al
       ut_ad(bpage->in_LRU_list);
   
       //accessed = buf_page_is_accessed(bpage);
-      //freed = buf_LRU_free_page(bpage, true);
+      freed = buf_LRU_free_page(bpage);
       if (freed && !accessed) {
           /* Keep track of pages that are evicted without
           ever being accessed. This gives us a measure of

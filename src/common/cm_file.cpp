@@ -91,7 +91,7 @@ try_again:
 #endif
 
     if (*file == OS_FILE_INVALID_HANDLE) {
-        if (os_file_handle_error(*file, name)) {
+        if (os_file_handle_error(name, "OPEN", FALSE)) {
             goto try_again;
         }
         success = FALSE;
@@ -117,7 +117,7 @@ bool32 os_close_file(os_file_t file)
     }
 #endif
 
-    os_file_handle_error(file, NULL);
+    os_file_handle_error(NULL, "CLOSE", FALSE);
 
     return FALSE;
 }
@@ -191,7 +191,7 @@ try_again:
 error_handling:
 #endif
 
-    retry = os_file_handle_error(file, NULL); 
+    retry = os_file_handle_error(NULL, "READ", FALSE); 
     if (retry) {
         goto try_again;
     }
@@ -246,7 +246,7 @@ try_again:
 error_handling:
 #endif
 
-    retry = os_file_handle_error(file, NULL); 
+    retry = os_file_handle_error(NULL, "WRITE", TRUE); 
     if (retry) {
         goto try_again;
     }
@@ -303,7 +303,7 @@ bool32 os_fdatasync_file(os_file_t file)
 
 #endif
 
-    os_file_handle_error(file, NULL);
+    os_file_handle_error(NULL, "SYNC", TRUE);
 
     return FALSE;
 }
@@ -410,7 +410,7 @@ uint32 os_file_get_last_error()
 }
 
 /* out: TRUE if we should retry the operation */
-bool32 os_file_handle_error(os_file_t file, char *name)
+bool32 os_file_handle_error(const char *name, const char* operation, bool32 should_exit)
 {
     uint32 err;
 
@@ -418,25 +418,23 @@ bool32 os_file_handle_error(os_file_t file, char *name)
 
     err = os_file_get_last_error();
     if (err == OS_FILE_DISK_FULL) {
-        fprintf(stderr, "\n");
-        if (name) {
-            fprintf(stderr, "Encountered a problem with file %s.\n", name);
-        }
-        fprintf(stderr,
-           "Cannot continue operation.\n"
-           "Disk is full. Try to clean the disk to free space.\n"
-           "Delete a possible created file and restart.\n");
-        exit(1);
+        //LOG_ERROR(LOGGER,
+        //    "File %s: '%s' disk is full, Cannot continue operation",
+        //    name ? name : "(unknown)", operation, err);
+        //os_has_said_disk_full = TRUE;
+        return FALSE;
     } else if (err == OS_FILE_AIO_RESOURCES_RESERVED) {
         return TRUE;
     } else if (err == OS_FILE_ALREADY_EXISTS) {
         return FALSE;
     } else {
-        if (name) {
-            fprintf(stderr, "File name %s\n", name);
+        //LOG_ERROR(LOGGER,
+        //    "File %s: '%s' returned OS error %d, Cannot continue operation",
+        //    name ? name : "(unknown)", operation, err);
+
+        if (should_exit) {
+            exit(1);
         }
-        fprintf(stderr, "Cannot continue operation.\n");
-        exit(1);
     }
 
     return FALSE;
@@ -468,7 +466,7 @@ bool32 os_file_extend(char *file_name, os_file_t file, uint64 extend_size)
 
 error_handling:
 
-    os_file_handle_error(file, file_name); 
+    os_file_handle_error(file_name, "EXTEND", TRUE); 
 
     return FALSE;
 }
@@ -650,9 +648,6 @@ int32 get_file_size(char *file_name, long long *file_byte_size)
 /*================================================ aio ==================================================*/
 
 
-
-#define AIO_GET_EVENTS_MAX_COUNT     256
-
 #ifndef __WIN__
 
 typedef int (*os_aio_setup)(int max_events, io_context_t *ctx);
@@ -660,7 +655,7 @@ typedef int (*os_aio_destroy)(io_context_t ctx);
 typedef int (*os_aio_submit)(io_context_t ctx, long nr, struct iocb *ios[]);
 typedef int (*os_aio_cancel)(io_context_t ctx, struct iocb *iocb, io_event_t *event);
 typedef int (*os_aio_getevents)(io_context_t ctx, long min_nr, long nr,
-    io_event_t *events, struct timespec *timeout);
+                                      io_event_t *events, struct timespec *timeout);
 
 static os_aio_setup aio_setup_func = NULL;
 static os_aio_destroy aio_destroy_func = NULL;
@@ -734,16 +729,18 @@ loop:
     UT_LIST_REMOVE(list_node, aio_array->free_slots, slot);
     mutex_exit(&aio_array->mutex);
 
+    slot->file      = file;
+    slot->len       = len;
+#ifdef UNIV_DEBUG
     slot->is_used   = TRUE;
     slot->used_time = time(NULL);
     slot->message1  = message1;
     slot->message2  = message2;
-    slot->file      = file;
     slot->name      = name;
-    slot->len       = len;
     slot->type      = type;
     slot->buf       = (byte*)buf;
     slot->offset    = offset;
+#endif
 
 #ifdef __WIN__
     control = &slot->control;
@@ -933,10 +930,6 @@ static bool32 os_aio_linux_submit(os_aio_context_t* aio_context, os_aio_slot_t* 
     iocb = &slot->control;
     ret = aio_submit_func(aio_context, 1, &iocb);
 
-    fprintf(stderr,
-        "io_submit[%c] ret[%d]: slot[%p] ctx[%p]\n",
-        (slot->type == OS_FILE_WRITE) ? 'w' : 'r', ret, slot, aio_context, (ulong));
-
     /* io_submit returns number of successfully queued requests or -errno. */
     if (unlikely(ret != 1)) {
         errno = -ret;
@@ -1033,7 +1026,7 @@ err_exit:
 //Waits for an aio operation to complete.
 int os_file_aio_wait(os_aio_context_t* aio_context, uint32 microseconds)
 {
-    int ret;
+    int            ret;
 
 #ifdef __WIN__
     ret = os_aio_windows_handle(aio_context, microseconds);
@@ -1090,6 +1083,51 @@ void os_aio_array_free_context(os_aio_context_t* aio_context)
     if (aio_context_len == 0) {
         os_event_set(aio_array->aio_context_event);
     }
+}
+
+void os_aio_context_enter_mutex(os_aio_context_t* aio_context)
+{
+    mutex_enter(&aio_context->mutex, NULL);
+}
+
+void os_aio_context_exit_mutex(os_aio_context_t* aio_context)
+{
+    ut_a(mutex_own(&aio_context->mutex));
+
+    mutex_exit(&aio_context->mutex);
+}
+
+uint32 os_aio_context_get_slot_count(os_aio_context_t* aio_context)
+{
+    ut_a(mutex_own(&aio_context->mutex));
+
+    return UT_LIST_GET_LEN(aio_context->slots);
+}
+
+os_aio_slot_t* os_aio_context_get_slot(os_aio_context_t* aio_context, uint index)
+{
+    os_aio_slot_t* slot;
+
+    ut_a(mutex_own(&aio_context->mutex));
+
+    slot = UT_LIST_GET_FIRST(aio_context->slots);
+    for (uint32 i = 0; i < index && slot != NULL; i++) {
+        slot = UT_LIST_GET_NEXT(list_node, slot);
+    }
+    return slot;
+}
+
+void os_aio_context_free_slots(os_aio_context_t* aio_context)
+{
+    os_aio_slot_t* slot;
+    os_aio_array_t* aio_array = aio_context->aio_array;
+
+    mutex_enter(&aio_context->mutex, NULL);
+    while ((slot = UT_LIST_GET_FIRST(aio_context->slots))) {
+        UT_LIST_REMOVE(list_node, aio_context->slots, slot);
+        os_aio_array_free_slot(aio_array, slot);
+    }
+    mutex_exit(&aio_context->mutex);
 }
 
 os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_context_count)
@@ -1157,7 +1195,7 @@ os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_con
         over->hEvent = slot->handle;
 #else
         memset(&slot->control, 0x0, sizeof(slot->control));
-        slot->n_bytes = 0;
+        //slot->n_bytes = 0;
         slot->ret = 0;
 #endif /* __WIN__ */
     }

@@ -9,6 +9,22 @@
 #include "knl_server.h"
 #include "guc.h"
 
+#ifndef HAVE_CHARSET_gb2312
+#define HAVE_CHARSET_gb2312
+#endif
+#ifndef HAVE_CHARSET_gbk
+#define HAVE_CHARSET_gbk
+#endif
+#ifndef HAVE_CHARSET_gb18030
+#define HAVE_CHARSET_gb18030
+#endif
+#ifndef HAVE_CHARSET_utf8
+#define HAVE_CHARSET_utf8
+#endif
+#ifndef HAVE_CHARSET_utf8mb4
+#define HAVE_CHARSET_utf8mb4
+#endif
+
 
 int main(int argc, const char *argv[])
 {

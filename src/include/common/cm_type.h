@@ -171,12 +171,12 @@ typedef __int64                 int64;
 
 #ifdef __WIN__
 typedef struct st_int128 {
-    int64   val1;
-    int64   val2;
+    int64   high;
+    int64   low;
 } int128;
 typedef struct st_uint128 {
-    uint64  val1;
-    uint64  val2;
+    uint64  high;
+    uint64  low;
 } uint128;
 #else
 typedef unsigned __int128       UINT128;

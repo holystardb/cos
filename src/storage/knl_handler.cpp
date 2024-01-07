@@ -221,19 +221,18 @@ bool32 knl_server_init_db(memory_area_t* marea)
         return DB_ERROR;
     }
 
-    fil_space_t *space = fil_space_create("system", SRV_SYSTEM_SPACE_ID, 0);
-    if (!space) {
+    fil_space_t *system_space = fil_space_create("system", SRV_SYSTEM_SPACE_ID, 0);
+    if (!system_space) {
         return DB_ERROR;
     }
-    fil_node_t *node = fil_node_create(space, srv_db_ctrl.system.name,
+    fil_node_t *node = fil_node_create(system_space, srv_db_ctrl.system.name,
         srv_db_ctrl.system.max_size / UNIV_PAGE_SIZE, UNIV_PAGE_SIZE, srv_db_ctrl.system.autoextend);
     if (!node) {
         return DB_ERROR;
     }
 
-
     mtr_start(&mtr);
-    fsp_header_init(SRV_SYSTEM_SPACE_ID, UNIV_PAGE_SIZE, &mtr);
+    fsp_header_init(system_space, srv_db_ctrl.system.size / UNIV_PAGE_SIZE, &mtr);
     mtr_commit(&mtr);
 
     uint64 lsn = mtr.end_lsn;

@@ -349,7 +349,7 @@ enum buf_flush_t {
 };
 
 struct buf_pool_t {
-    spinlock_t    lock;      /*!< Buffer pool mutex of this instance */
+    mutex_t    mutex;      /*!< Buffer pool mutex of this instance */
 
     mutex_t LRU_list_mutex;  /*!< LRU list mutex */
     mutex_t free_list_mutex; /*!< free and withdraw list mutex */

@@ -255,8 +255,6 @@ extern fil_addr_t   fil_addr_null;
 
 #define FIL_PAGE_SPACE_ID       34
 
-
-
 /* File page trailer */
 #define FIL_PAGE_END_LSN        8 /* this should be same as FIL_PAGE_LSN */
 #define FIL_PAGE_DATA_END       8
@@ -264,21 +262,47 @@ extern fil_addr_t   fil_addr_null;
 
 /*-----------------------------------------------------------------*/
 
+/** File page types (values of FIL_PAGE_TYPE) */
+#define FIL_PAGE_INDEX		17855	/*!< B-tree node */
+#define FIL_PAGE_UNDO_LOG	2	/*!< Undo log page */
+#define FIL_PAGE_INODE		3	/*!< Index node */
+#define FIL_PAGE_IBUF_FREE_LIST	4	/*!< Insert buffer free list */
+/* File page types introduced in MySQL/InnoDB 5.1.7 */
+#define FIL_PAGE_TYPE_ALLOCATED	0	/*!< Freshly allocated page */
+#define FIL_PAGE_IBUF_BITMAP	5	/*!< Insert buffer bitmap */
+#define FIL_PAGE_TYPE_SYS	6	/*!< System page */
+#define FIL_PAGE_TYPE_TRX_SYS	7	/*!< Transaction system data */
+#define FIL_PAGE_TYPE_FSP_HDR	8	/*!< File space header */
+#define FIL_PAGE_TYPE_XDES	9	/*!< Extent descriptor page */
+#define FIL_PAGE_TYPE_BLOB	10	/*!< Uncompressed BLOB page */
+#define FIL_PAGE_TYPE_ZBLOB	11	/*!< First compressed BLOB page */
+#define FIL_PAGE_TYPE_ZBLOB2	12	/*!< Subsequent compressed BLOB page */
+#define FIL_PAGE_TYPE_LAST	FIL_PAGE_TYPE_ZBLOB2
+					/*!< Last page type */
+
+
+
+/*-----------------------------------------------------------------*/
+
 #define M_FIL_NODE_NAME_LEN          64
 #define M_FIL_NODE_MAGIC_N           89389
 
+typedef struct st_fil_space fil_space_t;
+
 typedef struct st_fil_node {
     char        *name;
-    uint32       id;
     os_file_t    handle;
+    uint32       id;
     uint32       page_max_count;
-    uint32       page_hwm;
     uint32       page_size;
     uint32       magic_n;
     uint32       is_open : 1;   /* TRUE if file open */
     uint32       is_extend : 1;
-    uint32       n_pending : 1; /* count of pending i/o-ops on this file */
-    uint32       reserved : 29;
+    uint32       n_pending : 16; /* count of pending i/o-ops on this file */
+    uint32       reserved : 14;
+    os_aio_context_t *aio_context;
+    fil_space_t      *space;
+
     UT_LIST_NODE_T(struct st_fil_node) chain_list_node;
     UT_LIST_NODE_T(struct st_fil_node) lru_list_node; /* link field for the LRU list */
 } fil_node_t;
@@ -318,15 +342,15 @@ typedef struct st_fil_page {
     UT_LIST_NODE_T(struct st_fil_page) list_node;
 } fil_page_t;
 
-typedef struct st_fil_space {
+struct st_fil_space {
     char        *name;  /* space name */
     uint32       id;  /* space id */
     uint32       purpose;  // Space types
-
     uint32       size_in_header; /* FSP_SIZE in the tablespace header; 0 if not known yet */
     uint32       free_limit; /*!< contents of FSP_FREE_LIMIT */
     uint32       flags; /*!< tablespace flags; see fsp_flags_is_valid(), page_size_t(ulint) (constructor) */
-
+    bool32       is_autoextend;
+    uint32       autoextend_size;
     uint32       page_size;  /* space size in pages */
     /* number of reserved free extents for ongoing operations like B-tree page split */
     uint32       n_reserved_extents;
@@ -340,7 +364,7 @@ typedef struct st_fil_space {
     UT_LIST_BASE_NODE_T(fil_node_t) fil_nodes;
     UT_LIST_BASE_NODE_T(fil_page_t) free_pages;
     UT_LIST_NODE_T(struct st_fil_space) list_node;
-} fil_space_t;
+};
 
 #define M_FIL_SPACE_MAGIC_N         89472
 
@@ -352,9 +376,12 @@ typedef struct st_fil_system {
     fil_node_t        **fil_nodes;
     uint32              space_max_count;
     mutex_t             lock;
+    mutex_t             lru_mutex;
 
+    memory_area_t      *mem_area;
+    memory_pool_t      *mem_pool;
     memory_context_t   *mem_context;
-
+    os_aio_array_t     *aio_array;
 
     HASH_TABLE         *spaces; /*!< The hash table of spaces in the system; they are hashed on the space id */
     HASH_TABLE         *name_hash; /*!< hash table based on the space name */
@@ -443,7 +470,7 @@ rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags = NULL);
 
 bool32 fsp_is_system_temporary(space_id_t space_id);
 fsp_header_t* fsp_get_space_header(uint32 id, const page_size_t& page_size, mtr_t* mtr);
-void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr);
+void fsp_header_init(fil_space_t *space, uint32 size, mtr_t *mtr);
 
 bool fil_addr_is_null(fil_addr_t addr);
 

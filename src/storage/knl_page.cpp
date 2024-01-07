@@ -19,24 +19,16 @@ descriptor page, but used only in the first. */
 
 #define FSP_HEADER_OFFSET       FIL_PAGE_DATA    /* Offset of the space header within a file page */
 /*-------------------------------------*/
-#define FSP_NOT_USED            0    /* this field contained a value up to
-                    which we know that the modifications
-                    in the database have been flushed to the file space; not used now */
-#define FSP_SIZE                8    /* Current size of the space in pages */
-#define FSP_FREE_LIMIT          12    /* Minimum page number for which the
-                    free list has not been initialized: the pages >= this limit are, by definition free */
-#define FSP_LOWEST_NO_WRITE     16    /* The lowest page offset for which
-                    the page has not been written to disk
-                    (if it has been written, we know that
-                    the OS has really reserved the physical space for the page) */
+#define FSP_NOT_USED            0
+#define FSP_SIZE                8    /* page count, Current size of the space in pages */
+#define FSP_FREE_LIMIT          12   /* page number for High Water Mark */
+                                     /* Minimum page number for which the free list has not been initialized */
+#define FSP_LOWEST_NO_WRITE     16    /*  */
 #define FSP_FRAG_N_USED         20    /* number of used pages in the FSP_FREE_FRAG list */
 #define FSP_FREE                24    /* list of free extents */
-#define FSP_FREE_FRAG           (24 + FLST_BASE_NODE_SIZE)
-                    /* list of partially free extents not belonging to any segment */
-#define FSP_FULL_FRAG           (24 + 2 * FLST_BASE_NODE_SIZE)
-                    /* list of full extents not belonging to any segment */
-#define FSP_SEG_ID              (24 + 3 * FLST_BASE_NODE_SIZE)
-                    /* 8 bytes which give the first unused segment id */
+#define FSP_FREE_FRAG           (24 + FLST_BASE_NODE_SIZE)  /* list of partially free extents not belonging to any segment */
+#define FSP_FULL_FRAG           (24 + 2 * FLST_BASE_NODE_SIZE)  /* list of full extents not belonging to any segment */
+#define FSP_SEG_ID              (24 + 3 * FLST_BASE_NODE_SIZE)  /* 8 bytes which give the first unused segment id */
 #define FSP_SEG_INODES_FULL     (32 + 3 * FLST_BASE_NODE_SIZE)
                     /* list of pages containing segment headers, where all the segment inode slots are reserved */
 #define FSP_SEG_INODES_FREE     (32 + 4 * FLST_BASE_NODE_SIZE)

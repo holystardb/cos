@@ -1,5 +1,6 @@
 #include "knl_fsp.h"
 #include "cm_util.h"
+#include "cm_log.h"
 #include "knl_buf.h"
 #include "knl_mtr.h"
 #include "knl_flst.h"
@@ -7,14 +8,18 @@
 #include "knl_dict.h"
 
 /* The file system. This variable is NULL before the module is initialized. */
-fil_system_t* fil_system = NULL;
+fil_system_t     *fil_system = NULL;
 
 /** The null file address */
-fil_addr_t	fil_addr_null = {FIL_NULL, 0};
+fil_addr_t        fil_addr_null = {FIL_NULL, 0};
 
 
 
-uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset);
+static uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset);
+static bool32 fil_node_prepare_for_io(fil_node_t *node);
+static void fsp_space_modify_check(uint32 id, const mtr_t* mtr);
+static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr);
+
 
 byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
                   fil_addr_t addr, rw_lock_type_t rw_latch, mtr_t *mtr,
@@ -41,34 +46,33 @@ byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
 
 
 
-/**********************************************************************//**
-Sets a descriptor bit of a page. */
+
+// Sets a descriptor bit of a page.
 void xdes_set_bit(
-	xdes_t*	descr,	/*!< in: descriptor */
-	uint32	bit,	/*!< in: XDES_FREE_BIT or XDES_CLEAN_BIT */
-	uint32	offset,	/*!< in: page offset within extent: 0 ... FSP_EXTENT_SIZE - 1 */
-	bool32	val,	/*!< in: bit value */
-	mtr_t*	mtr)	/*!< in/out: mini-transaction */
+    xdes_t  *descr,  /*!< in: descriptor */
+    uint32   bit,    /*!< in: XDES_FREE_BIT or XDES_CLEAN_BIT */
+    uint32   offset, /*!< in: page offset within extent: 0 ... FSP_EXTENT_SIZE - 1 */
+    bool32   val,    /*!< in: bit value */
+    mtr_t   *mtr)    /*!< in/out: mini-transaction */
 {
-	uint32	index;
-	uint32	byte_index;
-	uint32	bit_index;
-	uint32	descr_byte;
+    uint32 index;
+    uint32 byte_index;
+    uint32 bit_index;
+    uint32 descr_byte;
 
-	ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
-	ut_ad((bit == XDES_FREE_BIT) || (bit == XDES_CLEAN_BIT));
-	ut_ad(offset < FSP_EXTENT_SIZE);
+    ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
+    ut_ad((bit == XDES_FREE_BIT) || (bit == XDES_CLEAN_BIT));
+    ut_ad(offset < FSP_EXTENT_SIZE);
 
-	index = bit + XDES_BITS_PER_PAGE * offset;
+    index = bit + XDES_BITS_PER_PAGE * offset;
 
-	byte_index = index / 8;
-	bit_index = index % 8;
+    byte_index = index / 8;
+    bit_index = index % 8;
 
-	descr_byte = mach_read_from_1(descr + XDES_BITMAP + byte_index);
-	descr_byte = ut_bit32_set_nth(descr_byte, bit_index, val);
+    descr_byte = mach_read_from_1(descr + XDES_BITMAP + byte_index);
+    descr_byte = ut_bit32_set_nth(descr_byte, bit_index, val);
 
-	mlog_write_uint32(descr + XDES_BITMAP + byte_index, descr_byte,
-			 MLOG_1BYTE, mtr);
+    mlog_write_uint32(descr + XDES_BITMAP + byte_index, descr_byte, MLOG_1BYTE, mtr);
 }
 
 /**********************************************************************//**
@@ -144,105 +148,84 @@ uint32 xdes_find_bit(
 	return(UINT32_UNDEFINED);
 }
 
-/**********************************************************************//**
-Returns the number of used pages in a descriptor.
-@return number of pages used */
-uint32 xdes_get_n_used(
-	const xdes_t*	descr,	/*!< in: descriptor */
-	mtr_t*		mtr)	/*!< in/out: mini-transaction */
+// Returns the number of used pages in a descriptor
+uint32 xdes_get_n_used(const xdes_t *descr, mtr_t *mtr)
 {
-	uint32	count	= 0;
+    uint32 count = 0;
 
-	ut_ad(descr && mtr);
-	ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
-	for (uint32 i = 0; i < FSP_EXTENT_SIZE; ++i) {
-		if (FALSE == xdes_mtr_get_bit(descr, XDES_FREE_BIT, i, mtr)) {
-			count++;
-		}
-	}
+    ut_ad(descr && mtr);
+    ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
 
-	return(count);
+    for (uint32 i = 0; i < FSP_EXTENT_SIZE; ++i) {
+        if (FALSE == xdes_mtr_get_bit(descr, XDES_FREE_BIT, i, mtr)) {
+            count++;
+        }
+    }
+
+    return(count);
 }
 
-/**********************************************************************//**
-Returns true if extent contains no used pages.
-@return TRUE if totally free */
-bool32 xdes_is_free(
-	const xdes_t*	descr,	/*!< in: descriptor */
-	mtr_t*		mtr)	/*!< in/out: mini-transaction */
+// Returns true if extent contains no used pages(totally free)
+bool32 xdes_is_free(const xdes_t *descr, mtr_t *mtr)
 {
-	if (0 == xdes_get_n_used(descr, mtr)) {
+    if (0 == xdes_get_n_used(descr, mtr)) {
+        return(TRUE);
+    }
 
-		return(TRUE);
-	}
-
-	return(FALSE);
+    return(FALSE);
 }
 
-/**********************************************************************//**
-Returns true if extent contains no free pages.
-@return TRUE if full */
-bool32 xdes_is_full(
-	const xdes_t*	descr,	/*!< in: descriptor */
-	mtr_t*		mtr)	/*!< in/out: mini-transaction */
+// Returns true if extent contains no free pages
+bool32 xdes_is_full(const xdes_t  *descr, mtr_t *mtr)
 {
-	if (FSP_EXTENT_SIZE == xdes_get_n_used(descr, mtr)) {
+    if (FSP_EXTENT_SIZE == xdes_get_n_used(descr, mtr)) {
+        return TRUE;
+    }
 
-		return(TRUE);
-	}
-
-	return(FALSE);
+    return FALSE;
 }
 
-/**********************************************************************//**
-Sets the state of an xdes. */
+// Sets the state of an xdes.
 void xdes_set_state(
-	xdes_t*	descr,	/*!< in/out: descriptor */
-	uint32	state,	/*!< in: state to set */
-	mtr_t*	mtr)	/*!< in/out: mini-transaction */
+    xdes_t  *descr,  /*!< in/out: descriptor */
+    uint32   state,  /*!< in: state to set */
+    mtr_t   *mtr)    /*!< in/out: mini-transaction */
 {
-	ut_ad(descr && mtr);
-	ut_ad(state >= XDES_FREE);
-	ut_ad(state <= XDES_FSEG);
-	ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
+    ut_ad(descr && mtr);
+    ut_ad(state >= XDES_FREE);
+    ut_ad(state <= XDES_FSEG);
+    ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
 
-	mlog_write_uint32(descr + XDES_STATE, state, MLOG_4BYTES, mtr);
+    mlog_write_uint32(descr + XDES_STATE, state, MLOG_4BYTES, mtr);
 }
 
-/**********************************************************************//**
-Gets the state of an xdes.
-@return state */
-uint32 xdes_get_state(
-	const xdes_t*	descr,	/*!< in: descriptor */
-	mtr_t*		mtr)	/*!< in/out: mini-transaction */
+// Gets the state of an xdes.
+uint32 xdes_get_state(const xdes_t *descr, mtr_t *mtr)
 {
-	uint32	state;
+    uint32  state;
 
-	ut_ad(descr && mtr);
-	ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
+    ut_ad(descr && mtr);
+    ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
 
-	state = mach_read_from_4(descr + XDES_STATE);
-	ut_ad(state - 1 < XDES_FSEG);
-	return(state);
+    state = mach_read_from_4(descr + XDES_STATE);
+    ut_ad(state - 1 < XDES_FSEG);
+    return state;
 }
 
-/**********************************************************************//**
-Inits an extent descriptor to the free and clean state. */
-void xdes_init(
-	xdes_t*	descr,	/*!< in: descriptor */
-	mtr_t*	mtr)	/*!< in/out: mini-transaction */
+// Inits an extent descriptor to the free and clean state.
+void xdes_init(xdes_t *descr, mtr_t  *mtr)
 {
-	uint32	i;
+    uint32  i;
 
-	ut_ad(descr && mtr);
-	ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
-	ut_ad((XDES_SIZE - XDES_BITMAP) % 4 == 0);
+    ut_ad(descr && mtr);
+    ut_ad(mtr_memo_contains_page(mtr, descr, MTR_MEMO_PAGE_SX_FIX));
+    ut_ad((XDES_SIZE - XDES_BITMAP) % 4 == 0);
 
-	for (i = XDES_BITMAP; i < XDES_SIZE; i += 4) {
-		mlog_write_uint32(descr + i, 0xFFFFFFFFUL, MLOG_4BYTES, mtr);
-	}
+    for (i = XDES_BITMAP; i < XDES_SIZE; i += 4) {
+        mlog_write_uint32(descr + i, 0xFFFFFFFFUL, MLOG_4BYTES, mtr);
+    }
 
-	xdes_set_state(descr, XDES_FREE, mtr);
+    xdes_set_state(descr, XDES_FREE, mtr);
 }
 
 uint32 xdes_calc_descriptor_index(
@@ -266,7 +249,7 @@ xdes_t* xdes_get_descriptor_with_space_hdr(
 	uint32		space,
 	uint32		offset,
 	mtr_t*		mtr,
-	bool		init_space = false,
+	bool32		init_space = FALSE,
 	buf_block_t**	desc_block = NULL)
 {
 	uint32	limit;
@@ -410,7 +393,9 @@ bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 space_max_
         return FALSE;
     }
 
-    fil_system->mem_context = mcontext_create(pool);
+    fil_system->spaces =  NULL;
+    fil_system->name_hash = NULL;
+    fil_system->mem_context = NULL;
     fil_system->open_pending_num = 0;
     fil_system->max_n_open = max_n_open;
     fil_system->space_max_count = space_max_count;
@@ -419,12 +404,49 @@ bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open, uint32 space_max_
     fil_system->fil_nodes = (fil_node_t **)((char *)fil_system + ut_align8(sizeof(fil_system_t)));
     memset(fil_system->fil_nodes, 0x00, fil_node_max_count * ut_align8(sizeof(fil_node_t *)));
     spin_lock_init(&fil_system->lock);
-    fil_system->spaces =  HASH_TABLE_CREATE(space_max_count);
-    fil_system->name_hash = HASH_TABLE_CREATE(space_max_count);
     UT_LIST_INIT(fil_system->fil_spaces);
     UT_LIST_INIT(fil_system->fil_node_lru);
 
+    fil_system->mem_area = pool->area;
+    fil_system->mem_context = mcontext_create(pool);
+    if (fil_system->mem_context == NULL) {
+        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create memory context");
+        goto err_exit;
+    }
+    fil_system->spaces =  HASH_TABLE_CREATE(space_max_count);
+    if (fil_system->spaces == NULL) {
+        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create spaces hashtable");
+        goto err_exit;
+    }
+    fil_system->name_hash = HASH_TABLE_CREATE(space_max_count);
+    if (fil_system->name_hash == NULL) {
+        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create name hashtable");
+        goto err_exit;
+    }
+
+    uint32 max_io_operation_count = 1024;
+    uint32 io_context_count = 256;
+    fil_system->aio_array = os_aio_array_create(max_io_operation_count, io_context_count);
+    if (fil_system->aio_array == NULL) {
+        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create aio array");
+        goto err_exit;
+    }
+
     return TRUE;
+
+err_exit:
+
+    if (fil_system->mem_context) {
+        mcontext_destroy(fil_system->mem_context);
+    }
+    if (fil_system->spaces) {
+        HASH_TABLE_FREE(fil_system->spaces);
+    }
+    if (fil_system->name_hash) {
+        HASH_TABLE_FREE(fil_system->name_hash);
+    }
+
+    return FALSE;
 }
 
 fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose)
@@ -432,42 +454,47 @@ fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose)
     fil_space_t *space, *tmp;
     uint32 size = ut_align8(sizeof(fil_space_t)) + (uint32)strlen(name) + 1;
     space = (fil_space_t *)my_malloc(fil_system->mem_context, size);
-    if (space) {
-        space->name = (char *)space + ut_align8(sizeof(fil_space_t));
-        strncpy_s(space->name, strlen(name) + 1, name, strlen(name));
-        space->name[strlen(name) + 1] = 0;
+    if (space == NULL) {
+        return NULL;
+    }
 
-        space->id = space_id;
-        space->purpose = purpose;
-        space->page_size = 0;
-        space->n_reserved_extents = 0;
-        space->magic_n = M_FIL_SPACE_MAGIC_N;
-        spin_lock_init(&space->lock);
-        rw_lock_create(&space->latch);
-        space->io_in_progress = 0;
-        UT_LIST_INIT(space->fil_nodes);
-        UT_LIST_INIT(space->free_pages);
+    space->name = (char *)space + ut_align8(sizeof(fil_space_t));
+    strncpy_s(space->name, strlen(name) + 1, name, strlen(name));
+    space->name[strlen(name) + 1] = 0;
 
-        spin_lock(&fil_system->lock, NULL);
-        tmp = UT_LIST_GET_FIRST(fil_system->fil_spaces);
-        while (tmp) {
-            if (strcmp(tmp->name, name) == 0 || tmp->id == space_id) {
-                break;
-            }
-            tmp = UT_LIST_GET_NEXT(list_node, tmp);
+    space->id = space_id;
+    space->size_in_header = 0;
+    space->free_limit = 0;
+    space->flags = 0;
+    space->purpose = purpose;
+    space->page_size = 0;
+    space->n_reserved_extents = 0;
+    space->magic_n = M_FIL_SPACE_MAGIC_N;
+    spin_lock_init(&space->lock);
+    rw_lock_create(&space->latch);
+    space->io_in_progress = 0;
+    UT_LIST_INIT(space->fil_nodes);
+    UT_LIST_INIT(space->free_pages);
+
+    spin_lock(&fil_system->lock, NULL);
+    tmp = UT_LIST_GET_FIRST(fil_system->fil_spaces);
+    while (tmp) {
+        if (strcmp(tmp->name, name) == 0 || tmp->id == space_id) {
+            break;
         }
-        if (tmp == NULL) {
-            UT_LIST_ADD_LAST(list_node, fil_system->fil_spaces, space);
-        }
-        HASH_INSERT(fil_space_t, hash, fil_system->spaces, space_id, space);
-        //HASH_INSERT(fil_space_t, name_hash, fil_system->name_hash, ut_fold_string(name), space);
+        tmp = UT_LIST_GET_NEXT(list_node, tmp);
+    }
+    if (tmp == NULL) {
+        UT_LIST_ADD_LAST(list_node, fil_system->fil_spaces, space);
+    }
+    HASH_INSERT(fil_space_t, hash, fil_system->spaces, space_id, space);
+    //HASH_INSERT(fil_space_t, name_hash, fil_system->name_hash, ut_fold_string(name), space);
 
-        spin_unlock(&fil_system->lock);
+    spin_unlock(&fil_system->lock);
 
-        if (tmp) { // name or spaceid already exists
-            my_free((void *)space);
-            space = NULL;
-        }
+    if (tmp) { // name or spaceid already exists
+        my_free((void *)space);
+        space = NULL;
     }
 
     return space;
@@ -529,52 +556,54 @@ fil_node_t* fil_node_create(fil_space_t *space, char *name, uint32 page_max_coun
     spin_unlock(&fil_system->lock);
 
     node = (fil_node_t *)my_malloc(fil_system->mem_context, ut_align8(sizeof(fil_node_t)) + (uint32)strlen(name) + 1);
-    if (node) {
-        node->name = (char *)node + ut_align8(sizeof(fil_node_t));
-        strcpy_s(node->name, strlen(name) + 1, name);
-        node->name[strlen(name) + 1] = 0;
-
-        node->page_max_count = page_max_count;
-        node->page_size = page_size;
-        node->page_hwm = 0;
-        node->handle = OS_FILE_INVALID_HANDLE;
-        node->magic_n = M_FIL_NODE_MAGIC_N;
-        node->is_open = 0;
-        node->is_extend = is_extend;
-        node->n_pending = 0;
-
-        spin_lock(&fil_system->lock, NULL);
-        for (uint32 i = 0; i < fil_system->fil_node_max_count; i++) {
-            if (fil_system->fil_nodes[i] == NULL) {
-                node->id = i;
-                fil_system->fil_nodes[i] = node;
-                break;
-            }
-        }
-        spin_unlock(&fil_system->lock);
-
-        spin_lock(&space->lock, NULL);
-        tmp = UT_LIST_GET_FIRST(space->fil_nodes);
-        while (tmp) {
-            if (strcmp(tmp->name, name) == 0) {
-                break;
-            }
-            tmp = UT_LIST_GET_NEXT(chain_list_node, tmp);
-        }
-        if (tmp == NULL) { // name not already exists
-            UT_LIST_ADD_LAST(chain_list_node, space->fil_nodes, node);
-        }
-        spin_unlock(&space->lock);
-
-        if (tmp) {
-            spin_lock(&fil_system->lock, NULL);
-            fil_system->fil_nodes[node->id] = NULL;
-            fil_system->fil_node_num--;
-            spin_unlock(&fil_system->lock);
-            my_free((void *)node);
-            node = NULL;
-        };
+    if (node == NULL) {
+        return NULL;
     }
+
+    node->space = space;
+    node->name = (char *)node + ut_align8(sizeof(fil_node_t));
+    strcpy_s(node->name, strlen(name) + 1, name);
+    node->name[strlen(name) + 1] = 0;
+
+    node->page_max_count = page_max_count;
+    node->page_size = page_size;
+    node->handle = OS_FILE_INVALID_HANDLE;
+    node->magic_n = M_FIL_NODE_MAGIC_N;
+    node->is_open = 0;
+    node->is_extend = is_extend;
+    node->n_pending = 0;
+
+    spin_lock(&fil_system->lock, NULL);
+    for (uint32 i = 0; i < fil_system->fil_node_max_count; i++) {
+        if (fil_system->fil_nodes[i] == NULL) {
+            node->id = i;
+            fil_system->fil_nodes[i] = node;
+            break;
+        }
+    }
+    spin_unlock(&fil_system->lock);
+
+    spin_lock(&space->lock, NULL);
+    tmp = UT_LIST_GET_FIRST(space->fil_nodes);
+    while (tmp) {
+        if (strcmp(tmp->name, name) == 0) {
+            break;
+        }
+        tmp = UT_LIST_GET_NEXT(chain_list_node, tmp);
+    }
+    if (tmp == NULL) { // name not already exists
+        UT_LIST_ADD_LAST(chain_list_node, space->fil_nodes, node);
+    }
+    spin_unlock(&space->lock);
+
+    if (tmp) {
+        spin_lock(&fil_system->lock, NULL);
+        fil_system->fil_nodes[node->id] = NULL;
+        fil_system->fil_node_num--;
+        spin_unlock(&fil_system->lock);
+        my_free((void *)node);
+        node = NULL;
+    };
 
     return node;
 }
@@ -682,53 +711,253 @@ bool32 fil_node_close(fil_space_t *space, fil_node_t *node)
 }
 
 
-bool32 fil_space_extend_datafile(fil_space_t *space, bool32 need_redo)
-{
-    fil_node_t *node;
-    uint32 total_count = 100;
-    uint32 count = 0;
+//bool32 fil_space_extend_datafile(fil_space_t *space, bool32 need_redo)
+//{
+//    fil_node_t *node;
+//    uint32 total_count = 100;
+//    uint32 count = 0;
+//
+//    if (total_count == 0) {
+//        return TRUE;
+//    }
+//
+//    spin_lock(&space->lock, NULL);
+//    node = UT_LIST_GET_FIRST(space->fil_nodes);
+//    while (node) {
+//        if (node->page_hwm < node->page_max_count) {
+//            if (node->page_max_count - node->page_hwm >= total_count) {
+//                node->page_hwm += total_count;
+//                count = total_count;
+//            } else {
+//                node->page_hwm = node->page_max_count;
+//                total_count -= node->page_max_count - node->page_hwm;
+//                count = node->page_max_count - node->page_hwm;
+//            }
+//            break;
+//        }
+//        node = UT_LIST_GET_NEXT(chain_list_node, node);
+//    }
+//    spin_unlock(&space->lock);
+//
+//    if (count > 0 && node) {
+//        
+//    }
+//
+//    return TRUE;
+//}
 
-    if (total_count == 0) {
-        return TRUE;
+
+static bool32 fil_space_extend_node(fil_space_t *space,
+    fil_node_t *node, uint32 page_hwm, uint32 size_increase, uint32 *actual_size)
+{
+    os_aio_context_t *aio_ctx = NULL;
+    uint32            timeout_seconds = 300;
+    memory_page_t    *page = NULL;
+    char             *buf;
+    uint32            size;
+    uint64            offset;
+
+    if (size_increase == 0) {
+        *actual_size = 0;
+        return TRUE ;
     }
 
-    spin_lock(&space->lock, NULL);
-    node = UT_LIST_GET_FIRST(space->fil_nodes);
-    while (node) {
-        if (node->page_hwm < node->page_max_count) {
-            if (node->page_max_count - node->page_hwm >= total_count) {
-                node->page_hwm += total_count;
-                count = total_count;
-            } else {
-                node->page_hwm = node->page_max_count;
-                total_count -= node->page_max_count - node->page_hwm;
-                count = node->page_max_count - node->page_hwm;
+    size = page_hwm + size_increase;
+    ut_a(node->page_max_count >= size);
+
+    if (!fil_node_prepare_for_io(node)) {
+        return FALSE;
+    }
+
+    aio_ctx = os_aio_array_alloc_context(fil_system->aio_array);
+    page = marea_alloc_page(fil_system->mem_area, UNIV_PAGE_SIZE, TRUE);
+    buf = MEM_PAGE_DATA_PTR(page);
+
+    for (uint32 loop = 0; loop < size_increase; loop += AIO_GET_EVENTS_MAX_COUNT) {
+        for (uint32 i = page_hwm + loop; i < page_hwm + loop + AIO_GET_EVENTS_MAX_COUNT; i++) {
+            offset = i * UNIV_PAGE_SIZE;
+            if (!os_file_aio_submit(aio_ctx, OS_FILE_WRITE, node->name, node->handle,
+                                    (void *)buf, UNIV_PAGE_SIZE, offset, NULL, NULL)) {
+                char errinfo[1024];
+                os_file_get_last_error_desc(errinfo, 1024);
+                LOGGER_FATAL(LOGGER,
+                    "fil_space_extend: fail to write file, name %s error %s",
+                    node->name, errinfo);
+                goto err_exit;
             }
-            break;
         }
+
+        int ret = os_file_aio_wait(aio_ctx, timeout_seconds * 1000000);
+        switch (ret) {
+        case OS_FILE_IO_COMPLETION:
+            break;
+        case OS_FILE_IO_TIMEOUT:
+            LOGGER_FATAL(LOGGER,
+                "fil_space_extend: IO timeout for writing file, name %s timeout %u seconds",
+                node->name, timeout_seconds);
+            goto err_exit;
+
+        default:
+            char err_info[1024];
+            os_file_get_last_error_desc(err_info, 1024);
+            LOGGER_FATAL(LOGGER,
+                "fil_space_extend: fail to write file, name %s error %s",
+                node->name, err_info);
+            goto err_exit;
+        }
+
+        os_aio_context_free_slots(aio_ctx);
+    }
+    os_aio_array_free_context(aio_ctx);
+
+    if (!os_fsync_file(node->handle)) {
+        char errinfo[1024];
+        os_file_get_last_error_desc(errinfo, 1024);
+        LOGGER_FATAL(LOGGER,
+            "fil_space_extend: fail to sync file, name %s error %s",
+            node->name, errinfo);
+        goto err_exit;
+    }
+
+    fil_node_complete_io(node, OS_FILE_WRITE);
+
+    *actual_size = size_increase;
+
+    return TRUE;
+
+err_exit:
+
+    fil_node_complete_io(node, OS_FILE_WRITE);
+
+    if (page) {
+        marea_free_page(fil_system->mem_area, page, UNIV_PAGE_SIZE);
+    }
+    if (aio_ctx) {
+        os_aio_array_free_context(aio_ctx);
+    }
+
+    return FALSE;
+}
+
+static bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size)
+{
+    fil_node_t       *node;
+    uint32            size_increase;
+
+    ut_ad(!srv_read_only_mode || fsp_is_system_temporary(space->id));
+
+    if (space->size_in_header >= size_after_extend) {
+        /* Space already big enough */
+        *actual_size = space->size_in_header;
+        return(TRUE);
+    }
+
+    size_increase = size_after_extend - space->size_in_header;
+    *actual_size = 0;
+
+    // find a node by space->size_in_header
+    uint32 page_hwm = space->size_in_header;
+    node = UT_LIST_GET_FIRST(space->fil_nodes);
+    for (; node != NULL && page_hwm >= node->page_max_count;) {
+        page_hwm -= node->page_max_count;
         node = UT_LIST_GET_NEXT(chain_list_node, node);
     }
-    spin_unlock(&space->lock);
+    // extend nodes
+    for (; node != NULL && size_increase > 0;) {
+        uint32 free_cur_node = node->page_max_count - page_hwm;
+        uint32 node_size_increase, node_actual_size;
+        if (size_increase <= free_cur_node) {
+            node_size_increase = size_increase;
+        } else {
+            node_size_increase = free_cur_node;
+        }
+        size_increase -= node_size_increase;
 
-    if (count > 0 && node) {
-        
+        bool32 ret = fil_space_extend_node(space,node,
+            page_hwm, node_size_increase, &node_actual_size);
+        if (!ret) {
+            goto err_exit;
+        }
+        page_hwm = 0;
+        *actual_size += node_actual_size;
+
+        node = UT_LIST_GET_NEXT(chain_list_node, node);
     }
 
     return TRUE;
+
+err_exit:
+
+    return FALSE;
+}
+
+static bool32 fsp_try_extend_data_file_with_pages(
+	fil_space_t*  space,
+	uint32        page_no,
+	fsp_header_t* header,
+	mtr_t*        mtr)
+{
+	bool32  success;
+	uint32  size, actual_size = 0;
+
+	ut_a(!is_system_tablespace(space->id));
+	ut_d(fsp_space_modify_check(space->id, mtr));
+
+	size = mach_read_from_4(header + FSP_SIZE);
+	ut_ad(size == space->size_in_header);
+
+	ut_a(page_no >= size);
+
+	success = fil_space_extend(space, page_no + 1, &actual_size);
+	/* The size may be less than we wanted if we ran out of disk space. */
+	mlog_write_uint32(header + FSP_SIZE, actual_size, MLOG_4BYTES, mtr);
+	space->size_in_header = actual_size;
+
+	return(success);
+}
+
+
+static uint32 fsp_get_autoextend_increment(fil_space_t* space)
+{
+    if (space->id >= FIL_USER_SPACE_ID) {
+        
+    } else if (space->id == FIL_SYSTEM_SPACE_ID) {
+    } else {
+    }
+    return FSP_EXTENT_SIZE * FSP_FREE_ADD;
 }
 
 // Tries to extend the last data file of a tablespace if it is auto-extending.
 static bool32 fsp_try_extend_data_file(
-	uint32*		actual_increase,/*!< out: actual increase in pages, where
-					we measure the tablespace size from
-					what the header field says; it may be
-					the actual file size rounded down to
-					megabyte */
-    fil_space_t* space,		/*!< in: space */
-	fsp_header_t*	header,		/*!< in/out: space header */
-	mtr_t*		mtr)
+    uint32       *actual_increase,/*!< out: actual increase in pages */
+    fil_space_t  *space,  /*!< in: space */
+    fsp_header_t *header,  /*!< in/out: space header */
+    mtr_t        *mtr)
 {
-    return FALSE;
+    uint32    size;  /* current number of pages in the datafile */
+    uint32    size_increase;  /* number of pages to extend this file */
+    uint32    actual_size;
+
+    ut_d(fsp_space_modify_check(space->id, mtr));
+
+    size = mach_read_from_4(header + FSP_SIZE);
+    ut_ad(size == space->size_in_header);
+
+    const page_size_t page_size(mach_read_from_4(header + FSP_SPACE_FLAGS));
+
+    size_increase = fsp_get_autoextend_increment(space);
+    if (size_increase == 0) {
+        return FALSE;
+    }
+
+    if (!fil_space_extend(space, size + size_increase, &actual_size)) {
+        return FALSE;
+    }
+
+    space->size_in_header += actual_size;
+    mlog_write_uint32(header + FSP_SIZE, space->size_in_header, MLOG_4BYTES, mtr);
+
+    return TRUE;
 }
 
 fil_space_t* fil_space_get_by_id(uint32 space_id)
@@ -775,21 +1004,137 @@ bool fil_addr_is_null(fil_addr_t addr) /*!< in: address */
     return(addr.page == FIL_NULL);
 }
 
-
-/********************************************************************//**
-NOTE: you must call fil_mutex_enter_and_prepare_for_io() first!
-
-Prepares a file node for i/o. Opens the file if it is closed. Updates the
-pending i/o's field in the node and the system appropriately. Takes the node
-off the LRU list if it is in the LRU list. The caller must hold the fil_sys
-mutex.
-@return false if the file can't be opened, otherwise true */
-static bool32 fil_node_prepare_for_io(
-    fil_node_t* node, /*!< in: file node */
-    fil_system_t* system, /*!< in: tablespace memory cache */
-    fil_space_t* space) /*!< in: space */
+static bool32 fil_space_belongs_in_lru(fil_space_t *space)
 {
+    return space->id >= FIL_USER_SPACE_ID;
+}
 
+// Closes a file
+static void fil_node_close_file(fil_node_t *node)
+{
+    bool32  ret;
+
+    ut_a(node->is_open);
+    ut_a(node->n_pending == 0);
+    ut_a(node->is_extend);
+
+    ut_ad(mutex_own(&(fil_system->lru_mutex)));
+
+    ret = os_close_file(node->handle);
+    ut_a(ret);
+
+    node->is_open = FALSE;
+
+    ut_ad(fil_system->open_pending_num > 0);
+    fil_system->open_pending_num--;
+
+    if (fil_space_belongs_in_lru(node->space)) {
+        ut_a(UT_LIST_GET_LEN(fil_system->fil_node_lru) > 0);
+        /* The node is in the LRU list, remove it */
+        UT_LIST_REMOVE(lru_list_node, fil_system->fil_node_lru, node);
+    }
+}
+
+// Opens a file of a node of a tablespace.
+// The caller must own the fil_system mutex.
+static bool32 fil_node_open_file(fil_node_t *node)
+{
+    bool32      ret;
+
+    ut_ad(mutex_own(&(fil_system->lock)));
+
+    ut_a(node->n_pending == 0);
+    ut_a(node->is_open == FALSE);
+
+    /* Open the file for reading and writing */
+    ret = os_open_file(node->name, OS_FILE_OPEN, OS_FILE_AIO, &node->handle);
+    ut_a(ret);
+
+    node->is_open = TRUE;
+    fil_system->open_pending_num++;
+
+    if (fil_space_belongs_in_lru(node->space)) {
+        /* Put the node to the LRU list */
+        UT_LIST_ADD_FIRST(lru_list_node, fil_system->fil_node_lru, node);
+    }
+
+    return TRUE;
+}
+
+static bool32 fil_try_to_close_file_in_LRU()
+{
+    fil_node_t  *node;
+
+    mutex_enter(&(fil_system->lru_mutex), NULL);
+
+    for (node = UT_LIST_GET_LAST(fil_system->fil_node_lru);
+         node != NULL;
+         node = UT_LIST_GET_PREV(lru_list_node, node)) {
+
+        if (node->n_pending == 0 && !node->is_open) {
+            mutex_exit(&(fil_system->lru_mutex));
+            fil_node_close_file(node);
+            return TRUE;
+        }
+
+        LOGGER_DEBUG(LOGGER,
+            "cannot close file %s, because n_pending %u",
+            node->name, node->is_open, node->n_pending);
+    }
+
+    mutex_exit(&(fil_system->lru_mutex));
+
+    return FALSE;
+}
+
+// Prepares a file node for i/o.
+// Opens the file if it is closed.
+// Updates the pending i/o's field in the node and the system appropriately.
+// Takes the node off the LRU list if it is in the LRU list.
+// The caller must hold the fil_sys mutex.
+static bool32 fil_node_prepare_for_io(fil_node_t *node)
+{
+    ut_ad(mutex_own(&(fil_system->lock)));
+
+    if (node->is_open) {
+        node->n_pending++;
+        //node->time = current_monotonic_time();
+        return TRUE;
+    }
+
+    // We keep log files and system tablespace files always open
+
+    if (fil_system->open_pending_num > fil_system->max_n_open) {
+        LOGGER_WARN(LOGGER, "Warning: open files %u exceeds the limit %u",
+            fil_system->open_pending_num, fil_system->max_n_open);
+
+close_retry:
+
+        /* Too many files are open, try to close some */
+        bool32 success = fil_try_to_close_file_in_LRU();
+        if (success && fil_system->open_pending_num >= fil_system->max_n_open) {
+            os_thread_sleep(100); // 100us
+            goto close_retry;
+        }
+    }
+
+    if (node->is_open == FALSE) {
+        /* File is closed: open it */
+        ut_a(node->n_pending == 0);
+        if (!fil_node_open_file(node)) {
+            return FALSE;
+        }
+    }
+
+    if (node->n_pending == 0 && fil_space_belongs_in_lru(node->space)) {
+        /* The node is in the LRU list, remove it */
+        ut_a(UT_LIST_GET_LEN(fil_system->fil_node_lru) > 0);
+        UT_LIST_REMOVE(lru_list_node, fil_system->fil_node_lru, node);
+    }
+
+    node->n_pending++;
+
+    return TRUE;
 }
 
 
@@ -801,233 +1146,19 @@ static void fil_node_complete_io(
     fil_system_t* system, /*!< in: tablespace memory cache */
     uint32 type) /*!< in: OS_FILE_WRITE or OS_FILE_READ; marks the node as modified if type == OS_FILE_WRITE */
 {
+    mutex_enter(&(fil_system->lru_mutex), NULL);
+
+    ut_a(node->n_pending > 0);
+
+    node->n_pending--;
+
+    if (node->n_pending == 0 && fil_space_belongs_in_lru(node->space)) {
+        /* The node must be put back to the LRU list */
+        UT_LIST_ADD_FIRST(lru_list_node, fil_system->fil_node_lru, node);
+    }
+
+    mutex_exit(&(fil_system->lru_mutex));
 }
-
-#if 0
-/********************************************************************//**
-Reads or writes data. This operation is asynchronous (aio).
-@return DB_SUCCESS, or DB_TABLESPACE_DELETED if we are trying to do i/o on a tablespace which does not exist */
-dberr_t fil_io(
-	uint32	type,		/*!< in: OS_FILE_READ or OS_FILE_WRITE,
-				ORed to OS_FILE_LOG, if a log i/o
-				and ORed to OS_AIO_SIMULATED_WAKE_LATER
-				if simulated aio and we want to post a
-				batch of i/os; NOTE that a simulated batch
-				may introduce hidden chances of deadlocks,
-				because i/os are not actually handled until
-				all have been posted: use with great
-				caution! */
-	bool	sync,		/*!< in: true if synchronous aio is desired */
-	uint32	space_id,	/*!< in: space id */
-	uint32	zip_size,	/*!< in: compressed page size in bytes;
-				0 for uncompressed pages */
-	uint32	block_offset,	/*!< in: offset in number of blocks */
-	uint32	byte_offset,	/*!< in: remainder of offset in bytes; in
-				aio this must be divisible by the OS block
-				size */
-	uint32	len,		/*!< in: how many bytes to read or write; this
-				must not cross a file boundary; in aio this
-				must be a block size multiple */
-	void*	buf,		/*!< in/out: buffer where to store read data
-				or from where to write; in aio this must be
-				appropriately aligned */
-	void*	message)	/*!< in: message for aio handler if non-sync
-				aio used, else ignored */
-{
-	uint32		mode;
-	fil_space_t*	space;
-	fil_node_t*	node;
-	bool32		ret;
-	uint32		is_log;
-	uint32		wake_later;
-	uint64	offset;
-	bool32		ignore_nonexistent_pages;
-
-	is_log = type & OS_FILE_LOG;
-	type = type & ~OS_FILE_LOG;
-
-	wake_later = type & OS_AIO_SIMULATED_WAKE_LATER;
-	type = type & ~OS_AIO_SIMULATED_WAKE_LATER;
-
-	ignore_nonexistent_pages = type & BUF_READ_IGNORE_NONEXISTENT_PAGES;
-	type &= ~BUF_READ_IGNORE_NONEXISTENT_PAGES;
-
-	ut_ad(byte_offset < UNIV_PAGE_SIZE);
-	ut_ad(!zip_size || !byte_offset);
-	ut_ad(ut_is_2pow(zip_size));
-	ut_ad(buf);
-	ut_ad(len > 0);
-	ut_ad(UNIV_PAGE_SIZE == (ulong)(1 << UNIV_PAGE_SIZE_SHIFT));
-
-	//ut_ad(fil_validate_skip());
-#ifndef UNIV_HOTBACKUP
-# ifndef UNIV_LOG_DEBUG
-	/* ibuf bitmap pages must be read in the sync aio mode: */
-	ut_ad(recv_no_ibuf_operations
-	      || type == OS_FILE_WRITE
-	      || !ibuf_bitmap_page(zip_size, block_offset)
-	      || sync
-	      || is_log);
-# endif /* UNIV_LOG_DEBUG */
-	if (sync) {
-		mode = OS_AIO_SYNC;
-	} else if (is_log) {
-		mode = OS_AIO_LOG;
-	} else if (type == OS_FILE_READ
-		   && !recv_no_ibuf_operations
-		   && ibuf_page(space_id, zip_size, block_offset, NULL)) {
-		mode = OS_AIO_IBUF;
-	} else {
-		mode = OS_AIO_NORMAL;
-	}
-#else /* !UNIV_HOTBACKUP */
-	ut_a(sync);
-	mode = OS_AIO_SYNC;
-#endif /* !UNIV_HOTBACKUP */
-
-	if (type == OS_FILE_READ) {
-		srv_stats.data_read.add(len);
-	} else if (type == OS_FILE_WRITE) {
-		ut_ad(!srv_read_only_mode);
-		srv_stats.data_written.add(len);
-	}
-
-	/* Reserve the fil_system mutex and make sure that we can open at
-	least one file while holding it, if the file is not already open */
-
-	fil_mutex_enter_and_prepare_for_io(space_id);
-
-	space = fil_space_get_by_id(space_id);
-
-	/* If we are deleting a tablespace we don't allow any read
-	operations on that. However, we do allow write operations. */
-	if (space == 0 || (type == OS_FILE_READ && space->stop_new_ops)) {
-		mutex_exit(&fil_system->mutex);
-
-		ib_logf(IB_LOG_LEVEL_ERROR,
-			"Trying to do i/o to a tablespace which does "
-			"not exist. i/o type %lu, space id %lu, "
-			"page no. %lu, i/o length %lu bytes",
-			(ulong) type, (ulong) space_id, (ulong) block_offset,
-			(ulong) len);
-
-		return(DB_TABLESPACE_DELETED);
-	}
-
-	ut_ad(mode != OS_AIO_IBUF || space->purpose == FIL_TABLESPACE);
-
-	node = UT_LIST_GET_FIRST(space->chain);
-
-	for (;;) {
-		if (node == NULL) {
-			if (ignore_nonexistent_pages) {
-				mutex_exit(&fil_system->mutex);
-				return(DB_ERROR);
-			}
-
-			fil_report_invalid_page_access(
-				block_offset, space_id, space->name,
-				byte_offset, len, type);
-
-			ut_error;
-
-		} else if (fil_is_user_tablespace_id(space->id)
-			   && node->size == 0) {
-
-			/* We do not know the size of a single-table tablespace
-			before we open the file */
-			break;
-		} else if (node->size > block_offset) {
-			/* Found! */
-			break;
-		} else {
-			block_offset -= node->size;
-			node = UT_LIST_GET_NEXT(chain, node);
-		}
-	}
-
-	/* Open file if closed */
-	if (!fil_node_prepare_for_io(node, fil_system, space)) {
-		if (space->purpose == FIL_TABLESPACE
-		    && fil_is_user_tablespace_id(space->id)) {
-			mutex_exit(&fil_system->mutex);
-
-			ib_logf(IB_LOG_LEVEL_ERROR,
-				"Trying to do i/o to a tablespace which "
-				"exists without .ibd data file. "
-				"i/o type %lu, space id %lu, page no %lu, "
-				"i/o length %lu bytes",
-				(ulong) type, (ulong) space_id,
-				(ulong) block_offset, (ulong) len);
-
-			return(DB_TABLESPACE_DELETED);
-		}
-
-		/* The tablespace is for log. Currently, we just assert here
-		to prevent handling errors along the way fil_io returns.
-		Also, if the log files are missing, it would be hard to
-		promise the server can continue running. */
-		ut_a(0);
-	}
-
-	/* Check that at least the start offset is within the bounds of a
-	single-table tablespace, including rollback tablespaces. */
-	if (UNIV_UNLIKELY(node->size <= block_offset)
-	    && space->id != 0 && space->purpose == FIL_TABLESPACE) {
-
-		fil_report_invalid_page_access(
-			block_offset, space_id, space->name, byte_offset,
-			len, type);
-
-		ut_error;
-	}
-
-	/* Now we have made the changes in the data structures of fil_system */
-	mutex_exit(&fil_system->mutex);
-
-	/* Calculate the low 32 bits and the high 32 bits of the file offset */
-	offset = ((uint64) block_offset << UNIV_PAGE_SIZE_SHIFT) + byte_offset;
-
-	ut_a(node->size - block_offset  >= ((byte_offset + len + (UNIV_PAGE_SIZE - 1)) / UNIV_PAGE_SIZE));
-
-
-	/* Do aio */
-
-	ut_a(byte_offset % OS_FILE_LOG_BLOCK_SIZE == 0);
-	ut_a((len % OS_FILE_LOG_BLOCK_SIZE) == 0);
-
-#ifdef UNIV_HOTBACKUP
-	/* In ibbackup do normal i/o, not aio */
-	if (type == OS_FILE_READ) {
-		ret = os_file_read(node->handle, buf, offset, len);
-	} else {
-		ut_ad(!srv_read_only_mode);
-		ret = os_file_write(node->name, node->handle, buf,
-				    offset, len);
-	}
-#else
-	/* Queue the aio request */
-	ret = os_aio(type, mode | wake_later, node->name, node->handle, buf,
-		     offset, len, node, message);
-#endif /* UNIV_HOTBACKUP */
-	ut_a(ret);
-
-	if (mode == OS_AIO_SYNC) {
-		/* The i/o operation is already completed when we return from
-		os_aio: */
-
-		mutex_enter(&fil_system->mutex);
-
-		fil_node_complete_io(node, fil_system, type);
-
-		mutex_exit(&fil_system->mutex);
-
-		ut_ad(fil_validate_skip());
-	}
-
-	return(DB_SUCCESS);
-}
-#endif
 
 dberr_t fil_read(
     bool32 sync, /*!< in: true if synchronous aio is desired */
@@ -1102,15 +1233,11 @@ static void fsp_space_modify_check(uint32 id, const mtr_t* mtr)
 }
 
 
-/** Put new extents to the free list if there are free extents above the free
-limit. If an extent happens to contain an extent descriptor page, the extent
-is put to the FSP_FREE_FRAG list with the page marked as used.
-@param[in]	init_space	true if this is a single-table tablespace
-and we are only initializing the first extent and the first bitmap pages;
-then we will not allocate more extents
-@param[in,out]	space		tablespace
-@param[in,out]	header		tablespace header
-@param[in,out]	mtr		mini-transaction */
+/*
+ * Put new extents to the free list if there are free extents above the free limit.
+ * If an extent happens to contain an extent descriptor page,
+ * the extent is put to the FSP_FREE_FRAG list with the page marked as used.
+ */
 static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header_t* header, mtr_t* mtr)
 {
     uint32 limit;
@@ -1119,7 +1246,7 @@ static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header
     xdes_t* descr;
     uint32 count = 0;
     uint32 frag_n_used;
-    uint32 actual_increase;
+    uint32 actual_increase = 0;
     uint32 i;
 
     ut_ad(page_offset(header) == FSP_HEADER_OFFSET);
@@ -1130,26 +1257,27 @@ static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header
     limit = mach_read_from_4(header + FSP_FREE_LIMIT);
     flags = mach_read_from_4(header + FSP_SPACE_FLAGS);
 
-    //ut_ad(size == space->size_in_header);
-    //ut_ad(limit == space->free_limit);
-    //ut_ad(flags == space->flags);
+    ut_ad(size == space->size_in_header);
+    ut_ad(limit == space->free_limit);
+    ut_ad(flags == space->flags);
 
     const page_size_t page_size(flags);
 
-    if (space == 0 && srv_auto_extend_last_data_file && size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD) {
+    if (space->id == FIL_SYSTEM_SPACE_ID && size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD) {
         /* Try to increase the last data file size */
         fsp_try_extend_data_file(&actual_increase, space, header, mtr);
         size = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, mtr);
     }
 
-    if (space != 0 && !init_space && size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD) {
+    if (space != FIL_SYSTEM_SPACE_ID && !init_space && size < limit + FSP_EXTENT_SIZE * FSP_FREE_ADD) {
         /* Try to increase the .ibd file size */
         fsp_try_extend_data_file(&actual_increase, space, header, mtr);
         size = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, mtr);
     }
 
     i = limit;
-    while ((init_space && i < 1) || ((i + FSP_EXTENT_SIZE <= size) && (count < FSP_FREE_ADD))) {
+    while ((i + FSP_EXTENT_SIZE <= size) && (count < FSP_FREE_ADD)) {
+
         bool32 init_xdes = (ut_2pow_remainder(i, page_size.physical()) == 0);
         space->free_limit = i + FSP_EXTENT_SIZE;
         mlog_write_uint32(header + FSP_FREE_LIMIT, i + FSP_EXTENT_SIZE, MLOG_4BYTES, mtr);
@@ -1158,41 +1286,16 @@ static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header
             buf_block_t* block;
 
             /* We are going to initialize a new descriptor page 
-            and a new ibuf bitmap page: the prior contents of the pages should be ignored. */
+               and a new ibuf bitmap page:
+               the prior contents of the pages should be ignored. */
 
             if (i > 0) {
                 const page_id_t page_id(space->id, i);
-                //block = buf_page_create(page_id, page_size, mtr);
-                buf_page_get(page_id, page_size, RW_SX_LATCH, mtr);
-                //buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
-                //fsp_init_file_page(block, mtr);
-                //mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_TYPE_XDES, MLOG_2BYTES, mtr);
+                block = buf_page_create(page_id, page_size, RW_X_LATCH, mtr);
+                //buf_page_get(page_id, page_size, RW_SX_LATCH, mtr);
+                fsp_init_file_page(block, mtr);
+                mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_TYPE_XDES, MLOG_2BYTES, mtr);
             }
-
-            /* Initialize the ibuf bitmap page in a separate
-            mini-transaction because it is low in the latching
-            order, and we must be able to release its latch.
-            Note: Insert-Buffering is disabled for tables that
-            reside in the temp-tablespace. */
-            /*
-            if (space->id != srv_tmp_space.space_id()) {
-                mtr_t ibuf_mtr;
-
-                mtr_start(&ibuf_mtr);
-                ibuf_mtr.set_named_space(space);
-                // Avoid logging while truncate table fix-up is active.
-                if (space->purpose == FIL_TYPE_TEMPORARY || srv_is_tablespace_truncated(space->id)) {
-                    mtr_set_log_mode(&ibuf_mtr, MTR_LOG_NO_REDO);
-                }
-                const page_id_t page_id(space->id, i + FSP_IBUF_BITMAP_OFFSET);
-                block = buf_page_create(page_id, page_size, &ibuf_mtr);
-                buf_page_get(page_id, page_size, RW_SX_LATCH, &ibuf_mtr);
-                buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
-                fsp_init_file_page(block, &ibuf_mtr);
-                ibuf_bitmap_page_init(block, &ibuf_mtr);
-                mtr_commit(&ibuf_mtr);
-            }
-            */
         }
 
         buf_block_t* desc_block = NULL;
@@ -1219,8 +1322,6 @@ static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header
 
         i += FSP_EXTENT_SIZE;
     }
-
-    //space->free_len += count;
 }
 
 
@@ -1464,17 +1565,18 @@ fsp_header_t* fsp_get_space_header(
 }
 
 //Initializes the space header of a new created space and creates also the insert buffer tree root. */
-void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr)
+void fsp_header_init(fil_space_t *space, uint32 size, mtr_t *mtr)
 {
     fsp_header_t* header;
     buf_block_t *block;
     page_t* page;
 
     ut_ad(mtr);
+    ut_a(space != NULL);
 
-    mtr_x_lock(fil_space_get_latch(space_id), mtr);
+    mtr_x_lock(&space->latch, mtr);
 
-    const page_id_t page_id(space_id, 0);
+    const page_id_t page_id(space->id, 0);
     const page_size_t page_size(0);
     block = buf_page_create(page_id, page_size, RW_X_LATCH, mtr);
     //buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
@@ -1489,6 +1591,7 @@ void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr)
 
     header = FSP_HEADER_OFFSET + page;
 
+    space->size_in_header = size;
     mlog_write_uint32(header + FSP_SIZE, size, MLOG_4BYTES, mtr);
     mlog_write_uint32(header + FSP_FREE_LIMIT, 0, MLOG_4BYTES, mtr);
     //mlog_write_uint32(header + FSP_LOWEST_NO_WRITE, 0, MLOG_4BYTES, mtr);
@@ -1503,9 +1606,7 @@ void fsp_header_init(uint32 space_id, uint32 size, mtr_t *mtr)
     mlog_write_uint64(header + FSP_SEG_ID, ut_ull_create(0, 1), mtr);
 
     mutex_enter(&fil_system->lock);
-    fil_space_t *space = fil_space_get_by_id(space_id);
-    ut_a(space != NULL);
-    //fsp_fill_free_list(false, space, header, mtr);
+    fsp_fill_free_list(false, space, header, mtr);
     mutex_exit(&fil_system->lock);
 
     //btr_create(DICT_CLUSTERED | DICT_UNIVERSAL | DICT_IBUF, space,
