@@ -21,21 +21,21 @@ static void buf_block_init_low(buf_block_t *block);
 @param[in]	buf_pool	buffer pool instance
 @param[in]	page_id		page id
 @return block, NULL if not found */
-buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, const page_id_t &page_id)
+buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, page_id_t *page_id)
 {
     buf_page_t *bpage;
 
 #ifdef UNIV_DEBUG
     rw_lock_t *hash_lock;
 
-    hash_lock = hash_get_lock(buf_pool->page_hash, page_id.fold());
+    hash_lock = hash_get_lock(buf_pool->page_hash, page_id->fold());
     //ut_ad(rw_lock_own(hash_lock, RW_LOCK_X) || rw_lock_own(hash_lock, RW_LOCK_S));
 #endif /* UNIV_DEBUG */
 
     /* Look for the page in the hash table */
-    HASH_SEARCH(hash, buf_pool->page_hash, page_id.fold(), buf_page_t *, bpage,
+    HASH_SEARCH(hash, buf_pool->page_hash, page_id->fold(), buf_page_t *, bpage,
                 ut_ad(bpage->in_page_hash && buf_page_in_file(bpage)),
-                page_id.equals_to(bpage->id));
+                page_id->equals_to(bpage->id));
     if (bpage) {
         ut_a(buf_page_in_file(bpage));
         ut_ad(bpage->in_page_hash);
@@ -163,7 +163,7 @@ buf_pool_t* buf_pool_from_block(const buf_block_t *block) /*!< in: block */
 bool32 buf_pool_watch_is_sentinel(const buf_pool_t *buf_pool, const buf_page_t *bpage)
 {
     /* We must own the appropriate hash lock. */
-    ut_ad(buf_page_hash_lock_held_s_or_x(buf_pool, bpage));
+    //ut_ad(buf_page_hash_lock_held_s_or_x(buf_pool, bpage));
     ut_ad(buf_page_in_file(bpage));
 
     //if (bpage < &buf_pool->watch[0] || bpage >= &buf_pool->watch[BUF_POOL_WATCH_SIZE]) {
@@ -245,6 +245,7 @@ buf_page_t* buf_page_init_for_read(
 	uint32        fold;
 	bool32        lru = FALSE;
 	void         *data;
+    const page_size_t page_size(0);
 	buf_pool_t   *buf_pool = buf_pool_get(page_id);
 
 	ut_ad(buf_pool);
@@ -257,14 +258,14 @@ buf_page_t* buf_page_init_for_read(
 	ut_ad(block);
 	ut_ad(buf_pool_from_block(block) == buf_pool);
 
-	fold = buf_page_address_fold(page_id);
-	hash_lock = buf_page_hash_lock_get(buf_pool, fold);
+	//fold = buf_page_address_fold(page_id);
+	hash_lock = buf_page_hash_lock_get(buf_pool, page_id);
 
 	mutex_enter(&buf_pool->mutex, NULL);
 
 	rw_lock_x_lock(hash_lock);
 
-	watch_page = buf_page_hash_get_low(buf_pool, page_id, fold);
+	watch_page = buf_page_hash_get_low(buf_pool, page_id);
 	if (watch_page && !buf_pool_watch_is_sentinel(buf_pool, watch_page)) {
 		/* The page is already in the buffer pool. */
 		watch_page = NULL;
@@ -272,7 +273,7 @@ buf_page_t* buf_page_init_for_read(
 		rw_lock_x_unlock(hash_lock);
 		if (block) {
 			mutex_enter(&block->mutex);
-			buf_LRU_block_free_non_file_page(block);
+			//buf_LRU_block_free_non_file_page(block);
 			mutex_exit(&block->mutex);
 		}
 
@@ -285,12 +286,12 @@ buf_page_t* buf_page_init_for_read(
 	mutex_enter(&block->mutex);
 
 	ut_ad(buf_pool_from_bpage(bpage) == buf_pool);
-
-	buf_page_init(buf_pool, page_id, fold, zip_size, block);
+    
+	buf_page_init(buf_pool, page_id, page_size, block);
 	rw_lock_x_unlock(hash_lock);
 
 	/* The block must be put to the LRU list, to the old blocks */
-	buf_LRU_add_block(bpage, TRUE/* to old blocks */);
+	buf_LRU_add_block_low(bpage, TRUE/* to old blocks */);
 
 	/* We set a pass-type x-lock on the frame because then
 	the same thread which called for the read operation
@@ -301,19 +302,15 @@ buf_page_t* buf_page_init_for_read(
 	read is completed.  The x-lock is cleared by the
 	io-handler thread. */
 
-	rw_lock_x_lock_gen(&block->lock, BUF_IO_READ);
-	buf_page_set_io_fix(bpage, BUF_IO_READ);
+	rw_lock_x_lock_gen(&block->rw_lock, BUF_IO_READ);
+	//buf_page_set_io_fix(bpage, BUF_IO_READ);
 
 	mutex_exit(&block->mutex);
 
 	buf_pool->n_pend_reads++;
 func_exit:
-	buf_pool_mutex_exit(buf_pool);
+	//buf_pool_mutex_exit(buf_pool);
 
-	if (mode == BUF_READ_IBUF_PAGES_ONLY) {
-
-		ibuf_mtr_commit(&mtr);
-	}
 
 
 #ifdef UNIV_SYNC_DEBUG
@@ -341,23 +338,18 @@ static uint32 buf_read_page_low(
 			trying to read from a non-existent tablespace, or a
 			tablespace which is just now being dropped */
 	bool	sync,	/*!< in: true if synchronous aio is desired */
-	ulint	mode,	/*!< in: BUF_READ_IBUF_PAGES_ONLY, ...,
+	uint32	mode,	/*!< in: BUF_READ_IBUF_PAGES_ONLY, ...,
 			ORed to OS_AIO_SIMULATED_WAKE_LATER (see below
 			at read-ahead functions) */
-	ulint	space,	/*!< in: space id */
-	ulint	zip_size,/*!< in: compressed page size, or 0 */
-	ibool	unzip,	/*!< in: TRUE=request uncompressed page */
-	ib_int64_t tablespace_version, /*!< in: if the space memory object has
-			this timestamp different from what we are giving here,
-			treat the tablespace as dropped; this is a timestamp we
-			use to stop dangling page reads from a tablespace
-			which we have DISCARDed + IMPORTed back */
-	ulint	offset)	/*!< in: page number */
+    uint32	space,	/*!< in: space id */
+    uint32	zip_size,/*!< in: compressed page size, or 0 */
+	bool32	unzip,	/*!< in: TRUE=request uncompressed page */
+    uint32	offset)	/*!< in: page number */
 {
 	buf_page_t*	bpage;
-	ulint		wake_later;
-	ibool		ignore_nonexistent_pages;
-
+    uint32		wake_later;
+	bool32		ignore_nonexistent_pages;
+#if 0
 	*err = DB_SUCCESS;
 
 	wake_later = mode & OS_AIO_SIMULATED_WAKE_LATER;
@@ -421,7 +413,7 @@ static uint32 buf_read_page_low(
 			return(0);
 		}
 	}
-
+#endif
 	return(1);
 }
 
@@ -434,29 +426,27 @@ released by the i/o-handler thread.
 @return TRUE if page has been read in, FALSE in case of failure */
 bool32 buf_read_page(page_id_t *page_id)
 {
-    uint32      count;
+    uint32      count = 0;
     dberr_t     err;
 
 
 	/* We do the i/o in the synchronous aio mode to save thread
 	switches: hence TRUE */
 
-	count = buf_read_page_low(&err, true, BUF_READ_ANY_PAGE, space,
-				  zip_size, FALSE,
-				  tablespace_version, offset);
-	srv_stats.buf_pool_reads.add(count);
-	if (err == DB_TABLESPACE_DELETED) {
-		ut_print_timestamp(stderr);
-		fprintf(stderr,
-			"  InnoDB: Error: trying to access"
-			" tablespace %lu page no. %lu,\n"
-			"InnoDB: but the tablespace does not exist"
-			" or is just being dropped.\n",
-			(ulong) space, (ulong) offset);
-	}
+	//count = buf_read_page_low(&err, true, BUF_READ_ANY_PAGE, space,
+	//			  zip_size, FALSE,
+	//			  tablespace_version, offset);
+	//srv_stats.buf_pool_reads.add(count);
+	//if (err == DB_TABLESPACE_DELETED) {
+		//ut_print_timestamp(stderr);
+		//fprintf(stderr,
+		//	"InnoDB: Error: trying to access tablespace %lu page no. %lu,\n"
+		//	"InnoDB: but the tablespace does not exist or is just being dropped.\n",
+		//	(ulong) space, (ulong) offset);
+	//}
 
 	/* Increment number of I/O operations used for LRU policy. */
-	buf_LRU_stat_inc_io();
+	//buf_LRU_stat_inc_io();
 
 	return(count > 0);
 }
@@ -474,21 +464,22 @@ buf_block_t *buf_page_get_gen(page_id_t *page_id, const page_size_t &page_size,
     rw_lock_t    *hash_lock;
     uint32        retries = 0;
     buf_pool_t   *buf_pool;
+    mutex_t      *block_mutex;
 
     ut_ad((rw_latch == RW_S_LATCH) || (rw_latch == RW_X_LATCH) || (rw_latch == RW_NO_LATCH));
 
     buf_pool = buf_pool_get(page_id);
     buf_pool->stat.n_page_gets++;
 
-    fold = buf_page_address_fold(page_id);
-    hash_lock = buf_page_hash_lock_get(buf_pool, fold);
+    //fold = buf_page_address_fold(page_id);
+    hash_lock = buf_page_hash_lock_get(buf_pool, page_id);
 
     rw_lock_s_lock(hash_lock);
-    block = (buf_block_t*) buf_page_hash_get_low(buf_pool, page_id, fold);
+    block = (buf_block_t*) buf_page_hash_get_low(buf_pool, page_id);
     if (block == NULL) {
-        if (buf_read_page(space, zip_size, offset)) {
+        //if (buf_read_page(space, zip_size, offset)) {
 
-        }
+        //}
     }
 
   /* We can release hash_lock after we acquire block_mutex to
@@ -500,37 +491,36 @@ buf_block_t *buf_page_get_gen(page_id_t *page_id, const page_size_t &page_size,
   rw_lock_s_unlock(hash_lock);
 
 
-    must_read = buf_block_get_io_fix(block) == BUF_IO_READ;
-    if (must_read && (mode == BUF_GET_IF_IN_POOL || mode == BUF_PEEK_IF_IN_POOL)) {
-        /* The page is being read to buffer pool,
-        but we cannot wait around for the read to complete. */
+    //must_read = buf_block_get_io_fix(block) == BUF_IO_READ;
+    //if (must_read && (mode == BUF_GET_IF_IN_POOL || mode == BUF_PEEK_IF_IN_POOL)) {
+        /* The page is being read to buffer pool, but we cannot wait around for the read to complete. */
 
-        mutex_exit(block_mutex);
+    //    mutex_exit(block_mutex);
 
-        return(NULL);
-    }
+    //    return(NULL);
+    //}
 
     mutex_enter(&block->mutex);
-    buf_block_buf_fix_inc(block, file, line);
+    //buf_block_buf_fix_inc(block, file, line);
     mutex_exit(&block->mutex);
 
 
 	if (rw_latch == RW_S_LATCH) {
-		rw_lock_s_lock_inline(&(block->lock), 0, file, line);
+		//rw_lock_s_lock_inline(&(block->lock), 0, file, line);
 	} else if (rw_latch == RW_X_LATCH) {
 		ut_ad(rw_latch == RW_X_LATCH);
-		rw_lock_x_lock_inline(&(block->lock), 0, file, line);
-    } else else if (rw_latch == RW_NO_LATCH) {
-		if (must_read) {
+		//rw_lock_x_lock_inline(&(block->lock), 0, file, line);
+    } else if (rw_latch == RW_NO_LATCH) {
+		//if (must_read) {
 			/* Let us wait until the read operation completes */
             mutex_enter(&block->mutex);
-            io_fix = buf_block_get_io_fix(block);
+            //io_fix = buf_block_get_io_fix(block);
             mutex_exit(&block->mutex);
 
-        }
+        //}
     }
 
-    mtr_memo_push(mtr, block, fix_type);
+    //mtr_memo_push(mtr, block, fix_type);
 
     return(block);
 }
@@ -551,7 +541,7 @@ void buf_page_init_low(buf_page_t *bpage) /*!< in: block to init */
 
 // Inits a page to the buffer buf_pool.
 // The block pointer must be private to the calling thread at the start of this function.
-static void buf_page_init(buf_pool_t *buf_pool, const page_id_t &page_id,
+static void buf_page_init(buf_pool_t *buf_pool, page_id_t *page_id,
                           const page_size_t &page_size, buf_block_t *block)
 {
     buf_page_t *hash_page;
@@ -594,10 +584,10 @@ static void buf_page_init(buf_pool_t *buf_pool, const page_id_t &page_id,
 
     block->page.id.copy_from(page_id);
     block->page.size.copy_from(page_size);
-    HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, page_id.fold(), &block->page);
+    HASH_INSERT(buf_page_t, hash, buf_pool->page_hash, page_id->fold(), &block->page);
 }
 
-buf_block_t *buf_page_create(const page_id_t &page_id,
+buf_block_t *buf_page_create(page_id_t *page_id,
     const page_size_t &page_size, rw_lock_type_t rw_latch, mtr_t *mtr)
 {
   buf_frame_t *frame;
@@ -609,7 +599,7 @@ buf_block_t *buf_page_create(const page_id_t &page_id,
   DBUG_ENTER("buf_page_create");
 
   ut_ad(mtr->is_active());
-  ut_ad(page_id.space() != 0 || !page_size.is_compressed());
+  ut_ad(page_id->space() != 0 || !page_size.is_compressed());
 
   free_block = buf_LRU_get_free_block(buf_pool);
 
@@ -629,13 +619,13 @@ buf_block_t *buf_page_create(const page_id_t &page_id,
     rw_lock_x_unlock(hash_lock);
 
     buf_block_free(free_block);
-
+    buf_page_get_gen(page_id, page_size, RW_NO_LATCH, NULL, Page_fetch::NO_LATCH, __FILE__, __LINE__, mtr);
     DBUG_RETURN(buf_page_get_with_no_latch(page_id, page_size, mtr));
   }
 
   /* If we get here, the page was not in buf_pool: init it there */
 
-  DBUG_PRINT("create page %lu : %lu", page_id.space(), page_id.page_no());
+  DBUG_PRINT("create page %lu : %lu", page_id->space(), page_id->page_no());
 
   block = free_block;
   mutex_enter(&block->mutex, NULL);

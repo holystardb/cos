@@ -20,12 +20,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\main\charset.cpp" />
+    <ClCompile Include="..\src\main\db_init.cpp" />
     <ClCompile Include="..\src\main\files_encrypt.cpp" />
     <ClCompile Include="..\src\main\guc.cpp" />
     <ClCompile Include="..\src\main\memory_test.cpp" />
     <ClCompile Include="..\src\main\sock_proxy.cpp" />
     <ClCompile Include="..\src\main\server.cpp" />
-    <ClCompile Include="..\src\main\test.cpp" />
+    <ClCompile Include="..\src\main\aes_test.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\main\guc.h" />
@@ -86,7 +87,7 @@
     <LibraryPath>D:\MyWork\cos\win\Debug;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>..\src\include\common;..\src\include\vio;..\src\include\strings;..\src\storage\include;..\third_lib\openssl-1.1.1\include;$(IncludePath)</IncludePath>
+    <IncludePath>..\src\include\common;..\src\include\vio;..\src\include\strings;..\src\sql\include;..\src\storage\include;..\third_lib\openssl-1.1.1\include;$(IncludePath)</IncludePath>
     <ReferencePath>$(ReferencePath)</ReferencePath>
     <LibraryPath>..\third_lib\openssl-1.1.1\win_lib;..\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
@@ -111,10 +112,10 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>DEBUG_OUTPUT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>libcommon.lib;libvio.lib;libstrings.lib;libcrypto.lib;libstorage.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libcommon.lib;libvio.lib;libstrings.lib;libcrypto.lib;libsql.lib;libstorage.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>

@@ -19,6 +19,7 @@ static uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 off
 static bool32 fil_node_prepare_for_io(fil_node_t *node);
 static void fsp_space_modify_check(uint32 id, const mtr_t* mtr);
 static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr);
+static void fil_node_complete_io(fil_node_t* node, uint32 type);
 
 
 byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
@@ -27,12 +28,13 @@ byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
 {
     buf_block_t *block;
     byte *ptr;
-    
+    page_id_t page_id(space, addr.page);
+
     ut_ad(addr.boffset < UNIV_PAGE_SIZE);
     ut_ad((rw_latch == RW_S_LATCH) || (rw_latch == RW_X_LATCH) ||
           (rw_latch == RW_SX_LATCH));
     
-    block = buf_page_get(page_id_t(space, addr.page), page_size, rw_latch, mtr);
+    block = buf_page_get(&page_id, page_size, rw_latch, mtr);
     ptr = buf_block_get_frame(block) + addr.boffset;
 
     if (ptr_block != NULL) {
@@ -273,18 +275,16 @@ xdes_t* xdes_get_descriptor_with_space_hdr(
 
 	descr_page_no = xdes_calc_descriptor_page(page_size, offset);
 
-	buf_block_t*		block;
-
+	buf_block_t   *block;
+    
 	if (descr_page_no == 0) {
 		/* It is on the space header page */
 
 		descr_page = page_align(sp_header);
 		block = NULL;
 	} else {
-		block = buf_page_get(
-			page_id_t(space, descr_page_no), page_size,
-			RW_SX_LATCH, mtr);
-
+        page_id_t page_id(space, descr_page_no);
+		block = buf_page_get(&page_id, page_size, RW_SX_LATCH, mtr);
 		descr_page = buf_block_get_frame(block);
 	}
 
@@ -314,8 +314,8 @@ xdes_t* xdes_get_descriptor(
 {
 	buf_block_t*	block;
 	fsp_header_t*	sp_header;
-
-	block = buf_page_get(page_id_t(space_id, 0), page_size, RW_SX_LATCH, mtr);
+    page_id_t       page_id(space_id, 0);
+	block = buf_page_get(&page_id, page_size, RW_SX_LATCH, mtr);
 
 	sp_header = FSP_HEADER_OFFSET + buf_block_get_frame(block);
 	return(xdes_get_descriptor_with_space_hdr(sp_header, space_id, offset, mtr));
@@ -1139,11 +1139,10 @@ close_retry:
 
 
 /********************************************************************//**
-Updates the data structures when an i/o operation finishes. Updates the
-pending i/o's field in the node appropriately. */
+ Updates the data structures when an i/o operation finishes.
+ Updates the pending i/o's field in the node appropriately. */
 static void fil_node_complete_io(
     fil_node_t* node, /*!< in: file node */
-    fil_system_t* system, /*!< in: tablespace memory cache */
     uint32 type) /*!< in: OS_FILE_WRITE or OS_FILE_READ; marks the node as modified if type == OS_FILE_WRITE */
 {
     mutex_enter(&(fil_system->lru_mutex), NULL);
@@ -1290,8 +1289,8 @@ static void fsp_fill_free_list(bool32 init_space, fil_space_t* space, fsp_header
                the prior contents of the pages should be ignored. */
 
             if (i > 0) {
-                const page_id_t page_id(space->id, i);
-                block = buf_page_create(page_id, page_size, RW_X_LATCH, mtr);
+                page_id_t page_id(space->id, i);
+                block = buf_page_create(&page_id, page_size, RW_X_LATCH, mtr);
                 //buf_page_get(page_id, page_size, RW_SX_LATCH, mtr);
                 fsp_init_file_page(block, mtr);
                 mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_TYPE_XDES, MLOG_2BYTES, mtr);
@@ -1459,9 +1458,11 @@ static uint32 fsp_alloc_free_page(
 
     /* Initialize the allocated page to the buffer pool,
        so that it can be obtained immediately with buf_page_get without need for a disk read. */
-    buf_page_create(page_id_t(space, page_no), page_size, RW_X_LATCH, mtr);
-    buf_block_t* block;
-    block = buf_page_get(page_id_t(space, page_no), page_size, RW_X_LATCH, mtr);
+    page_id_t page_id1(space, page_no);
+    buf_page_create(&page_id1, page_size, RW_X_LATCH, mtr);
+    buf_block_t  *block;
+    page_id_t     page_id(space, page_no);
+    block = buf_page_get(&page_id, page_size, RW_X_LATCH, mtr);
     //page = buf_block_get_frame(block);
 
     /* Prior contents of the page should be ignored */
@@ -1549,10 +1550,10 @@ fsp_header_t* fsp_get_space_header(
 {
     buf_block_t*    block;
     fsp_header_t*   header;
-
+    page_id_t       page_id(id, 0);
     ut_ad(id != 0 || !page_size.is_compressed());
 
-    block = buf_page_get(page_id_t(id, 0), page_size, RW_SX_LATCH, mtr);
+    block = buf_page_get(&page_id, page_size, RW_SX_LATCH, mtr);
     header = FSP_HEADER_OFFSET + buf_block_get_frame(block);
     //buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
 
@@ -1576,9 +1577,9 @@ void fsp_header_init(fil_space_t *space, uint32 size, mtr_t *mtr)
 
     mtr_x_lock(&space->latch, mtr);
 
-    const page_id_t page_id(space->id, 0);
+    page_id_t page_id(space->id, 0);
     const page_size_t page_size(0);
-    block = buf_page_create(page_id, page_size, RW_X_LATCH, mtr);
+    block = buf_page_create(&page_id, page_size, RW_X_LATCH, mtr);
     //buf_page_dbg_add_level(page, SYNC_FSP_PAGE);
     //const page_id_t page_id(space_id, 0);
     //page = buf_page_get(page_id, size, RW_X_LATCH, mtr);

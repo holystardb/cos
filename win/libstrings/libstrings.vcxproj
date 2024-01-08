@@ -144,6 +144,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>HAVE_CHARSET_gb2312;HAVE_CHARSET_gbk;HAVE_CHARSET_gb18030;HAVE_CHARSET_utf8;HAVE_CHARSET_utf8mb4;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">

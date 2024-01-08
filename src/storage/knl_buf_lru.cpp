@@ -168,7 +168,7 @@ bool buf_LRU_free_page(buf_page_t *bpage)
     buf_page_t *b = NULL;
     buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
 
-    rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
+    rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, &bpage->id);
 
     spinlock_t *block_lock = buf_page_get_mutex(bpage);
 
@@ -242,7 +242,7 @@ not_freed:
 
     spin_lock(block_lock, NULL);
 
-    ut_a(!buf_page_hash_get_low(buf_pool, b->id));
+    ut_a(!buf_page_hash_get_low(buf_pool, &b->id));
 
     b->state = b->oldest_modification ? BUF_BLOCK_ZIP_DIRTY : BUF_BLOCK_ZIP_PAGE;
 

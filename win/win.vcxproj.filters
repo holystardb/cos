@@ -4,10 +4,11 @@
     <ClCompile Include="..\src\main\charset.cpp" />
     <ClCompile Include="..\src\main\files_encrypt.cpp" />
     <ClCompile Include="..\src\main\sock_proxy.cpp" />
-    <ClCompile Include="..\src\main\test.cpp" />
     <ClCompile Include="..\src\main\memory_test.cpp" />
     <ClCompile Include="..\src\main\server.cpp" />
     <ClCompile Include="..\src\main\guc.cpp" />
+    <ClCompile Include="..\src\main\aes_test.cpp" />
+    <ClCompile Include="..\src\main\db_init.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\main\guc.h" />

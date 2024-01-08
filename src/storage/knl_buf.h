@@ -34,7 +34,7 @@ constexpr uint32 MAX_BUFFER_POOLS = 64;
 
 /** Get appropriate page_hash_lock. */
 #define buf_page_hash_lock_get(buf_pool, page_id) \
-  hash_get_lock((buf_pool)->page_hash, (page_id).fold())
+  hash_get_lock((buf_pool)->page_hash, (page_id)->fold())
 
 /** If not appropriate page_hash_lock, relock until appropriate. */
 #define buf_page_hash_lock_s_confirm(hash_lock, buf_pool, page_id) \
@@ -104,10 +104,10 @@ class page_id_t {
 
   /** Copy the values from a given page_id_t object.
   @param[in]	src	page id object whose values to fetch */
-  inline void copy_from(const page_id_t &src) {
-    m_space = src.space();
-    m_page_no = src.page_no();
-    m_fold = src.fold();
+  inline void copy_from(page_id_t *src) {
+    m_space = src->space();
+    m_page_no = src->page_no();
+    m_fold = src->fold();
   }
 
   /** Reset the values from a (space, page_no).
@@ -479,7 +479,7 @@ struct buf_pool_t {
 
 
 dberr_t buf_pool_init(uint64 total_size, uint32 n_instances);
-buf_pool_t* buf_pool_get(const page_id_t &page_id);
+buf_pool_t* buf_pool_get(page_id_t *page_id);
 buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
 buf_pool_t* buf_pool_from_block(const buf_block_t *block);
 lsn_t buf_pool_get_oldest_modification(void);
@@ -502,7 +502,7 @@ The page is usually not read from a file even if it cannot be found in the buffe
 This is one of the functions which perform to a block a state transition NOT_USED => FILE_PAGE (the other is buf_page_get_gen).
 @return pointer to the block, page bufferfixed */
 buf_block_t* buf_page_create(
-    const page_id_t &page_id,
+    page_id_t *page_id,
     const page_size_t &page_size,
     rw_lock_type_t rw_latch,
     mtr_t *mtr);
@@ -519,7 +519,7 @@ buf_block_t* buf_page_create(
     @param[in] mtr          mini-transaction
     @param[in] dirty_with_no_latch mark page as dirty even if page is being pinned without any latch
     @return pointer to the block or NULL */
-buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
+buf_block_t *buf_page_get_gen(page_id_t *page_id, const page_size_t &page_size,
     uint32 rw_latch, buf_block_t *guess, Page_fetch mode,
     const char *file, uint32 line, mtr_t *mtr, bool32 dirty_with_no_latch = FALSE);
 
@@ -544,7 +544,7 @@ bool32 buf_page_io_complete(buf_page_t* bpage);  /*!< in: pointer to the block i
 bool32 buf_page_can_relocate(const buf_page_t *bpage);
 buf_page_t *buf_page_alloc_descriptor(void);
 void buf_page_free_descriptor(buf_page_t *bpage);
-buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, const page_id_t &page_id);
+buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, page_id_t *page_id);
 
 bool32 buf_page_in_file(const buf_page_t *bpage);
 bool32 buf_page_is_old(const buf_page_t* bpage);
@@ -558,10 +558,9 @@ enum buf_page_state buf_page_get_state(const buf_page_t *bpage);
 Inits a page to the buffer buf_pool. */
 static void buf_page_init(
     buf_pool_t  *buf_pool,/*!< in/out: buffer pool */
-    uint32       space,  /*!< in: space id */
-    uint32       offset, /*!< in: offset of the page within space in units of a page */
-    uint32       fold,   /*!< in: buf_page_address_fold(space,offset) */
-    uint32       zip_size,/*!< in: compressed page size, or 0 */
+    page_id_t   *page_id,
+    const page_size_t &page_size,
+    //uint32       zip_size,/*!< in: compressed page size, or 0 */
     buf_block_t *block);  /*!< in/out: block to init */
 
 /*******************************************************************//**

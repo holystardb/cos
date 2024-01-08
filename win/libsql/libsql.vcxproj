@@ -72,7 +72,9 @@
     <IncludePath>..\..\src\include\common;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>../../src/include/common;../../src/include/vio;$(IncludePath)</IncludePath>
+    <IncludePath>../../src/include/common;../../src/include/vio;../../src/include/sql;$(IncludePath)</IncludePath>
+    <OutDir>$(SolutionDir)..\lib\</OutDir>
+    <LibraryPath>..\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -115,6 +117,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\src\sql\parser\sql_parser.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\sql\parser\sql_parser.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
