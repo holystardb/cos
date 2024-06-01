@@ -47,6 +47,12 @@ int main(int argc, const char *argv[])
     srv_undo_file_max_size = 8 * 1024 * 1024;
     srv_undo_file_auto_extend_size = 3;
 
+    srv_temp_buffer_size = 8 * 1024 * 1024;
+    srv_temp_file_size = 8 * 1024 * 1024;
+    srv_temp_file_max_size = 8 * 1024 * 1024;
+    srv_temp_file_auto_extend_size = 3;
+
+
     srv_max_n_open = 256;
     srv_space_max_count = 10;
     srv_fil_node_max_count = 10;
@@ -62,12 +68,19 @@ int main(int argc, const char *argv[])
     db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf",
         srv_system_file_size, srv_system_file_max_size, TRUE);
 
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01.log",
+    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01",
         srv_redo_log_file_size, srv_redo_log_file_size, TRUE);
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02.log",
+    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02",
         srv_redo_log_file_size, srv_redo_log_file_size, TRUE);
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo03.log",
+    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo03",
         srv_redo_log_file_size, srv_redo_log_file_size, TRUE);
+
+    db_ctrl_add_undo("D:\\MyWork\\cos\\data\\undo01",
+        srv_undo_file_max_size, srv_undo_file_max_size, TRUE);
+
+    db_ctrl_add_temp("D:\\MyWork\\cos\\data\\temp01",
+        srv_temp_file_size, srv_temp_file_max_size, TRUE);
+
 
     knl_server_init_db(marea);
 

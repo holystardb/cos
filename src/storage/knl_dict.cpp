@@ -1,26 +1,48 @@
 #include "knl_dict.h"
 #include "knl_buf.h"
+#include "knl_btree.h"
+#include "knl_fsp.h"
 
+/** dummy index for ROW_FORMAT=REDUNDANT supremum and infimum records */
+dict_index_t*	dict_ind_redundant;
 
+/**********************************************************************//**
+Gets a pointer to the dictionary header and x-latches its page.
+@return pointer to the dictionary header, page x-latched */
+dict_hdr_t* dict_hdr_get(mtr_t*	mtr)	/*!< in: mtr */
+{
+	buf_block_t*	block;
+	dict_hdr_t*	header;
+    page_id_t page_id(DICT_HDR_SPACE, DICT_HDR_PAGE_NO);
+    const page_size_t page_size(0);
 
-// Creates the file page for the dictionary header. This function is called only at the database creation.
+	block = buf_page_get(&page_id, page_size, RW_X_LATCH, mtr);
+	header = DICT_HDR + buf_block_get_frame(block);
+
+	//buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
+
+	return(header);
+}
+
+// Creates the file page for the dictionary header.
+// This function is called only at the database creation.
 static bool32 dict_hdr_create(mtr_t* mtr)
 {
-    /*
 	buf_block_t* block;
 	dict_hdr_t*  dict_header;
 	uint32       root_page_no;
+    const page_size_t page_size(0);
 
 	ut_ad(mtr);
 
 	// Create the dictionary header file block in a new, allocated file segment in the system tablespace
-	block = fseg_create(DICT_HDR_SPACE, 0, DICT_HDR + DICT_HDR_FSEG_HEADER, mtr);
+	block = fseg_create_general(DICT_HDR_SPACE, 0, DICT_HDR + DICT_HDR_FSEG_HEADER, FALSE, mtr);
 
-	ut_a(DICT_HDR_PAGE_NO == buf_block_get_page_no(block));
+	ut_a(DICT_HDR_PAGE_NO == block->get_page_no());
 
 	dict_header = dict_hdr_get(mtr);
 
-	/* Start counting row, table, index, and tree ids from DICT_HDR_FIRST_ID
+	// Start counting row, table, index, and tree ids from DICT_HDR_FIRST_ID
 	mlog_write_uint64(dict_header + DICT_HDR_ROW_ID, DICT_HDR_FIRST_ID, mtr);
 	mlog_write_uint64(dict_header + DICT_HDR_TABLE_ID, DICT_HDR_FIRST_ID, mtr);
 	mlog_write_uint64(dict_header + DICT_HDR_INDEX_ID, DICT_HDR_FIRST_ID, mtr);
@@ -29,36 +51,37 @@ static bool32 dict_hdr_create(mtr_t* mtr)
 	mlog_write_uint32(dict_header + DICT_HDR_MIX_ID_LOW, DICT_HDR_FIRST_ID, MLOG_4BYTES, mtr);
 
 	// Create the B-tree roots for the clustered indexes of the basic system tables
-	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, 0, DICT_TABLES_ID, dict_ind_redundant, mtr);
+    root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE,
+        page_size, DICT_TABLES_ID, dict_ind_redundant, NULL, mtr);
 	if (root_page_no == FIL_NULL) {
 		return(FALSE);
 	}
 	mlog_write_uint32(dict_header + DICT_HDR_TABLES, root_page_no, MLOG_4BYTES, mtr);
 
-	root_page_no = btr_create(DICT_UNIQUE, DICT_HDR_SPACE, 0, DICT_TABLE_IDS_ID, dict_ind_redundant, mtr);
+	root_page_no = btr_create(DICT_UNIQUE, DICT_HDR_SPACE, page_size, DICT_TABLE_IDS_ID, dict_ind_redundant, NULL, mtr);
 	if (root_page_no == FIL_NULL) {
 		return(FALSE);
 	}
 	mlog_write_uint32(dict_header + DICT_HDR_TABLE_IDS, root_page_no, MLOG_4BYTES, mtr);
 
-	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, 0, DICT_COLUMNS_ID, dict_ind_redundant, mtr);
+	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, page_size, DICT_COLUMNS_ID, dict_ind_redundant, NULL, mtr);
 	if (root_page_no == FIL_NULL) {
 		return(FALSE);
 	}
 	mlog_write_uint32(dict_header + DICT_HDR_COLUMNS, root_page_no, MLOG_4BYTES, mtr);
 
-	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, 0, DICT_INDEXES_ID, dict_ind_redundant, mtr);
+	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, page_size, DICT_INDEXES_ID, dict_ind_redundant, NULL, mtr);
 	if (root_page_no == FIL_NULL) {
 		return(FALSE);
 	}
 	mlog_write_uint32(dict_header + DICT_HDR_INDEXES, root_page_no, MLOG_4BYTES, mtr);
 
-	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, 0, DICT_FIELDS_ID, dict_ind_redundant, mtr);
+	root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE, page_size, DICT_FIELDS_ID, dict_ind_redundant, NULL, mtr);
 	if (root_page_no == FIL_NULL) {
 		return(FALSE);
 	}
 	mlog_write_uint32(dict_header + DICT_HDR_FIELDS, root_page_no, MLOG_4BYTES, mtr);
-    */
+
 	return(TRUE);
 }
 

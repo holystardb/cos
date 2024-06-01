@@ -89,8 +89,7 @@ should be 2pow value to be used also as ORed combination of flag. */
 enum rw_lock_type_t {
     RW_S_LATCH = 1,
     RW_X_LATCH = 2,
-    RW_SX_LATCH = 4,
-    RW_NO_LATCH = 8
+    RW_NO_LATCH = 4
 };
 
 /* We decrement lock_word by X_LOCK_DECR for each x_lock.
@@ -218,6 +217,8 @@ bool32 rw_lock_validate(const rw_lock_t *lock);
 bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type);
 
 void sync_check_init(size_t max_threads);
+
+uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock);
 
 
 #define rw_lock_create(M) rw_lock_create_func((M), __FILE__, __LINE__)

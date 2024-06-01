@@ -293,7 +293,7 @@ uint32 dyn_array_get_data_size(dyn_array_t *arr)
 }
 
 // Checks if memo contains the given item.
-static bool32 mtr_memo_contains(mtr_t *mtr,
+bool32 mtr_memo_contains(mtr_t *mtr,
     const void *object, /*!< in: object to search */
     uint32 type) /*!< in: type of object */
 {
@@ -341,13 +341,13 @@ static void mtr_memo_slot_release(mtr_t *mtr, mtr_memo_slot_t *slot)
         case MTR_MEMO_PAGE_S_FIX:
         case MTR_MEMO_PAGE_X_FIX:
         case MTR_MEMO_BUF_FIX:
-            buf_page_release((buf_block_t*) object, slot->type);
+            buf_page_release((buf_block_t*)object, slot->type);
             break;
         case MTR_MEMO_S_LOCK:
-            rw_lock_s_unlock((rw_lock_t*) object);
+            rw_lock_s_unlock((rw_lock_t*)object);
             break;
         case MTR_MEMO_X_LOCK:
-            rw_lock_x_unlock((rw_lock_t*) object);
+            rw_lock_x_unlock((rw_lock_t*)object);
             break;
 #ifdef UNIV_DEBUG
         default:

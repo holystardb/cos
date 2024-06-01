@@ -1,8 +1,91 @@
 #ifndef _KNL_TRX_H
 #define _KNL_TRX_H
 
+#include "cm_mutex.h"
 #include "cm_type.h"
-#include "knl_dict.h"
+//#include "knl_dict.h"
+#include "knl_mtr.h"
+#include "knl_server.h"
+#include "knl_fsp.h"
+
+/** Space id of the transaction system page (the system tablespace) */
+static const uint32 TRX_SYS_SPACE = 0;
+
+/** The automatically created system rollback segment has this id */
+#define TRX_SYS_SYSTEM_RSEG_ID	0
+
+/** The offset of the transaction system header on the page */
+#define	TRX_SYS		FSEG_PAGE_DATA
+
+/** Transaction system header */
+#define	TRX_SYS_TRX_ID_STORE	0
+#define TRX_SYS_FSEG_HEADER	    8
+#define	TRX_SYS_RSEGS		    (8 + FSEG_HEADER_SIZE)
+
+
+/** Page number of the transaction system page */
+#define TRX_SYS_PAGE_NO		FSP_TRX_SYS_PAGE_NO
+
+/** Doublewrite buffer */
+/* @{ */
+/** The offset of the doublewrite buffer header on the trx system header page */
+#define TRX_SYS_DOUBLEWRITE		(UNIV_PAGE_SIZE - 200)
+/*-------------------------------------------------------------*/
+#define TRX_SYS_DOUBLEWRITE_FSEG	0	/*!< fseg header of the fseg
+containing the doublewrite
+buffer */
+#define TRX_SYS_DOUBLEWRITE_MAGIC	FSEG_HEADER_SIZE
+/*!< 4-byte magic number which
+shows if we already have
+created the doublewrite
+buffer */
+#define TRX_SYS_DOUBLEWRITE_BLOCK1	(4 + FSEG_HEADER_SIZE)
+/*!< page number of the
+first page in the first
+sequence of 64
+(= FSP_EXTENT_SIZE) consecutive
+pages in the doublewrite
+buffer */
+#define TRX_SYS_DOUBLEWRITE_BLOCK2	(8 + FSEG_HEADER_SIZE)
+/*!< page number of the
+first page in the second
+sequence of 64 consecutive
+pages in the doublewrite
+buffer */
+#define TRX_SYS_DOUBLEWRITE_REPEAT	12	/*!< we repeat
+TRX_SYS_DOUBLEWRITE_MAGIC,
+TRX_SYS_DOUBLEWRITE_BLOCK1,
+TRX_SYS_DOUBLEWRITE_BLOCK2
+so that if the trx sys
+header is half-written
+to disk, we still may
+be able to recover the
+information */
+/** If this is not yet set to TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED_N,
+we must reset the doublewrite buffer, because starting from 4.1.x the
+space id of a data page is stored into
+FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID. */
+#define TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED (24 + FSEG_HEADER_SIZE)
+
+/* Originally, InnoDB defined TRX_SYS_N_RSEGS as 256 but created only one
+rollback segment.  It initialized some arrays with this number of entries.
+We must remember this limit in order to keep file compatibility. */
+#define TRX_SYS_OLD_N_RSEGS		256
+
+/*-------------------------------------------------------------*/
+/* Size of a rollback segment specification slot */
+#define TRX_SYS_RSEG_SLOT_SIZE	8
+
+
+
+
+
+
+
+
+
+
+
 
 /** Transaction execution states when trx->state == TRX_STATE_ACTIVE */
 enum trx_que_t {
@@ -20,6 +103,31 @@ enum trx_state_t {
 	TRX_STATE_PREPARED,			/* Support for 2PC/XA */
 	TRX_STATE_COMMITTED_IN_MEMORY
 };
+
+
+/** Memory objects */
+struct trx_t;  // Transaction
+struct trx_lock_t; // The locks and state of an active transaction
+//struct trx_sys_t;  // Transaction system
+struct trx_sig_t; // Signal
+struct trx_rseg_t; // Rollback segment
+struct trx_undo_t;  // Transaction undo log
+struct trx_undo_arr_t; // Array of undo numbers of undo records being rolled back or purged
+struct trx_undo_inf_t;  // A cell of trx_undo_arr_t
+struct trx_purge_t;  // The control structure used in the purge operation
+struct roll_node_t;  //Rollback command node in a query graph
+struct commit_node_t;  // Commit command node in a query graph
+struct trx_named_savept_t;  // SAVEPOINT command node in a query graph
+
+
+/** File objects */
+typedef byte    trx_sysf_t;    // Transaction system header
+typedef byte    trx_rsegf_t;  // Rollback segment header
+typedef byte    trx_usegf_t; // Undo segment header
+typedef byte    trx_ulogf_t; // Undo log header
+typedef byte    trx_upagef_t;  // Undo log page header
+typedef byte    trx_undo_rec_t; //Undo log record
+
 
 
 /** The locks and state of an active transaction. Protected by
@@ -286,29 +394,22 @@ struct trx_t{
 					statement uses, except those
 					in consistent read */
 	/*------------------------------*/
-	UT_LIST_NODE_T(trx_t)
-			trx_list;	/*!< list of transactions;
+	UT_LIST_NODE_T(trx_t) trx_list;	/*!< list of transactions;
 					protected by trx_sys->mutex.
 					The same node is used for both
 					trx_sys_t::ro_trx_list and
 					trx_sys_t::rw_trx_list */
 #ifdef UNIV_DEBUG
 	/** The following two fields are mutually exclusive. */
-	/* @{ */
-
 	bool32		in_ro_trx_list;	/*!< TRUE if in trx_sys->ro_trx_list */
 	bool32		in_rw_trx_list;	/*!< TRUE if in trx_sys->rw_trx_list */
-	/* @} */
 #endif /* UNIV_DEBUG */
-	UT_LIST_NODE_T(trx_t)
-			mysql_trx_list;	/*!< list of transactions created for
-					MySQL; protected by trx_sys->mutex */
+
+	UT_LIST_NODE_T(trx_t) mysql_trx_list;	/*!< list of transactions created for MySQL; protected by trx_sys->mutex */
 #ifdef UNIV_DEBUG
-	bool32		in_mysql_trx_list;
-					/*!< TRUE if in
-					trx_sys->mysql_trx_list */
+	bool32		in_mysql_trx_list; /*!< TRUE if in trx_sys->mysql_trx_list */
 #endif /* UNIV_DEBUG */
-	/*------------------------------*/
+
 	dberr_t		error_state;	/*!< 0 if no error, otherwise error
 					number; NOTE That ONLY the thread
 					doing the transaction is allowed to
@@ -420,11 +521,84 @@ struct trx_t{
 #endif /* UNIV_DEBUG */
 
 	/*------------------------------*/
-	char detailed_error[256];	/*!< detailed error message for last
-					error, or empty. */
+	char detailed_error[256];	/*!< detailed error message for last error, or empty. */
 };
 
 
+
+
+
+
+/** The transaction system central memory data structure. */
+typedef struct st_trx_sys {
+
+	mutex_t		mutex;		/*!< mutex protecting most fields in
+					this structure except when noted
+					otherwise */
+	uint32		n_prepared_trx;	/*!< Number of transactions currently
+					in the XA PREPARED state */
+	uint32		n_prepared_recovered_trx; /*!< Number of transactions
+					currently in XA PREPARED state that are
+					also recovered. Such transactions cannot
+					be added during runtime. They can only
+					occur after recovery if mysqld crashed
+					while there were XA PREPARED
+					transactions. We disable query cache
+					if such transactions exist. */
+	trx_id_t	max_trx_id;	/*!< The smallest number not yet
+					assigned as a transaction id or
+					transaction number */
+
+	UT_LIST_BASE_NODE_T(trx_t) rw_trx_list;	/*!< List of active and committed in
+					memory read-write transactions, sorted
+					on trx id, biggest first. Recovered
+					transactions are always on this list. */
+    UT_LIST_NODE_T(trx_t)	ro_trx_list;	/*!< List of active and committed in
+					memory read-only transactions, sorted
+					on trx id, biggest first. NOTE:
+					The order for read-only transactions
+					is not necessary. We should exploit
+					this and increase concurrency during
+					add/remove. */
+    UT_LIST_NODE_T(trx_t)	mysql_trx_list;	/*!< List of transactions created
+					for MySQL. All transactions on
+					ro_trx_list are on mysql_trx_list. The
+					rw_trx_list can contain system
+					transactions and recovered transactions
+					that will not be in the mysql_trx_list.
+					There can be active non-locking
+					auto-commit read only transactions that
+					are on this list but not on ro_trx_list.
+					mysql_trx_list may additionally contain
+					transactions that have not yet been
+					started in InnoDB. */
+
+                    /** Max number of rollback segments */
+#define TRX_SYS_N_RSEGS 128
+	trx_rseg_t*	const rseg_array[TRX_SYS_N_RSEGS];
+					/*!< Pointer array to rollback
+					segments; NULL if slot not in use;
+					created and destroyed in
+					single-threaded mode; not protected
+					by any mutex, because it is read-only
+					during multi-threaded operation */
+	uint32		rseg_history_len;/*!< Length of the TRX_RSEG_HISTORY
+					list (update undo logs for committed
+					transactions), protected by
+					rseg->mutex */
+} trx_sys_t;
+
+
+//-----------------------------------------------------------------
+
+extern void trx_sys_create_sys_pages(void);
+
+extern void trx_sys_create(void);
+
+extern trx_sysf_t* trx_sysf_get(mtr_t* mtr);
+//-----------------------------------------------------------------
+
+extern trx_sys_t       *trx_sys;
 
 
 #endif  /* _KNL_TRX_H */

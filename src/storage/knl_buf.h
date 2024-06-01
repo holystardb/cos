@@ -4,14 +4,17 @@
 #include "cm_type.h"
 #include "cm_error.h"
 #include "cm_list.h"
+#include "cm_datetime.h"
 #include "cm_dbug.h"
 #include "cm_rwlock.h"
 #include "cm_rbt.h"
 #include "cm_mutex.h"
 #include "knl_mtr.h"
-#include "knl_fsp.h"
+//#include "knl_fsp.h"
+#include "knl_file_system.h"
 #include "knl_hash_table.h"
 #include "knl_page_size.h"
+#include "knl_page_id.h"
 #include "knl_server.h"
 
 #ifdef __cplusplus
@@ -72,90 +75,6 @@ enum class Page_fetch {
     POSSIBLY_FREED
 };
 
-/** Page identifier. */
-class page_id_t {
- public:
-  page_id_t() : m_space(), m_page_no(), m_fold() {}
-
-  page_id_t(space_id_t space, page_no_t page_no)
-      : m_space(space), m_page_no(page_no), m_fold(UINT32_UNDEFINED) {}
-
-  page_id_t(const page_id_t &) = default;
-
-  /** Retrieve the tablespace id.
-  @return tablespace id */
-  inline space_id_t space() const { return (m_space); }
-
-  /** Retrieve the page number.
-  @return page number */
-  inline page_no_t page_no() const { return (m_page_no); }
-
-  /** Retrieve the fold value.
-  @return fold value */
-  inline uint32 fold() const {
-    /* Initialize m_fold if it has not been initialized yet. */
-    if (m_fold == UINT32_UNDEFINED) {
-      m_fold = (m_space << 20) + m_space + m_page_no;
-      ut_ad(m_fold != UINT32_UNDEFINED);
-    }
-
-    return (m_fold);
-  }
-
-  /** Copy the values from a given page_id_t object.
-  @param[in]	src	page id object whose values to fetch */
-  inline void copy_from(page_id_t *src) {
-    m_space = src->space();
-    m_page_no = src->page_no();
-    m_fold = src->fold();
-  }
-
-  /** Reset the values from a (space, page_no).
-  @param[in]	space	tablespace id
-  @param[in]	page_no	page number */
-  inline void reset(space_id_t space, page_no_t page_no) {
-    m_space = space;
-    m_page_no = page_no;
-    m_fold = UINT32_UNDEFINED;
-  }
-
-  /** Reset the page number only.
-  @param[in]	page_no	page number */
-  inline void set_page_no(page_no_t page_no) {
-    m_page_no = page_no;
-    m_fold = UINT32_UNDEFINED;
-  }
-
-  /** Check if a given page_id_t object is equal to the current one.
-  @param[in]	a	page_id_t object to compare
-  @return true if equal */
-  inline bool equals_to(const page_id_t &a) const {
-    return (a.space() == m_space && a.page_no() == m_page_no);
-  }
-
- private:
-  /** Tablespace id. */
-  space_id_t m_space;
-
-  /** Page number. */
-  page_no_t m_page_no;
-
-  /** A fold value derived from m_space and m_page_no,
-  used in hashing. */
-  mutable uint32 m_fold;
-
-  /* Disable implicit copying. */
-  void operator=(const page_id_t &) = delete;
-
-  /** Declare the overloaded global operator<< as a friend of this
-  class. Refer to the global declaration for further details.  Print
-  the given page_id_t object.
-  @param[in,out]	out	the output stream
-  @param[in]	page_id	the page_id_t object to be printed
-  @return the output stream */
-  //friend std::ostream &operator<<(std::ostream &out, const page_id_t &page_id);
-};
-
 enum buf_page_state {
   BUF_BLOCK_POOL_WATCH, /*!< a sentinel for the buffer pool
                         watch, element of buf_pool->watch[] */
@@ -172,8 +91,7 @@ enum buf_page_state {
   BUF_BLOCK_READY_FOR_USE, /*!< when buf_LRU_get_free_block
                            returns a block, it is in this state */
   BUF_BLOCK_FILE_PAGE,     /*!< contains a buffered file page */
-  BUF_BLOCK_MEMORY,        /*!< contains some main memory
-                           object */
+  BUF_BLOCK_MEMORY,        /*!< contains some main memory object */
   BUF_BLOCK_REMOVE_HASH    /*!< hash index should be removed
                            before putting to the free list */
 };
@@ -184,8 +102,7 @@ enum buf_io_fix {
   BUF_IO_READ,     /**< read pending */
   BUF_IO_WRITE,    /**< write pending */
   BUF_IO_PIN       /**< disallow relocation of
-                   block and its removal of from
-                   the flush_list */
+                   block and its removal of from the flush_list */
 };
 
 
@@ -230,7 +147,12 @@ public:
                          state (also protected by the buffer pool mutex), io_fix, buf_fix_count, and accessed; */
     rw_lock_t rw_lock; /*!< read-write lock of the buffer frame */
 
-
+    // based on state, this is a list node, protected either by buf_pool->mutex or by buf_pool->flush_list_mutex,
+    // in one of the following lists in buf_pool:
+    //        - BUF_BLOCK_NOT_USED:   free_pages
+    //        - BUF_BLOCK_FILE_PAGE:  flush_list
+    //        - BUF_BLOCK_ZIP_DIRTY:  flush_list
+    //        - BUF_BLOCK_ZIP_PAGE:   zip_clean
     UT_LIST_NODE_T(buf_page_t) list_node;
 
     uint64 newest_modification;
@@ -247,7 +169,7 @@ public:
 					purposes without holding any
 					mutex or latch */
 
-    unsigned access_time; /*!< time of first access, or 0 if the block was never accessed in the buffer pool.
+    uint32 access_time; /*!< time of first access, or 0 if the block was never accessed in the buffer pool.
                                Protected by block mutex */
 
     bool32 file_page_was_freed;  /*!< this is set to TRUE when fsp frees a page in buffer pool;
@@ -255,7 +177,8 @@ public:
 
 };
 
-struct buf_block_t {
+class buf_block_t {
+public:
   buf_page_t page; /*!< page information; this must be the first field,
                      so that buf_pool->page_hash can point to buf_page_t or buf_block_t */
   byte *frame;     /*!< pointer to buffer frame which
@@ -293,8 +216,7 @@ struct buf_block_t {
 
   unsigned curr_n_fields : 10; /*!< prefix length for hash indexing:
                               number of full fields */
-  unsigned curr_n_bytes : 15;  /*!< number of bytes in hash
-                               indexing */
+  unsigned curr_n_bytes : 15;  /*!< number of bytes in hash indexing */
   unsigned curr_left_side : 1; /*!< TRUE or FALSE in hash indexing */
 
   mutex_t mutex;
@@ -361,12 +283,9 @@ struct buf_pool_t {
     buf_block_t   *blocks;  /*!< array of buffer control blocks */
     uint64         mem_size;
 
-
-
-
-  uint32 instance_no;            /*!< Array index of this buffer pool instance */
-  uint32 curr_pool_size;         /*!< Current pool size in bytes */
-  uint32 LRU_old_ratio;          /*!< Reserve this much of the buffer pool for "old" blocks */
+    uint32         instance_no;            /*!< Array index of this buffer pool instance */
+    uint64         curr_pool_size;         /*!< Current pool size in bytes */
+    uint32         LRU_old_ratio;          /*!< Reserve this much of the buffer pool for "old" blocks */
 
 
   page_no_t read_ahead_area;   /*!< size in pages of the area which
@@ -438,7 +357,7 @@ struct buf_pool_t {
 
   uint64 max_lsn_io; /* Maximum LSN for which write io has already started. */
 
-  UT_LIST_BASE_NODE_T(buf_page_t) free; /*!< base node of the free block list */
+  UT_LIST_BASE_NODE_T(buf_page_t) free_pages;
 
   UT_LIST_BASE_NODE_T(buf_page_t) withdraw;
   /*!< base node of the withdraw
@@ -494,6 +413,10 @@ buf_block_t* buf_block_alloc(buf_pool_t *buf_pool);
 void buf_block_free(buf_block_t *    block);
 
 buf_block_t* buf_block_align(const byte* ptr);
+
+uint32 buf_block_fix(buf_block_t *block);
+uint32 buf_page_fix(buf_page_t *bpage);
+
 
 
 /********************************************************************//**
@@ -551,7 +474,10 @@ bool32 buf_page_is_old(const buf_page_t* bpage);
 void buf_page_set_old(buf_page_t* bpage, bool32 old);
 
 enum buf_io_fix buf_page_get_io_fix(const buf_page_t *bpage);
+void buf_page_set_io_fix(buf_page_t *bpage, enum buf_io_fix io_fix);
+
 enum buf_page_state buf_page_get_state(const buf_page_t *bpage);
+void buf_page_set_state(buf_page_t *bpage, enum buf_page_state state);
 
 
 /********************************************************************//**
@@ -562,6 +488,9 @@ static void buf_page_init(
     const page_size_t &page_size,
     //uint32       zip_size,/*!< in: compressed page size, or 0 */
     buf_block_t *block);  /*!< in/out: block to init */
+
+uint32 buf_page_is_accessed(const buf_page_t *bpage);
+void buf_page_set_accessed(buf_page_t *bpage);
 
 /*******************************************************************//**
 Given a tablespace id and page number tries to get that page.

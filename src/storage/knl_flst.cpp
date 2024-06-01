@@ -4,11 +4,6 @@
 #include "knl_mtr.h"
 #include "knl_page.h"
 
-extern byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
-    fil_addr_t addr, rw_lock_type_t rw_latch, mtr_t *mtr,
-    buf_block_t **ptr_block);
-
-
 /* We define the field offsets of a node for the list */
 #define FLST_PREV   0   /* 6-byte address of the previous list element;
                 the page part of address is FIL_NULL, if no previous element */
@@ -67,9 +62,7 @@ void flst_init(
     flst_write_addr(base + FLST_LAST, fil_addr_null, mtr);
 }
 
-/** Get the length of a list.
-@param[in]	base	base node
-@return length */
+// Get the length of a list
 uint32 flst_get_len(const flst_base_node_t *base)
 {
     return(mach_read_from_4(base + FLST_LEN));
@@ -180,7 +173,7 @@ void flst_add_last(
 			//const page_size_t&	page_size = fil_space_get_page_size(space, &found);
 			//ut_ad(found);
             page_size_t page_size(0);
-			last_node = fut_get_ptr(space, page_size, last_addr, RW_SX_LATCH, mtr, NULL);
+			last_node = fut_get_ptr(space, page_size, last_addr, RW_X_LATCH, mtr, NULL);
 		}
 
 		flst_insert_after(base, last_node, node, mtr);
@@ -221,7 +214,7 @@ void flst_add_first(
 			//const page_size_t&	page_size = fil_space_get_page_size(space, &found);
 			//ut_ad(found);
             page_size_t page_size(0);
-			first_node = fut_get_ptr(space, page_size, first_addr, RW_SX_LATCH, mtr, NULL);
+			first_node = fut_get_ptr(space, page_size, first_addr, RW_X_LATCH, mtr, NULL);
 		}
 
 		flst_insert_before(base, node, first_node, mtr);
@@ -269,7 +262,7 @@ void flst_insert_after(
 		//const page_size_t&	page_size = fil_space_get_page_size(space, &found);
 		//ut_ad(found);
         page_size_t page_size(0);
-		node3 = fut_get_ptr(space, page_size, node3_addr, RW_SX_LATCH, mtr, NULL);
+		node3 = fut_get_ptr(space, page_size, node3_addr, RW_X_LATCH, mtr, NULL);
 		flst_write_addr(node3 + FLST_PREV, node2_addr, mtr);
 	} else {
 		/* node1 was last in list: update last field in base */
@@ -322,7 +315,7 @@ void flst_insert_before(
 		//ut_ad(found);
         page_size_t page_size(0);
 		/* Update next field of node1 */
-		node1 = fut_get_ptr(space, page_size, node1_addr, RW_SX_LATCH, mtr, NULL);
+		node1 = fut_get_ptr(space, page_size, node1_addr, RW_X_LATCH, mtr, NULL);
 		flst_write_addr(node1 + FLST_NEXT, node2_addr, mtr);
 	} else {
 		/* node3 was first in list: update first field in base */
@@ -374,7 +367,7 @@ void flst_remove(
 
 			node1 = page_align(node2) + node1_addr.boffset;
 		} else {
-			node1 = fut_get_ptr(space, page_size, node1_addr, RW_SX_LATCH, mtr, NULL);
+			node1 = fut_get_ptr(space, page_size, node1_addr, RW_X_LATCH, mtr, NULL);
 		}
 
 		ut_ad(node1 != node2);
@@ -392,7 +385,7 @@ void flst_remove(
 
 			node3 = page_align(node2) + node3_addr.boffset;
 		} else {
-			node3 = fut_get_ptr(space, page_size, node3_addr, RW_SX_LATCH, mtr, NULL);
+			node3 = fut_get_ptr(space, page_size, node3_addr, RW_X_LATCH, mtr, NULL);
 		}
 
 		ut_ad(node2 != node3);
@@ -415,7 +408,7 @@ Validates a file-based list.
 @return TRUE if ok */
 bool32 flst_validate(
 	const flst_base_node_t*	base,	/*!< in: pointer to base node of list */
-	mtr_t*			mtr1)	/*!< in: mtr */
+	mtr_t*			mtr)	/*!< in: mtr */
 {
 	uint32			space;
 	const flst_node_t*	node;
@@ -444,12 +437,12 @@ bool32 flst_validate(
     page_size_t	page_size(0);
 
 	len = flst_get_len(base);
-	node_addr = flst_get_first(base, mtr1);
+	node_addr = flst_get_first(base, mtr);
 
 	for (i = 0; i < len; i++) {
 		mtr_start(&mtr2);
 
-		node = fut_get_ptr(space, page_size, node_addr, RW_SX_LATCH, &mtr2, NULL);
+		node = fut_get_ptr(space, page_size, node_addr, RW_X_LATCH, &mtr2, NULL);
 		node_addr = flst_get_next_addr(node, &mtr2);
 
 		mtr_commit(&mtr2); /* Commit mtr2 each round to prevent buffer becoming full */
@@ -457,12 +450,12 @@ bool32 flst_validate(
 
 	ut_a(fil_addr_is_null(node_addr));
 
-	node_addr = flst_get_last(base, mtr1);
+	node_addr = flst_get_last(base, mtr);
 
 	for (i = 0; i < len; i++) {
 		mtr_start(&mtr2);
 
-		node = fut_get_ptr(space, page_size, node_addr, RW_SX_LATCH, &mtr2, NULL);
+		node = fut_get_ptr(space, page_size, node_addr, RW_X_LATCH, &mtr2, NULL);
 		node_addr = flst_get_prev_addr(node, &mtr2);
 
 		mtr_commit(&mtr2); /* Commit mtr2 each round to prevent buffer becoming full */

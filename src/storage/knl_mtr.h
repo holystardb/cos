@@ -68,34 +68,19 @@ typedef struct st_dyn_array{
 #define MTR_COMMITTED          34676
 
 
-/* Types for the mlock objects to store in the mtr memo; NOTE that the
-first 3 values must be RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH */
-//#define MTR_MEMO_PAGE_S_FIX     RW_S_LATCH
-//#define MTR_MEMO_PAGE_X_FIX     RW_X_LATCH
-//#define MTR_MEMO_PAGE_SX_FIX    RW_SX_LATCH
-//#define MTR_MEMO_BUF_FIX        RW_NO_LATCH
-//#define MTR_MEMO_MODIFY         32
-//#define MTR_MEMO_S_LOCK         64
-//#define MTR_MEMO_X_LOCK         128
-
+/* Types for the mlock objects to store in the mtr memo;
+   NOTE that the first 3 values must be RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH */
 enum mtr_memo_type_t {
-  MTR_MEMO_PAGE_S_FIX = RW_S_LATCH,
-
-  MTR_MEMO_PAGE_X_FIX = RW_X_LATCH,
-
-  MTR_MEMO_PAGE_SX_FIX = RW_SX_LATCH,
-
-  MTR_MEMO_BUF_FIX = RW_NO_LATCH,
+    MTR_MEMO_PAGE_S_FIX = RW_S_LATCH,
+    MTR_MEMO_PAGE_X_FIX = RW_X_LATCH,
+    MTR_MEMO_BUF_FIX    = RW_NO_LATCH,
 
 #ifdef UNIV_DEBUG
-  MTR_MEMO_MODIFY = 32,
+    MTR_MEMO_MODIFY = 32,
 #endif /* UNIV_DEBUG */
 
-  MTR_MEMO_S_LOCK = 64,
-
-  MTR_MEMO_X_LOCK = 128,
-
-  MTR_MEMO_SX_LOCK = 256
+    MTR_MEMO_S_LOCK = 64,
+    MTR_MEMO_X_LOCK = 128,
 };
 
 
@@ -346,6 +331,9 @@ bool32 mtr_init(memory_area_t *area);
 mtr_t* mtr_start(mtr_t *mtr);
 void mtr_commit(mtr_t *mtr);
 
+bool32 mtr_memo_contains(mtr_t *mtr,
+    const void *object, /*!< in: object to search */
+    uint32 type); /*!< in: type of object */
 
 
 byte* mlog_open(mtr_t *mtr, uint32 size);

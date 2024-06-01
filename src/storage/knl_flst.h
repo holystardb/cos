@@ -1,6 +1,7 @@
 #ifndef _KNL_FLIST_H
 #define _KNL_FLIST_H
 
+#include "cm_type.h"
 #include "knl_mtr.h"
 #include "knl_fsp.h"
 
@@ -67,27 +68,9 @@ void flst_remove(
     flst_node_t*  node2, /* in: node to remove */
     mtr_t*   mtr); /* in: mini-transaction handle */
 
-/* Cuts off the tail of the list, including the node given.
-The number of nodes which will be removed must be provided by the caller,
-as this function does not measure the length of the tail. */
-void flst_cut_end(
-    flst_base_node_t* base, /* in: pointer to base node of list */
-    flst_node_t* node2, /* in: first node to remove */
-    uint32 n_nodes,/* in: number of nodes to remove, must be >= 1 */
-    mtr_t* mtr); /* in: mini-transaction handle */
-
-/* Cuts off the tail of the list, not including the given node.
-The number of nodes which will be removed must be provided by the caller, as this function does not measure the length of the tail. */
-void flst_truncate_end(
-    flst_base_node_t* base, /* in: pointer to base node of list */
-    flst_node_t*  node2, /* in: first node not to remove */
-    uint32   n_nodes,/* in: number of nodes to remove */
-    mtr_t*   mtr); /* in: mini-transaction handle */
-
 /* Gets list length. */
 uint32 flst_get_len(
-    flst_base_node_t* base, /* in: pointer to base node */
-    mtr_t*   mtr); /* in: mini-transaction handle */
+    const flst_base_node_t* base); /* in: pointer to base node */
 
 /* Gets list first node address. */
 fil_addr_t flst_get_first(
@@ -123,7 +106,7 @@ fil_addr_t flst_read_addr(
 /* Validates a file-based list. */
 bool32 flst_validate(
     flst_base_node_t* base, /* in: pointer to base node of list */
-    mtr_t*   mtr1); /* in: mtr */
+    mtr_t*   mtr); /* in: mtr */
 
 /* Prints info of a file-based list. */
 void flst_print(

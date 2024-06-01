@@ -3,6 +3,9 @@
 #include "knl_server.h"
 #include "knl_buf.h"
 #include "knl_log.h"
+#include "knl_dict.h"
+#include "knl_fsp.h"
+#include "knl_trx.h"
 
 // Create undo tablespace.
 static dberr_t srv_undo_tablespace_create(
@@ -158,6 +161,17 @@ bool32 knl_server_start(memory_area_t* marea)
 
     }
 
+    /* Open all log files and data files in the system tablespace:
+       we keep them open until database shutdown */
+    //fil_open_log_and_system_tablespace_files();
+
+    trx_sys_create();
+
+    err = dict_boot();
+    if (err != DB_SUCCESS) {
+        return(err);
+    }
+
 
     //err = create_log_files(create_new_db, logfilename, dirnamelen, max_flushed_lsn, logfile0);
 
@@ -231,9 +245,38 @@ bool32 knl_server_init_db(memory_area_t* marea)
         return DB_ERROR;
     }
 
+    /* Open all log files and data files in the system tablespace:
+       we keep them open until database shutdown */
+    //fil_open_log_and_system_tablespace_files();
+
+    trx_sys_create();
+
     mtr_start(&mtr);
     fsp_header_init(system_space, srv_db_ctrl.system.size / UNIV_PAGE_SIZE, &mtr);
     mtr_commit(&mtr);
+
+    trx_sys_create_sys_pages();
+
+    //ib_bh = trx_sys_init_at_db_start();
+    //n_recovered_trx = UT_LIST_GET_LEN(trx_sys->rw_trx_list);
+    
+    /* The purge system needs to create the purge view and
+    therefore requires that the trx_sys is inited. */
+    //trx_purge_sys_create(srv_n_purge_threads, ib_bh);
+    
+    err = dict_create();
+    if (err != DB_SUCCESS) {
+        return(err);
+    }
+    
+    //srv_startup_is_before_trx_rollback_phase = FALSE;
+    
+    //bool success = buf_flush_list(UINT32_MAX, LSN_MAX, NULL);
+    //ut_a(success);
+
+
+
+
 
     uint64 lsn = mtr.end_lsn;
     log_write_up_to(lsn);

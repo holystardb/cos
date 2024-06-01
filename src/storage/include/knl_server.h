@@ -74,11 +74,25 @@ extern uint32 srv_n_file_io_threads;
 extern uint32 srv_read_io_threads;
 extern uint32 srv_write_io_threads;
 
+extern uint32 srv_read_io_timeout_seconds;
+extern uint32 srv_write_io_timeout_seconds;
+
+
+// Move blocks to "new" LRU list only if the first access was at least this many milliseconds ago.
+// Not protected by any mutex or latch.
+extern uint32 srv_buf_LRU_old_threshold_ms;
+
 
 /*-------------------------------------------------- */
 
 #define DB_CTRL_FILE_MAX_COUNT    16
 #define DB_CTRL_FILE_VERSION      1
+
+#define DB_REDO_FILE_MAX_COUNT    16
+#define DB_UNDO_FILE_MAX_COUNT    16
+#define DB_TEMP_FILE_MAX_COUNT    16
+
+
 
 typedef struct st_db_ctrl_file {
     char    *name;
@@ -95,9 +109,9 @@ typedef struct st_db_ctrl {
     uint8          redo_count;
     uint8          undo_count;
     uint8          temp_count;
-    db_ctrl_file_t redo_group[DB_CTRL_FILE_MAX_COUNT];
-    db_ctrl_file_t undo_group[DB_CTRL_FILE_MAX_COUNT];
-    db_ctrl_file_t temp_group[DB_CTRL_FILE_MAX_COUNT];
+    db_ctrl_file_t redo_group[DB_REDO_FILE_MAX_COUNT];
+    db_ctrl_file_t undo_group[DB_UNDO_FILE_MAX_COUNT];
+    db_ctrl_file_t temp_group[DB_TEMP_FILE_MAX_COUNT];
     db_ctrl_file_t system;
 
 } db_ctrl_t;
@@ -241,7 +255,8 @@ extern dberr_t srv_create_system();
 extern bool32 db_ctrl_createdatabase(char *database_name, char *charset_name);
 extern bool32 db_ctrl_add_system(char *name, uint64 size, uint64 max_size, bool32 autoextend);
 extern bool32 db_ctrl_add_redo(char *name, uint64 size, uint64 max_size, bool32 autoextend);
-
+extern bool32 db_ctrl_add_undo(char *name, uint64 size, uint64 max_size, bool32 autoextend);
+extern bool32 db_ctrl_add_temp(char *name, uint64 size, uint64 max_size, bool32 autoextend);
 
 
 extern bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl);

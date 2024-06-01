@@ -12,6 +12,42 @@
 #define DICT_HDR_SPACE      0   /* the SYSTEM tablespace */
 #define DICT_HDR_PAGE_NO    FSP_DICT_HDR_PAGE_NO
 
+/* The ids for the basic system tables and their indexes */
+#define DICT_TABLES_ID		1
+#define DICT_COLUMNS_ID		2
+#define DICT_INDEXES_ID		3
+#define DICT_FIELDS_ID		4
+/* The following is a secondary index on SYS_TABLES */
+#define DICT_TABLE_IDS_ID	5
+
+#define	DICT_HDR_FIRST_ID	10	/* the ids for tables etc. start
+from this number, except for basic
+system tables and their above defined
+indexes; ibuf tables and indexes are
+assigned as the id the number
+DICT_IBUF_ID_MIN plus the space id */
+
+/* The offset of the dictionary header on the page */
+#define	DICT_HDR		FSEG_PAGE_DATA
+
+/*-------------------------------------------------------------*/
+/* Dictionary header offsets */
+#define DICT_HDR_ROW_ID		0	/* The latest assigned row id */
+#define DICT_HDR_TABLE_ID	8	/* The latest assigned table id */
+#define DICT_HDR_INDEX_ID	16	/* The latest assigned index id */
+#define DICT_HDR_MAX_SPACE_ID	24	/* The latest assigned space id,or 0*/
+#define DICT_HDR_MIX_ID_LOW	28	/* Obsolete,always DICT_HDR_FIRST_ID*/
+#define DICT_HDR_TABLES		32	/* Root of SYS_TABLES clust index */
+#define DICT_HDR_TABLE_IDS	36	/* Root of SYS_TABLE_IDS sec index */
+#define DICT_HDR_COLUMNS	40	/* Root of SYS_COLUMNS clust index */
+#define DICT_HDR_INDEXES	44	/* Root of SYS_INDEXES clust index */
+#define DICT_HDR_FIELDS		48	/* Root of SYS_FIELDS clust index */
+
+#define DICT_HDR_FSEG_HEADER	56	/* Segment header for the tablespace
+segment into which the dictionary
+header is created */
+/*-------------------------------------------------------------*/
+
 
 /** Max number of rollback segments */
 #define TRX_SYS_N_RSEGS 128
@@ -245,6 +281,7 @@ enum ib_quiesce_t {
 	QUIESCE_COMPLETE		/*!< All done */
 };
 
+typedef	byte    dict_hdr_t;
 
 typedef struct st_dict_table dict_table_t;
 typedef struct st_dict_index dict_index_t;
@@ -847,6 +884,10 @@ struct dict_sys_t {
 };
 
 
+//------------------------------------------------------
+
+extern dberr_t dict_boot(void);
+extern dberr_t dict_create(void);
 
 
 #endif  /* _KNL_DICT_H */

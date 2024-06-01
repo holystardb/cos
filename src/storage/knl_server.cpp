@@ -46,6 +46,12 @@ uint32 srv_n_file_io_threads;
 uint32 srv_read_io_threads;
 uint32 srv_write_io_threads;
 
+uint32 srv_read_io_timeout_seconds = 30;
+uint32 srv_write_io_timeout_seconds = 30;
+
+uint32 srv_buf_LRU_old_threshold_ms = 1000;
+
+
 /** in read-only mode. We don't do any
 recovery and open all tables in RO mode instead of RW mode. We don't
 sync the max trx id to disk either. */
@@ -404,7 +410,7 @@ bool32 db_ctrl_add_system(char *name, uint64 size, uint64 max_size, bool32 autoe
 bool32 db_ctrl_add_redo(char *name, uint64 size, uint64 max_size, bool32 autoextend)
 {
 
-    if (srv_db_ctrl.redo_count >= DB_CTRL_FILE_MAX_COUNT) {
+    if (srv_db_ctrl.redo_count >= DB_REDO_FILE_MAX_COUNT) {
         LOGGER_ERROR(LOGGER, "db_ctrl_add_redo: Error, REDO file has reached the maximum limit");
         return FALSE;
     }
@@ -417,20 +423,53 @@ bool32 db_ctrl_add_redo(char *name, uint64 size, uint64 max_size, bool32 autoext
     return TRUE;
 }
 
+bool32 db_ctrl_add_undo(char *name, uint64 size, uint64 max_size, bool32 autoextend)
+{
+
+    if (srv_db_ctrl.undo_count >= DB_UNDO_FILE_MAX_COUNT) {
+        LOGGER_ERROR(LOGGER, "db_ctrl_add_undo: Error, UNDO file has reached the maximum limit");
+        return FALSE;
+    }
+
+    db_ctrl_file_t *file = &srv_db_ctrl.undo_group[srv_db_ctrl.undo_count];
+    srv_db_ctrl.undo_count++;
+
+    db_ctrl_set_file(file, name, size, max_size, autoextend);
+
+    return TRUE;
+}
+
+bool32 db_ctrl_add_temp(char *name, uint64 size, uint64 max_size, bool32 autoextend)
+{
+
+    if (srv_db_ctrl.temp_count >= DB_TEMP_FILE_MAX_COUNT) {
+        LOGGER_ERROR(LOGGER, "db_ctrl_add_temp: Error, TEMP file has reached the maximum limit");
+        return FALSE;
+    }
+
+    db_ctrl_file_t *file = &srv_db_ctrl.temp_group[srv_db_ctrl.temp_count];
+    srv_db_ctrl.temp_count++;
+
+    db_ctrl_set_file(file, name, size, max_size, autoextend);
+
+    return TRUE;
+}
+
+
 bool32 srv_create_ctrls(char *data_home)
 {
     bool32 ret;
     uint32 dirname_len = (uint32)strlen(data_home);
     char *filename_prefix = "ctrl", filename[1024];
     uint32 filename_size = (uint32)strlen(data_home) + 1 /*PATH_SEPARATOR*/
-        + (uint32)strlen(filename_prefix) + 1 /*index*/ + 4 /* .dat */ + 1 /*'\0'*/;
+        + (uint32)strlen(filename_prefix) + 1 /*index*/ + 1 /*'\0'*/;
     ut_a(filename_size < 1024);
 
     for (uint32 i = 1; i <= 3; i++) {
         if (data_home[dirname_len - 1] != SRV_PATH_SEPARATOR) {
-            sprintf_s(filename, filename_size, "%s%c%s%d.dat", data_home, SRV_PATH_SEPARATOR, filename_prefix, i);
+            sprintf_s(filename, filename_size, "%s%c%s%d", data_home, SRV_PATH_SEPARATOR, filename_prefix, i);
         } else {
-            sprintf_s(filename, filename_size, "%s%s%d.dat", data_home, filename_prefix, i);
+            sprintf_s(filename, filename_size, "%s%s%d", data_home, filename_prefix, i);
         }
 
         /* Remove any old ctrl files. */
@@ -455,7 +494,6 @@ static dberr_t create_db_file(db_ctrl_file_t *ctrl_file)
     os_file_t file;
 
     ret = os_open_file(ctrl_file->name, OS_FILE_CREATE, OS_FILE_SYNC, &file);
-
     if (!ret) {
         LOGGER_ERROR(LOGGER, "can not create file, name = %s", ctrl_file->name);
         return(DB_ERROR);
@@ -480,14 +518,7 @@ dberr_t srv_create_redo_logs()
 
     for (uint32 i = 0; i < srv_db_ctrl.redo_count; i++) {
         ctrl_file = &srv_db_ctrl.redo_group[i];
-
-        /* Remove any old log files. */
-#ifdef __WIN__
-        DeleteFile((LPCTSTR)ctrl_file->name);
-#else
-        unlink(ctrl_file->name);
-#endif
-
+        os_del_file(ctrl_file->name);
         dberr_t err = create_db_file(ctrl_file);
         if (err != DB_SUCCESS) {
             return err;
@@ -499,11 +530,33 @@ dberr_t srv_create_redo_logs()
 
 dberr_t srv_create_undo_log()
 {
+    db_ctrl_file_t *ctrl_file;
+
+    for (uint32 i = 0; i < srv_db_ctrl.undo_count; i++) {
+        ctrl_file = &srv_db_ctrl.undo_group[i];
+        os_del_file(ctrl_file->name);
+        dberr_t err = create_db_file(ctrl_file);
+        if (err != DB_SUCCESS) {
+            return err;
+        }
+    }
+
     return DB_SUCCESS;
 }
 
 dberr_t srv_create_temp()
 {
+    db_ctrl_file_t *ctrl_file;
+
+    for (uint32 i = 0; i < srv_db_ctrl.temp_count; i++) {
+        ctrl_file = &srv_db_ctrl.temp_group[i];
+        os_del_file(ctrl_file->name);
+        dberr_t err = create_db_file(ctrl_file);
+        if (err != DB_SUCCESS) {
+            return err;
+        }
+    }
+
     return DB_SUCCESS;
 }
 
@@ -512,14 +565,7 @@ dberr_t srv_create_system()
     db_ctrl_file_t *ctrl_file;
 
     ctrl_file = &srv_db_ctrl.system;
-
-    /* Remove any old system file */
-#ifdef __WIN__
-    DeleteFile((LPCTSTR)ctrl_file->name);
-#else
-    unlink(ctrl_file->name);
-#endif
-
+    os_del_file(ctrl_file->name);
     dberr_t err = create_db_file(ctrl_file);
     if (err != DB_SUCCESS) {
         return err;

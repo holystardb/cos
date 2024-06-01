@@ -1310,3 +1310,16 @@ void sync_print(FILE *file)
     sync_print_wait_info(file);
 }
 
+// Returns the value of writer_count for the lock.
+// Does not reserve the lock mutex,
+// so the caller must be sure it is not changed during the call.
+// return value of writer_count
+uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock)
+{
+    int32 lock_copy = lock->lock_word;
+    if ((lock_copy != 0) && (lock_copy > -X_LOCK_DECR)) {
+        return(0);
+    }
+    return((lock_copy == 0) ? 1 : (2 - (lock_copy + X_LOCK_DECR)));
+}
+
