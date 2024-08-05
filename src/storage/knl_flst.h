@@ -19,17 +19,15 @@ typedef byte flst_node_t;
 #define FLST_NODE_SIZE  (2 * FIL_ADDR_SIZE)
 
 /* We define the field offsets of a node for the list */
-#define FLST_PREV 0 /* 6-byte address of the previous list element;
-the page part of address is FIL_NULL, if no previous element */
-#define FLST_NEXT FIL_ADDR_SIZE /* 6-byte address of the next
-list element; the page part of address is FIL_NULL, if no next element */
+#define FLST_PREV       0   /* 6-byte address of the previous list element;
+                               the page part of address is FIL_NULL, if no previous element */
+#define FLST_NEXT       FIL_ADDR_SIZE /* 6-byte address of the next list element;
+                                         the page part of address is FIL_NULL, if no next element */
 
 /* We define the field offsets of a base node for the list */
-#define FLST_LEN 0 /* 32-bit list length field */
-#define FLST_FIRST 4 /* 6-byte address of the first element
-of the list; undefined if empty list */
-#define FLST_LAST (4 + FIL_ADDR_SIZE) /* 6-byte address of the
-first element of the list; undefined if empty list */
+#define FLST_LEN        0 /* 32-bit list length field */
+#define FLST_FIRST      4 /* 6-byte address of the first element of the list; undefined if empty list */
+#define FLST_LAST       (4 + FIL_ADDR_SIZE) /* 6-byte address of the first element of the list; undefined if empty list */
 
 /* Initializes a list base node. */
 void flst_init(

@@ -36,7 +36,7 @@ extern "C" {
 
 typedef struct st_dyn_block{
     uint32      used; /* number of data bytes used in this block */
-    byte       *data; /* storage for array elements */	
+    byte*       data; /* storage for array elements */	
     UT_LIST_NODE_T(struct st_dyn_block) list_node; /* linear list node: used in all blocks */
 } dyn_block_t;
 
@@ -132,7 +132,7 @@ enum mlog_id_t {
 	/** Copy record list end to a new created index page */
 	MLOG_LIST_END_COPY_CREATED = 17,
 
-	/** Reorganize an index page in ROW_FORMAT=REDUNDANT */
+	/** Reorganize page */
 	MLOG_PAGE_REORGANIZE = 18,
 
 	/** Create an index page */
@@ -162,10 +162,8 @@ enum mlog_id_t {
 	/** initialize an ibuf bitmap page */
 	MLOG_IBUF_BITMAP_INIT = 27,
 
-#ifdef UNIV_LOG_LSN_DEBUG
 	/** Current LSN */
 	MLOG_LSN = 28,
-#endif /* UNIV_LOG_LSN_DEBUG */
 
 	/** this means that a file page is taken into use and the prior
 	contents of the page should be ignored: in recovery we must not
@@ -278,6 +276,29 @@ enum mlog_id_t {
 	redo log about individual pages */
 	MLOG_INDEX_LOAD = 61,
 
+    MLOG_HEAP_INIT_ITLS = 62,
+    MLOG_HEAP_NEW_ITL = 63,
+    MLOG_HEAP_REUSE_ITL = 64,
+    MLOG_HEAP_CLEAN_ITL = 65,
+
+    HEAP_INSERT = 66,
+    HEAP_UPDATE_INPLACE = 67,
+    HEAP_UPDATE_INPAGE = 68,
+    HEAP_DELETE = 69,
+
+    HEAP_INSERT_MIGR = 70,
+    HEAP_REMOVE_MIGR = 71,
+
+    HEAP_SET_LINK = 72,
+    HEAP_DELETE_LINK = 73,
+
+    TRX_RSEG_PAGE_INIT = 74,
+    TRX_RSEG_SLOT_END = 75,
+    TRX_RSEG_SLOT_BEGIN = 76,
+    TRX_RSEG_SLOT_XA_PREPARE = 77,
+    TRX_RSEG_SLOT_XA_ROLLBACK = 78,
+
+
 	/** biggest value (used in assertions) */
 	MLOG_BIGGEST_TYPE = MLOG_INDEX_LOAD
 };
@@ -326,77 +347,85 @@ typedef struct mtr_memo_slot_t{
 
 
 
-bool32 mtr_init(memory_area_t *area);
+extern inline bool32 mtr_init(memory_area_t *area);
 
-mtr_t* mtr_start(mtr_t *mtr);
-void mtr_commit(mtr_t *mtr);
+extern inline mtr_t* mtr_start(mtr_t *mtr);
+extern inline void mtr_commit(mtr_t *mtr);
 
-bool32 mtr_memo_contains(mtr_t *mtr,
+extern inline bool32 mtr_memo_contains(mtr_t *mtr,
     const void *object, /*!< in: object to search */
     uint32 type); /*!< in: type of object */
 
+extern inline byte* mlog_open(mtr_t *mtr, uint32 size);
+extern inline void mlog_close(mtr_t *mtr, byte *ptr);
 
-byte* mlog_open(mtr_t *mtr, uint32 size);
-void mlog_close(mtr_t *mtr, byte *ptr);
-
-void mlog_write_uint32(
+extern inline void mlog_write_uint32(
     byte*       ptr,    /*!< in: pointer where to write */
     uint32      val,    /*!< in: value to write */
     mlog_id_t   type,   /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
     mtr_t*      mtr);    /*!< in: mini-transaction handle */
 
-void mlog_write_uint64(
+extern inline void mlog_write_uint64(
     byte*       ptr,    /*!< in: pointer where to write */
     uint64      val,    /*!< in: value to write */
     mtr_t*      mtr);    /*!< in: mini-transaction handle */
 
-void mlog_write_string(
+extern inline void mlog_write_string(
     byte*       ptr,    /*!< in: pointer where to write */
     const byte* str,    /*!< in: string to write */
     uint32      len,    /*!< in: string length */
     mtr_t*      mtr);    /*!< in: mini-transaction handle */
 
-void mlog_log_string(
+extern inline void mlog_write_log(
+    uint32 type,
+    uint32 space_id,
+    uint32 page_no,
+    byte  *str,    /*!< in: string to write */
+    uint32 len,    /*!< in: string length */
+    mtr_t* mtr);
+
+extern inline void mlog_log_string(
     byte*   ptr,    /*!< in: pointer written to */
     uint32   len,    /*!< in: string length */
     mtr_t*  mtr);    /*!< in: mini-transaction handle */
 
-uint32 mlog_read_uint32(const byte* ptr, mlog_id_t type);
+extern inline uint32 mlog_read_uint32(const byte* ptr, mlog_id_t type);
 
 /********************************************************//**
 Writes initial part of a log record consisting of one-byte item
 type and four-byte space and page numbers. */
-void mlog_write_initial_log_record(
-	const byte*	ptr,	/*!< in: pointer to (inside) a buffer
-				frame holding the file page where
-				modification is made */
-	mlog_id_t	type,	/*!< in: log item type: MLOG_1BYTE, ... */
-	mtr_t*		mtr);	/*!< in: mini-transaction handle */
+extern inline void mlog_write_initial_log_record(
+    const byte* ptr,    /*!< in: pointer to (inside) a buffer frame
+                             holding the file page where modification is made */
+    mlog_id_t   type,   /*!< in: log item type: MLOG_1BYTE, ... */
+    mtr_t*      mtr);   /*!< in: mini-transaction handle */
 
-uint32 mtr_read_uint32(
-	const byte*	ptr,	/*!< in: pointer from where to read */
-	mlog_id_t	type,	/*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
-	mtr_t*		mtr);
-				/*!< in: mini-transaction handle */
+extern inline uint32 mtr_read_uint32(
+    const byte* ptr,    /*!< in: pointer from where to read */
+    mlog_id_t   type,   /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
+    mtr_t*      mtr);    /*!< in: mini-transaction handle */
 
-void mlog_catenate_uint32(mtr_t *mtr,
+extern inline void mlog_catenate_uint32(mtr_t *mtr,
     uint32 val, /*!< in: value to write */
     uint32 type); /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
 
-uint32 mtr_get_log_mode(mtr_t *mtr);
+extern inline void mlog_catenate_uint64(mtr_t* mtr, uint64 val);
 
-void mtr_memo_push(mtr_t *mtr,  /*!< in: mtr */
-    void *object, /*!< in: object */
-    uint32 type);  /*!< in: object type: MTR_MEMO_S_LOCK, ... */
+extern inline void mlog_catenate_uint32_compressed(mtr_t* mtr, uint32 val);
+extern inline void mlog_catenate_uint64_compressed(mtr_t* mtr, uint64 val);
+
+extern inline uint32 mtr_get_log_mode(mtr_t *mtr);
+
+extern inline mtr_memo_slot_t* mtr_memo_push(mtr_t *mtr, void *object, uint32 type);
+extern inline bool32 mtr_memo_release(mtr_t* mtr, void* object, uint32 type);
+extern inline uint32 mtr_set_savepoint(mtr_t* mtr);
+extern inline void mtr_release_at_savepoint(mtr_t* mtr, uint32 savepoint);
 
 // Check if memo contains the given page
-bool32 mtr_memo_contains_page(mtr_t* mtr, /*!< in: mtr */
-    const byte* ptr, /*!< in: pointer to buffer frame */
-    uint32 type); /*!< in: type of object */
+extern bool32 mtr_memo_contains_page(mtr_t* mtr, const byte* ptr, uint32 type);
 
-
-void mtr_s_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
-void mtr_x_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
+extern inline void mtr_s_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
+extern inline void mtr_x_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
 
 
 // This macro locks an rw-lock in s-mode

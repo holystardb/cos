@@ -22,7 +22,7 @@ bool32 knl_open_or_create_data_file(memory_area_t* marea, bool32 *create_new_db)
     uint32 local_page_count = 8;
     uint32 max_page_count = MEM_POOL_PAGE_UNLIMITED;
     uint32 page_size = 1024 * 8;
-    fil_mpool = mpool_create(marea, local_page_count, max_page_count, page_size);
+    fil_mpool = mpool_create(marea, 0, local_page_count, max_page_count, page_size);
 
     bool32 ret;
     fil_space_t *system_fil_space;
@@ -78,6 +78,16 @@ bool32 knl_open_or_create_data_file(memory_area_t* marea, bool32 *create_new_db)
     return DB_SUCCESS;
 }
 
+#define SRV_MAX_READ_IO_THREADS    32
+#define SRV_MAX_WRITE_IO_THREADS   32
+
+/** io_handler_thread parameters for thread identification */
+static uint32         read_thread_idents[SRV_MAX_READ_IO_THREADS];
+static os_thread_id_t read_thread_ids[SRV_MAX_READ_IO_THREADS];
+static uint32         write_thread_idents[SRV_MAX_WRITE_IO_THREADS];
+static os_thread_id_t write_thread_ids[SRV_MAX_WRITE_IO_THREADS];
+
+
 
 bool32 knl_server_start(memory_area_t* marea)
 {
@@ -103,6 +113,28 @@ bool32 knl_server_start(memory_area_t* marea)
     if (!log_init()) {
         return FALSE;
     }
+
+    uint32 io_limit = OS_AIO_N_PENDING_IOS_PER_THREAD;
+#ifndef __WIN__
+    io_limit = 8 * OS_AIO_N_PENDING_IOS_PER_THREAD;
+#endif
+
+    srv_os_aio_async_read_array = os_aio_array_create(io_limit, srv_read_io_threads);
+    if (srv_os_aio_async_read_array == NULL) {
+        LOGGER_FATAL(LOGGER, "FATAL for create aio read_array");
+        return DB_ERROR;
+    }
+    srv_os_aio_async_write_array = os_aio_array_create(io_limit, srv_write_io_threads);
+    if (srv_os_aio_async_write_array == NULL) {
+        LOGGER_FATAL(LOGGER, "FATAL for create aio write_array");
+        return DB_ERROR;
+    }
+    srv_os_aio_sync_array = os_aio_array_create(io_limit, srv_sync_io_contexts);
+    if (srv_os_aio_sync_array == NULL) {
+        LOGGER_FATAL(LOGGER, "FATAL for create aio sync array");
+        return DB_ERROR;
+    }
+
     for (uint32 i = 0; i < ctrl.redo_count; i++) {
         ret = log_group_add(ctrl.redo_group[i].name, ctrl.redo_group[i].size);
         if (!ret) {
@@ -120,12 +152,17 @@ bool32 knl_server_start(memory_area_t* marea)
     //redo_log_init();
 
     /* Create i/o-handler threads: */
-    for (uint32 i = 0; i < srv_read_io_threads; ++i) {
-        //os_thread_create(read_io_handler_thread, n + i, thread_ids + i);
+    for (uint32 i = 0; i < srv_read_io_threads&& i < SRV_MAX_READ_IO_THREADS; ++i) {
+        read_thread_idents[i] = i;
+        os_thread_create(read_io_handler_thread, &read_thread_idents[i], &read_thread_ids[i]);
     }
-    for (uint32 i = 0; i < srv_write_io_threads; ++i) {
-        //os_thread_create(read_io_handler_thread, n + i, thread_ids + i);
+    for (uint32 i = 0; i < srv_write_io_threads && i < SRV_MAX_WRITE_IO_THREADS; ++i) {
+        write_thread_idents[i] = i;
+        os_thread_create(write_io_handler_thread, &write_thread_idents[i], &write_thread_ids[i]);
     }
+
+
+
 
     /*
     char *name_prefix = "redo";
@@ -152,20 +189,15 @@ bool32 knl_server_start(memory_area_t* marea)
     }
 
     if (create_new_db) {
-        mtr_t mtr;
         uint64 sum_of_new_sizes = srv_system_file_size;
-
-        mtr_start(&mtr);
-        fsp_header_init(0, sum_of_new_sizes, &mtr);
-        mtr_commit(&mtr);
-
+        fsp_init_space(0, sum_of_new_sizes);
     }
 
     /* Open all log files and data files in the system tablespace:
        we keep them open until database shutdown */
     //fil_open_log_and_system_tablespace_files();
 
-    trx_sys_create();
+    trx_sys_create(TRX_RSEG_DEFAULT_COUNT);
 
     err = dict_boot();
     if (err != DB_SUCCESS) {
@@ -186,6 +218,9 @@ bool32 knl_server_init_db(memory_area_t* marea)
     dberr_t err;
     bool32  ret;
 
+    srv_memory_sga = marea;
+
+    LOGGER_INFO(LOGGER, "create contorl file");
     if (!srv_create_ctrls(srv_data_home)) {
         return FALSE;
     }
@@ -202,18 +237,46 @@ bool32 knl_server_init_db(memory_area_t* marea)
         return FALSE;
     }
 
+    LOGGER_INFO(LOGGER, "redo init");
+
     sync_init();   
     mtr_init(marea);  // mini-transaction initialize
 
     if (!log_init()) {  // redo log
         return FALSE;
     }
+
+    LOGGER_INFO(LOGGER, "aio initialize");
+
+    uint32 io_limit = OS_AIO_N_PENDING_IOS_PER_THREAD;
+#ifndef __WIN__
+    io_limit = 8 * OS_AIO_N_PENDING_IOS_PER_THREAD;
+#endif
+
+    srv_os_aio_async_read_array = os_aio_array_create(io_limit, srv_read_io_threads);
+    if (srv_os_aio_async_read_array == NULL) {
+        LOGGER_FATAL(LOGGER, "FATAL for create aio read_array");
+        return DB_ERROR;
+    }
+    srv_os_aio_async_write_array = os_aio_array_create(io_limit, srv_write_io_threads);
+    if (srv_os_aio_async_write_array == NULL) {
+        LOGGER_FATAL(LOGGER, "FATAL for create aio write_array");
+        return DB_ERROR;
+    }
+    srv_os_aio_sync_array = os_aio_array_create(io_limit, srv_sync_io_contexts);
+    if (srv_os_aio_sync_array == NULL) {
+        LOGGER_FATAL(LOGGER, "FATAL for create aio sync array");
+        return DB_ERROR;
+    }
+
     for (uint32 i = 0; i < srv_db_ctrl.redo_count; i++) {
         ret = log_group_add(srv_db_ctrl.redo_group[i].name, srv_db_ctrl.redo_group[i].size);
         if (!ret) {
             return FALSE;
         }
     }
+
+    LOGGER_INFO(LOGGER, "buf pool initialize");
 
     // buffer pool
     err = buf_pool_init(srv_buf_pool_size, srv_buf_pool_instances);
@@ -222,12 +285,27 @@ bool32 knl_server_init_db(memory_area_t* marea)
         return FALSE;
     }
 
+    LOGGER_INFO(LOGGER, "memory pool initialize");
+
     memory_pool_t* fil_mpool;
     uint32 local_page_count = 8;
     uint32 max_page_count = MEM_POOL_PAGE_UNLIMITED;
     uint32 page_size = 1024 * 8;
-    fil_mpool = mpool_create(marea, local_page_count, max_page_count, page_size);
+    fil_mpool = mpool_create(marea, 0, local_page_count, max_page_count, page_size);
 
+    LOGGER_INFO(LOGGER, "create io threads for read and write");
+
+    /* Create i/o-handler threads: */
+    for (uint32 i = 0; i < srv_read_io_threads&& i < SRV_MAX_READ_IO_THREADS; ++i) {
+        read_thread_idents[i] = i;
+        os_thread_create(read_io_handler_thread, &read_thread_idents[i], &read_thread_ids[i]);
+    }
+    for (uint32 i = 0; i < srv_write_io_threads && i < SRV_MAX_WRITE_IO_THREADS; ++i) {
+        write_thread_idents[i] = i;
+        os_thread_create(write_io_handler_thread, &write_thread_idents[i], &write_thread_ids[i]);
+    }
+
+    LOGGER_INFO(LOGGER, "fil system initialize");
 
     // file system
     ret = fil_system_init(fil_mpool, srv_max_n_open, srv_space_max_count, srv_fil_node_max_count);
@@ -249,13 +327,41 @@ bool32 knl_server_init_db(memory_area_t* marea)
        we keep them open until database shutdown */
     //fil_open_log_and_system_tablespace_files();
 
-    trx_sys_create();
+    trx_sys_create(TRX_RSEG_DEFAULT_COUNT);
 
-    mtr_start(&mtr);
-    fsp_header_init(system_space, srv_db_ctrl.system.size / UNIV_PAGE_SIZE, &mtr);
-    mtr_commit(&mtr);
+    // Filespace Header/Extent Descriptor
+    LOGGER_INFO(LOGGER, "fsp space initialize");
+    ut_a(srv_db_ctrl.system.size >= 16 * 1024 * FSP_RESERVED_MAX_PAGE_NO);
+    ret = fsp_init_space(SRV_SYSTEM_SPACE_ID, srv_db_ctrl.system.size / UNIV_PAGE_SIZE);
+    if (!ret) {
+        return DB_ERROR;
+    }
 
+    LOGGER_INFO(LOGGER, "system space extend");
+    // reserved 16MB for system space
+    ret = fsp_system_space_reserve_pages(FSP_RESERVED_MAX_PAGE_NO);
+    if (!ret) {
+        return DB_ERROR;
+    }
+
+    // Transaction System Header
+    LOGGER_INFO(LOGGER, "transaction rollback segment initialize");
     trx_sys_create_sys_pages();
+
+    // Data Dictionary Header
+    LOGGER_INFO(LOGGER, "create dictionary");
+    err = dict_create();
+    if (err != DB_SUCCESS) {
+        return(err);
+    }
+
+    // inode
+
+
+    // Transaction slots
+
+    // Double Write
+
 
     //ib_bh = trx_sys_init_at_db_start();
     //n_recovered_trx = UT_LIST_GET_LEN(trx_sys->rw_trx_list);
@@ -263,12 +369,8 @@ bool32 knl_server_init_db(memory_area_t* marea)
     /* The purge system needs to create the purge view and
     therefore requires that the trx_sys is inited. */
     //trx_purge_sys_create(srv_n_purge_threads, ib_bh);
-    
-    err = dict_create();
-    if (err != DB_SUCCESS) {
-        return(err);
-    }
-    
+
+
     //srv_startup_is_before_trx_rollback_phase = FALSE;
     
     //bool success = buf_flush_list(UINT32_MAX, LSN_MAX, NULL);
@@ -313,5 +415,7 @@ bool32 knl_server_init_db(memory_area_t* marea)
 
 
     return DB_SUCCESS;
+
+
 }
 

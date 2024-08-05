@@ -29,9 +29,9 @@
 #endif
 #include <my_xml.h>
 
-#define ROW_LEN		16
-#define ROW16_LEN	8
-#define MAX_BUF		64*1024
+#define ROW_LEN     16
+#define ROW16_LEN   8
+#define MAX_BUF     64*1024
 
 static CHARSET_INFO all_charsets[512];
 

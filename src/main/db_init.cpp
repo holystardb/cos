@@ -30,25 +30,28 @@ int main(int argc, const char *argv[])
 {
     os_file_init(); // only for windows platform
 
+    char *log_path = "D:\\MyWork\\cos\\data\\";
+    LOGGER.log_init(LOG_INFO, log_path, "initdb");
+
     srv_buf_pool_size = 100 * 1024 * 1024; // 100MB
     srv_buf_pool_instances = 1;
 
     srv_data_home = "D:\\MyWork\\cos\\data";
 
-    srv_system_file_size = 1024 * 1024;
+    srv_system_file_size = 4 * 1024 * 1024;
     srv_system_file_max_size = 100 * 1024 * 1024;
     srv_system_file_auto_extend_size = 1024 * 1024;
 
-    srv_redo_log_buffer_size = 8 * 1024 * 1024; // 8MB
-    srv_redo_log_file_size = 8 * 1024 * 1024;
+    srv_redo_log_buffer_size = 4 * 1024 * 1024; // 8MB
+    srv_redo_log_file_size = 4 * 1024 * 1024;
     srv_redo_log_file_count = 3;
 
-    srv_undo_buffer_size = 8 * 1024 * 1024;
-    srv_undo_file_max_size = 8 * 1024 * 1024;
+    srv_undo_buffer_size = 4 * 1024 * 1024;
+    srv_undo_file_max_size = 4 * 1024 * 1024;
     srv_undo_file_auto_extend_size = 3;
 
-    srv_temp_buffer_size = 8 * 1024 * 1024;
-    srv_temp_file_size = 8 * 1024 * 1024;
+    srv_temp_buffer_size = 2 * 1024 * 1024;
+    srv_temp_file_size = 4 * 1024 * 1024;
     srv_temp_file_max_size = 8 * 1024 * 1024;
     srv_temp_file_auto_extend_size = 3;
 

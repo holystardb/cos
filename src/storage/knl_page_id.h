@@ -19,7 +19,7 @@ public:
 
     /** Retrieve the tablespace id.
     @return tablespace id */
-    inline space_id_t space() const { return (m_space); }
+    inline space_id_t space_id() const { return (m_space); }
 
     /** Retrieve the page number.
     @return page number */
@@ -39,10 +39,10 @@ public:
 
     /** Copy the values from a given page_id_t object.
     @param[in]    src page id object whose values to fetch */
-    inline void copy_from(page_id_t *src) {
-        m_space = src->space();
-        m_page_no = src->page_no();
-        m_fold = src->fold();
+    inline void copy_from(const page_id_t &src) {
+        m_space = src.space();
+        m_page_no = src.page_no();
+        m_fold = src.fold();
     }
 
     /** Reset the values from a (space, page_no).

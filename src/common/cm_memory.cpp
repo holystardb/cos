@@ -22,14 +22,18 @@ memory_area_t* marea_create(uint64 mem_size, bool32 is_extend)
     if (area == NULL) {
         return NULL;
     }
-
-    area->is_extend = is_extend;
     mutex_create(&area->mutex);
+    area->is_extend = is_extend;
     area->offset = 0;
+
+    mutex_create(&area->free_pools_mutex);
     UT_LIST_INIT(area->free_pools);
+
     for (uint32 i = 0; i < MEM_AREA_PAGE_ARRAY_SIZE; i++) {
+        mutex_create(&area->free_pages_mutex[i]);
         UT_LIST_INIT(area->free_pages[i]);
     }
+
     area->size = ut_2pow_round(mem_size, M_CONTEXT_PAGE_SIZE);
     area->buf = NULL;
     if (area->size > 0) {
@@ -68,7 +72,7 @@ void marea_destroy(memory_area_t* area)
     free(area);
 }
 
-memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size, bool32 need_mutex)
+memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size)
 {
     memory_page_t *page;
 
@@ -81,22 +85,24 @@ memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size, bool32 ne
         return NULL;
     }
 
-    if (need_mutex) {
-        mutex_enter(&area->mutex, NULL);
-    }
+    mutex_enter(&area->free_pages_mutex[n], NULL);
     page = UT_LIST_GET_FIRST(area->free_pages[n]);
     if (page) {
         UT_LIST_REMOVE(list_node, area->free_pages[n], page);
-    } else if (area->offset + page_size + MemoryPageHeaderSize <= area->size) {
-        page = (memory_page_t *)(area->buf + area->offset);
-        area->offset += page_size + MemoryPageHeaderSize;
     }
-    if (need_mutex) {
+    mutex_exit(&area->free_pages_mutex[n]);
+
+    if (page == NULL) {
+        mutex_enter(&area->mutex, NULL);
+        if (area->offset + page_size + MemoryPageHeaderSize <= area->size) {
+            page = (memory_page_t *)(area->buf + area->offset);
+            area->offset += page_size + MemoryPageHeaderSize;
+        }
         mutex_exit(&area->mutex);
     }
 
     if (page == NULL && area->is_extend) {
-        page = (memory_page_t *)malloc(page_size + ut_align8(sizeof(memory_page_t)));
+        page = (memory_page_t *)malloc(page_size + MemoryPageHeaderSize);
     }
 
     return page;
@@ -108,23 +114,24 @@ void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size)
 
     ut_a(n < MEM_AREA_PAGE_ARRAY_SIZE);
 
-    mutex_enter(&area->mutex, NULL);
+    mutex_enter(&area->free_pages_mutex[n], NULL);
     UT_LIST_ADD_LAST(list_node, area->free_pages[n], page);
-    mutex_exit(&area->mutex);
+    mutex_exit(&area->free_pages_mutex[n]);
 }
 
-memory_pool_t* mpool_create(memory_area_t *area,
+memory_pool_t* mpool_create(memory_area_t *area, uint32 initial_page_count,
     uint32 local_page_count, uint32 max_page_count, uint32 page_size)
 {
     memory_page_t *page;
     memory_pool_t *pool = NULL;
 
     if (page_size == 0 || page_size % 1024 != 0 || page_size > MEM_AREA_PAGE_MAX_SIZE ||
-        local_page_count == 0 || max_page_count < local_page_count) {
+        initial_page_count > max_page_count || initial_page_count > local_page_count ||
+        local_page_count > max_page_count) {
         return NULL;
     }
 
-    mutex_enter(&area->mutex, NULL);
+    mutex_enter(&area->free_pools_mutex, NULL);
 
 retry:
 
@@ -132,9 +139,9 @@ retry:
     if (pool) {
         UT_LIST_REMOVE(list_node, area->free_pools, pool);
     } else {
-        page = marea_alloc_page(area, M_POOL_PAGE_SIZE, FALSE);
+        page = marea_alloc_page(area, M_POOL_PAGE_SIZE);
         if (page == NULL) {
-            mutex_exit(&area->mutex);
+            mutex_exit(&area->free_pools_mutex);
 
             return NULL;
         }
@@ -149,17 +156,19 @@ retry:
         goto retry;
     }
 
-    mutex_exit(&area->mutex);
+    mutex_exit(&area->free_pools_mutex);
 
     //
     mutex_create(&pool->mutex);
     mutex_create(&pool->context_mutex);
     mutex_create(&pool->stack_context_mutex);
+    pool->initial_page_count = initial_page_count;
     pool->local_page_count = local_page_count;
     pool->max_page_count = max_page_count;
     pool->page_alloc_count = 0;
     pool->page_size = page_size;
     pool->area = area;
+    pool->next_alloc_free_page_list_id = 0;
 
     UT_LIST_INIT(pool->free_contexts);
     UT_LIST_INIT(pool->context_used_pages);
@@ -168,7 +177,21 @@ retry:
 
     for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
         mutex_create(&pool->free_pages_mutex[i]);
-        UT_LIST_INIT(pool->free_pages[i]);
+        UT_LIST_INIT(pool->free_pages[i].pages);
+        pool->free_pages[i].count = 0;
+    }
+
+    for (uint32 i = 0; i < pool->initial_page_count; i++) {
+        page = marea_alloc_page(pool->area, pool->page_size);
+        if (page) {
+            uint32 owner_list_id = i % MPOOL_FREE_PAGE_LIST_COUNT;
+
+            mutex_enter(&pool->free_pages_mutex[owner_list_id], NULL);
+            UT_LIST_ADD_LAST(list_node, pool->free_pages[owner_list_id].pages, page);
+            mutex_exit(&pool->free_pages_mutex[owner_list_id]);
+
+            atomic32_dec(&pool->page_alloc_count);
+        }
     }
 
     return pool;
@@ -195,36 +218,45 @@ void mpool_destroy(memory_pool_t *pool)
     UT_LIST_INIT(pool->stack_context_used_pages);
 
     for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
-        page = UT_LIST_GET_FIRST(pool->free_pages[i]);
+        page = UT_LIST_GET_FIRST(pool->free_pages[i].pages);
         while (page) {
-            UT_LIST_REMOVE(list_node, pool->free_pages[i], page);
+            UT_LIST_REMOVE(list_node, pool->free_pages[i].pages, page);
             marea_free_page(pool->area, page, pool->page_size);
-            page = UT_LIST_GET_FIRST(pool->free_pages[i]);
+            page = UT_LIST_GET_FIRST(pool->free_pages[i].pages);
         }
-        UT_LIST_INIT(pool->free_pages[i]);
+        UT_LIST_INIT(pool->free_pages[i].pages);
+        pool->free_pages[i].count = 0;
     }
 
-    mutex_enter(&pool->area->mutex, NULL);
+    mutex_enter(&pool->area->free_pools_mutex, NULL);
     UT_LIST_ADD_LAST(list_node, pool->area->free_pools, pool);
-    mutex_exit(&pool->area->mutex);
+    mutex_exit(&pool->area->free_pools_mutex);
 }
 
 static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
 {
     memory_page_t *page;
-    bool32 need_alloc = FALSE;
+    bool32         need_alloc = FALSE;
+    uint32         owner_list_id;
+    uint32         owner_list_count = UINT_MAX32;
 
     for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
         index = (i + index) % MPOOL_FREE_PAGE_LIST_COUNT;
 
         mutex_enter(&pool->free_pages_mutex[index], NULL);
-        page = UT_LIST_GET_FIRST(pool->free_pages[index]);
+        page = UT_LIST_GET_FIRST(pool->free_pages[index].pages);
         if (page != NULL) {
-            UT_LIST_REMOVE(list_node, pool->free_pages[index], page);
+            UT_LIST_REMOVE(list_node, pool->free_pages[index].pages, page);
             mutex_exit(&pool->free_pages_mutex[index]);
             break;
         }
         mutex_exit(&pool->free_pages_mutex[index]);
+
+        uint32 count = pool->free_pages[index].count;
+        if (owner_list_count > count) {
+            owner_list_count = count;
+            owner_list_id = i;
+        }
     }
 
     if (page) {
@@ -235,6 +267,8 @@ static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
     if (page_alloc_count < pool->max_page_count) {
         page = marea_alloc_page(pool->area, pool->page_size);
         if (page) {
+            page->owner_list_id = owner_list_id;
+            atomic32_inc(&pool->free_pages[owner_list_id].count);
             return page;
         }
     }
@@ -243,28 +277,31 @@ static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
     return NULL;
 }
 
-static void mpool_free_page_low(memory_pool_t *pool, memory_page_t *page, uint64 index)
-{
-    if ((uint32)pool->page_alloc_count > pool->local_page_count) {
-        marea_free_page(pool->area, page, pool->page_size);
-        atomic32_dec(&pool->page_alloc_count);
-        return;
-    }
-
-    index = index % MPOOL_FREE_PAGE_LIST_COUNT;
-    mutex_enter(&pool->free_pages_mutex[index], NULL);
-    UT_LIST_ADD_LAST(list_node, pool->free_pages[index], page);
-    mutex_exit(&pool->free_pages_mutex[index]);
-}
-
 memory_page_t* mpool_alloc_page(memory_pool_t *pool)
 {
-    return mpool_alloc_page_low(pool, 0);
+    uint32 list_id = pool->next_alloc_free_page_list_id++;
+    return mpool_alloc_page_low(pool, list_id);
 }
 
 void mpool_free_page(memory_pool_t *pool, memory_page_t *page)
 {
-    mpool_free_page_low(pool, page, 0);
+    uint32 owner_list_id = page->owner_list_id;
+    ut_a(owner_list_id < MPOOL_FREE_PAGE_LIST_COUNT);
+
+    if ((uint32)pool->page_alloc_count > pool->local_page_count) {
+        ut_a(pool->page_alloc_count >= 0);
+        atomic32_dec(&pool->page_alloc_count);
+
+        ut_a(pool->free_pages[owner_list_id].count >= 0);
+        atomic32_dec(&pool->free_pages[owner_list_id].count);
+
+        marea_free_page(pool->area, page, pool->page_size);
+        return;
+    }
+
+    mutex_enter(&pool->free_pages_mutex[owner_list_id], NULL);
+    UT_LIST_ADD_LAST(list_node, pool->free_pages[owner_list_id].pages, page);
+    mutex_exit(&pool->free_pages_mutex[owner_list_id]);
 }
 
 static void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
@@ -459,7 +496,7 @@ void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
     mutex_exit(&context->mutex);
 
     if (is_need_free) {
-        mpool_free_page_low(context->pool, page, (uint64)context);
+        mpool_free_page(context->pool, page);
     }
 }
 
@@ -497,7 +534,7 @@ void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
     page = UT_LIST_GET_FIRST(used_buf_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_buf_pages, page);
-        mpool_free_page_low(context->pool, page, (uint64)context);
+        mpool_free_page(context->pool, page;
         page = UT_LIST_GET_FIRST(used_buf_pages);
     }
 }
@@ -517,7 +554,7 @@ bool32 mcontext_stack_clean(memory_stack_context_t *context)
     page = UT_LIST_GET_FIRST(used_buf_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_buf_pages, page);
-        mpool_free_page_low(context->pool, page, (uint64)context);
+        mpool_free_page(context->pool, page;
         page = UT_LIST_GET_FIRST(used_buf_pages);
     }
 
@@ -568,7 +605,7 @@ bool32 mcontext_clean(memory_context_t *context)
     page = UT_LIST_GET_FIRST(used_block_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_block_pages, page);
-        mpool_free_page_low(context->pool, page, (uint64)context);
+        mpool_free_page(context->pool, page;
         page = UT_LIST_GET_FIRST(used_block_pages);
     }
 

@@ -205,6 +205,9 @@ static bool32 log_writer_write_to_file(log_group_t *group, uint64 start_pos, uin
         goto err_exit;
     }
 
+    LOGGER_INFO(LOGGER, "log_writer write redo to group, group name %s position %lu - %lu",
+        group->name, group->write_offset, group->write_offset + data_len);
+
     group->write_offset += data_len;
 
     return TRUE;
@@ -434,6 +437,11 @@ err_exit:
     exit(1);
 }
 
+inline lsn_t log_get_flushed_lsn()
+{
+    return log_sys->flusher_flushed_lsn;
+}
+
 static uint32 log_calc_data_size(uint64 start_lsn, uint32 len)
 {
     uint32 data_len;
@@ -461,20 +469,9 @@ static uint32 log_calc_data_size(uint64 start_lsn, uint32 len)
 // return: start lsn of the log record */
 log_buf_lsn_t log_buffer_reserve(uint32 len) /*!< in: length of data to be catenated */
 {
-    uint64        log_waits = 0;
     log_buf_lsn_t cur_log_lsn;
 
     ut_a(len < log_sys->buf_size / 2);
-    ut_a(log_sys->buf_lsn.val.lsn >= log_sys->writer_writed_lsn);
-
-    while (log_sys->buf_lsn.val.lsn - log_sys->writer_writed_lsn + len > log_sys->buf_size) {
-        log_waits++;
-        os_thread_sleep(100);
-    }
-
-    if (log_waits > 0) {
-        srv_stats.log_waits.add(log_waits);
-    }
 
 #ifdef __WIN__
 
@@ -486,6 +483,7 @@ log_buf_lsn_t log_buffer_reserve(uint32 len) /*!< in: length of data to be caten
     mutex_exit(&(log_sys->mutex));
 
 #else
+
     log_buf_lsn_t next_log_lsn;
 
 retry_loop:
@@ -517,7 +515,7 @@ retry_check:
         os_thread_sleep(100);
         goto retry_check;
     }
-    
+
     if (log_sys->buf_size - (start_lsn - log_sys->writer_writed_lsn) < str_len) {
         log_waits++;
         os_thread_sleep(100);
@@ -634,7 +632,7 @@ bool32 log_group_add(char *name, uint64 file_size)
 
     group->id = log_sys->group_count;
     group->status = LogGroupStatus::INACTIVE;
-    group->aio_ctx = os_aio_array_alloc_context(log_sys->aio_array);
+    group->aio_ctx = log_sys->aio_ctx;
     group->file_size = file_size;
     group->write_offset = LOG_BUF_WRITE_MARGIN;
     log_sys->file_size += group->file_size - LOG_BUF_WRITE_MARGIN;
@@ -665,6 +663,7 @@ bool32 log_init()
     log_sys = (log_t*)malloc(sizeof(log_t));
 
     mutex_create(&log_sys->mutex);
+    mutex_create(&log_sys->log_flush_order_mutex);
 
     log_sys->buf_ptr = (byte*)malloc(srv_redo_log_buffer_size + OS_FILE_LOG_BLOCK_SIZE);
     log_sys->buf = (byte*)ut_align(log_sys->buf_ptr, OS_FILE_LOG_BLOCK_SIZE);
@@ -718,13 +717,14 @@ bool32 log_init()
         return FALSE;
     }
 
-    uint32 max_io_operation_count = LOG_GROUP_MAX_COUNT;
-    uint32 io_context_count = LOG_GROUP_MAX_COUNT;
-    log_sys->aio_array = os_aio_array_create(max_io_operation_count, io_context_count);
+    uint32 io_pending_count = 8;
+    uint32 io_context_count = 1;
+    log_sys->aio_array = os_aio_array_create(io_pending_count, io_context_count);
     if (log_sys->aio_array == NULL) {
         LOGGER_ERROR(LOGGER, "log_init: failed to create aio array");
         return FALSE;
     }
+    log_sys->aio_ctx = os_aio_array_alloc_context(log_sys->aio_array);
 
     log_sys->current_write_group = 0;
     log_sys->current_flush_group = 0;
@@ -733,9 +733,6 @@ bool32 log_init()
 
     return TRUE;
 }
-
-
-
 
 // Writes the checkpoint info
 static void log_checkpoint_write()

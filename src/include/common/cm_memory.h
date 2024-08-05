@@ -18,8 +18,9 @@ extern "C" {
 
 typedef struct st_memory_page {
     UT_LIST_NODE_T(struct st_memory_page) list_node;
-    void *context;
-    uint64 reserved[5];
+    void*  context;
+    uint64 owner_list_id;
+    uint64 reserved[4];
 } memory_page_t;
 
 #define MEM_AREA_PAGE_MAX_SIZE             (32*1024*1024)
@@ -31,18 +32,28 @@ typedef struct st_memory_area {
     char                *buf;
     uint64               offset;
     uint64               size;
-    bool32               is_extend;
     mutex_t              mutex;
+    bool32               is_extend;
+
+    mutex_t              free_pages_mutex[MEM_AREA_PAGE_ARRAY_SIZE];
     //  1k  2k  4k  8k  16k  32k  64k  128k  256k  512k  1m  2m  4m  8m  16m  32m
     //  0   1   2   3   4    5    6    7     8     9     10  11  12  13  14   15
     UT_LIST_BASE_NODE_T(memory_page_t) free_pages[MEM_AREA_PAGE_ARRAY_SIZE];
+
+    mutex_t              free_pools_mutex;
     UT_LIST_BASE_NODE_T(memory_pool_t) free_pools;
 } memory_area_t;
 
 typedef struct st_memory_context memory_context_t;
 typedef struct st_memory_stack_context memory_stack_context_t;
 
-#define MPOOL_FREE_PAGE_LIST_COUNT    7
+#define MPOOL_FREE_PAGE_LIST_COUNT    16
+
+typedef struct st_memory_free_pages {
+    atomic32_t    count;
+    UT_LIST_BASE_NODE_T(memory_page_t) pages;
+} memory_free_pages_t;
+
 struct st_memory_pool {
     UT_LIST_NODE_T(struct st_memory_pool) list_node;
     memory_area_t   *area;
@@ -51,10 +62,13 @@ struct st_memory_pool {
     mutex_t          stack_context_mutex;
     mutex_t          free_pages_mutex[MPOOL_FREE_PAGE_LIST_COUNT];
     uint32           page_size;
+    uint32           initial_page_count;
     uint32           local_page_count;
     uint32           max_page_count;
     atomic32_t       page_alloc_count;
-    UT_LIST_BASE_NODE_T(memory_page_t) free_pages[MPOOL_FREE_PAGE_LIST_COUNT];
+
+    uint32           next_alloc_free_page_list_id;
+    memory_free_pages_t free_pages[MPOOL_FREE_PAGE_LIST_COUNT];
 
     // for context
     UT_LIST_BASE_NODE_T(memory_context_t) free_contexts;
@@ -66,7 +80,7 @@ struct st_memory_pool {
 
 #define MEM_POOL_PAGE_UNLIMITED        0xFFFFFFFF
 
-#define MEM_BLOCK_FREE_LIST_SIZE       8
+#define MEM_BLOCK_FREE_LIST_SIZE       16
 #define MEM_BLOCK_MIN_SIZE             64
 #define MEM_BLOCK_MAX_SIZE             8192
 
@@ -84,19 +98,19 @@ typedef struct st_mem_buf {
 } mem_buf_t;
 
 struct st_memory_context {
-    UT_LIST_NODE_T(struct st_memory_context) list_node;
+    UT_LIST_NODE_T(memory_context_t) list_node;
     memory_pool_t   *pool;
     mutex_t          mutex;
 
     UT_LIST_BASE_NODE_T(memory_page_t) used_block_pages;
     // for alloc and free
-    //  64  128  256  512  1k  2k  4k  8k
-    //  0   1    2    3    4   5   6   7
+    //  64  128  256  512  1k  2k  4k  8k  16k  32k  64k  128k  256k  512k  1m  2m
+    //  0   1    2    3    4   5   6   7    8    9   10    11    12    13   14  15
     UT_LIST_BASE_NODE_T(mem_block_t) free_mem_blocks[MEM_BLOCK_FREE_LIST_SIZE];
 };
 
 struct st_memory_stack_context {
-    UT_LIST_NODE_T(struct st_memory_stack_context) list_node;
+    UT_LIST_NODE_T(memory_stack_context_t) list_node;
     memory_pool_t   *pool;
     mutex_t          mutex;
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
@@ -107,10 +121,11 @@ struct st_memory_stack_context {
 
 extern memory_area_t* marea_create(uint64 mem_size, bool32 is_extend);
 extern void marea_destroy(memory_area_t* area);
-extern memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size, bool32 need_mutex = TRUE);
+extern memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size);
 extern void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size);
 
-extern memory_pool_t* mpool_create(memory_area_t *area, uint32 local_page_count, uint32 max_page_count, uint32 page_size);
+extern memory_pool_t* mpool_create(memory_area_t *area,
+    uint32 initial_page_count, uint32 local_page_count, uint32 max_page_count, uint32 page_size);
 extern void mpool_destroy(memory_pool_t *pool);
 extern memory_page_t* mpool_alloc_page(memory_pool_t *pool);
 extern void mpool_free_page(memory_pool_t *pool, memory_page_t *page);
@@ -124,6 +139,10 @@ extern bool32 mcontext_clean(memory_context_t *context);
 extern void* mcontext_alloc(memory_context_t *context, uint32 size, const char* file, int line);
 extern void* mcontext_realloc(void *ptr, uint32 size, const char* file, int line);
 extern void mcontext_free(void *ptr, memory_context_t *context = NULL);
+
+#define mem_alloc(mem_ctx, size)  mcontext_alloc(mem_ctx, size, __FILE__, __LINE__)
+#define mem_realloc(ptr, size)    mcontext_realloc(ptr, size, __FILE__, __LINE__)
+#define mem_free(ptr)             mcontext_free(ptr)
 
 
 //------------------------------------------------------------------------------
@@ -159,6 +178,14 @@ extern uint32 MemoryBufHeaderSize;
 
 #define ut_malloc(size)         malloc(size)
 #define ut_free(size)           free(size)
+
+extern inline void* ut_malloc_zero(size_t size)
+{
+    void* tmp = malloc(size);
+    memset(tmp, '\0', size);
+    return tmp;
+}
+
 
 #ifdef UNIV_MEMROY_VALGRIND
 #define my_malloc(mctx, size)   malloc(size)

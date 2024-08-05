@@ -45,16 +45,18 @@ extern "C" {
 #define __builtin_expect(x, expected_value)     (x)
 #endif
 
-#define likely(x)           __builtin_expect((x),1)
-#define unlikely(x)         __builtin_expect((x),0)
-#define LIKELY(x)           __builtin_expect((x),1)
-#define UNLIKELY(x)         __builtin_expect((x),0)
+#define likely(x)               __builtin_expect((x), 1)
+#define unlikely(x)             __builtin_expect((x), 0)
+#define LIKELY(x)               __builtin_expect((x), 1)
+#define UNLIKELY(x)             __builtin_expect((x), 0)
+#define expect(expr, constant)  __builtin_expect(expr, constant)
+#define EXPECT(expr, constant)  __builtin_expect(expr, constant)
 
 
 /* Compile-time constant of the given array's size. */
 #define UT_ARR_SIZE(a)      (sizeof(a) / sizeof((a)[0]))
 
-#if defined(_MSC_VER)
+#ifdef __WIN__
 #define ALWAYS_INLINE       __forceinline
 #else
 #define ALWAYS_INLINE       __attribute__((always_inline)) inline
@@ -73,7 +75,7 @@ but not format or unused which we use quite a lot.
 #endif
 #endif
 
-#if defined(_MSC_VER)
+#ifdef __WIN__
 #define THREAD_LOCAL        __declspec(thread)
 #else
 #define THREAD_LOCAL        __thread
@@ -206,6 +208,11 @@ typedef unsigned char*          PUCHAR;
 #define OS_ASSERT(c)            assert(c)
 #define OS_ERROR                assert(0)
 
+#define SIZE_K(n)               ((n) * 1024)
+#define SIZE_M(n)               (1024 * SIZE_K(n))
+#define SIZE_G(n)               (1024 * (uint64)SIZE_M(n))
+#define SIZE_T(n)               (1024 * (uint64)SIZE_G(n))
+
 
 /* Define some general constants */
 #ifndef TRUE
@@ -219,11 +226,12 @@ typedef unsigned char*          PUCHAR;
 #define SIZEOF_CHARP            sizeof(char *)
 
 
-/** The 'undefined' value for a ulint */
+/** The 'undefined' value for a uint32 */
 #define UINT32_UNDEFINED        ((uint32)(-1))
 
 #define INT_MIN64               (~0x7FFFFFFFFFFFFFFFLL)
 #define INT_MAX64               0x7FFFFFFFFFFFFFFFLL
+#define UINT_MAX64              0xFFFFFFFFFFFFFFFFLL
 #define INT_MIN32               (~0x7FFFFFFFL)
 #define INT_MAX32               0x7FFFFFFFL
 #define UINT_MAX32              0xFFFFFFFFL
@@ -255,6 +263,9 @@ typedef unsigned char*          PUCHAR;
 #define SRV_PATH_SEPARATOR     '/'
 #endif
 
+#define VAR_OFFSET(type, member)    ((unsigned long long)(&((type *)0)->member))
+#define OFFSET_OF                   offsetof
+
 #ifdef __WIN__
 #define os_file_t                           HANDLE
 #define OS_FILE_INVALID_HANDLE              INVALID_HANDLE_VALUE
@@ -275,6 +286,20 @@ typedef enum
     LOG_TRACE    = 7,
 } log_level_t;
 
+/** Shutdown state */
+typedef enum shutdown_state_enum {
+    SHUTDOWN_NONE = 0,	/*!< running normally */
+    SHUTDOWN_CLEANUP,	/*!< Cleaning up in logs_empty_and_mark_files_at_shutdown() */
+    SHUTDOWN_FLUSH_PHASE,/*!< At this phase the master and the
+                             purge threads must have completed their
+                             work. Once we enter this phase the
+                             page_cleaner can clean up the buffer
+                             pool and exit */
+    SHUTDOWN_LAST_PHASE,/*!< Last phase after ensuring that
+                            the buffer pool can be freed: flush
+                            all file spaces and close all files */
+    SHUTDOWN_EXIT_THREADS/*!< Exit all threads */
+} shutdown_state_enum_t;
 
 /***********************************************************************************************
 *                                      callback function                                       *
@@ -300,18 +325,22 @@ typedef void (*callback_func) (callback_data_t *data);
 *                                      return status                                           *
 ***********************************************************************************************/
 
+#ifndef EOK
+#define EOK (0)
+#endif
 
-typedef enum status_stuct
-{
-    M_ERROR = -1,
-    M_SUCCESS = 0,
-    M_TIMEOUT = 1,
+typedef enum st_status {
+    CM_EAGAIN   = -2,
+    CM_ERROR    = -1,
+    CM_SUCCESS  = 0,
+    CM_TIMEDOUT = 1,
 } status_t;
+
 
 #define M_RETURN_IF_ERROR(ret)            \
     do {                                  \
         status_t _status_ = (ret);        \
-        if (_status_ != M_SUCCESS) {      \
+        if (_status_ != CM_SUCCESS) {      \
             return _status_;              \
         }                                 \
     } while (0)
@@ -330,6 +359,36 @@ typedef enum status_stuct
         }                                 \
     } while (0)
 
+// securec memory function check
+#define MEMS_RETURN_IFERR(func)                        \
+    do {                                               \
+        int32 __code__ = (func);                       \
+        if (UNLIKELY(__code__ != EOK)) {               \
+            CM_THROW_ERROR(ERR_SYSTEM_CALL, __code__); \
+            return CM_ERROR;                           \
+        }                                              \
+    } while (0)
+
+
+// securec memory function check
+#define MEMS_RETVOID_IFERR(func)                       \
+    do {                                               \
+        int32 __code__ = (func);                       \
+        if (UNLIKELY(__code__ != EOK)) {               \
+            CM_THROW_ERROR(ERR_SYSTEM_CALL, __code__); \
+            return;                                    \
+        }                                              \
+    } while (0)
+
+// for snprintf_s/sprintf_s..., return CM_ERROR if error
+#define SPRINTF_RETURN_IFERR(func)                        \
+    do {                                               \
+        int32 __code__ = (func);                       \
+        if (UNLIKELY(__code__ == -1)) {                \
+            CM_THROW_ERROR(ERR_SYSTEM_CALL, __code__); \
+            return CM_ERROR;                           \
+        }                                              \
+    } while (0)
 
 
 /***********************************************************************************************
@@ -337,7 +396,7 @@ typedef enum status_stuct
 ***********************************************************************************************/
 
 #ifndef UNIV_DEBUG
-#define UNIV_DEBUG              /*  */
+#define UNIV_DEBUG              /* ut_ad, ut_d */
 #endif
 #ifndef UNIV_MEMORY_DEBUG
 #define UNIV_MEMORY_DEBUG       /* detect memory leaks etc */
@@ -346,7 +405,7 @@ typedef enum status_stuct
 //#define UNIV_MEMROY_VALGRIND    /* Enable extra Valgrind instrumentation */
 #endif
 #ifndef UNIV_DEBUG_OUTPUT
-#define UNIV_DEBUG_OUTPUT       /* DBUG_*, ut_ad, ut_d */\
+#define UNIV_DEBUG_OUTPUT       /* DBUG_* */
 #endif
 #ifndef UNIV_MUTEX_DEBUG
 #define UNIV_MUTEX_DEBUG        /* mutex and latch */

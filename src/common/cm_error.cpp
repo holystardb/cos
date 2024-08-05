@@ -2,6 +2,8 @@
 #include "cm_dbug.h"
 #include "cm_memory.h"
 
+THREAD_LOCAL error_info_t g_tls_error = { 0 };
+
 /* Max length of a error message. */
 #define ERRMSGSIZE      (512)
 
@@ -12,9 +14,32 @@ static struct my_err_head
 {
   struct my_err_head    *meh_next;         /* chain link */
   const char**          (*get_errmsgs) (); /* returns error message format */
-  int                   meh_first;       /* error number matching array slot 0 */
+  int                   meh_first;         /* error number matching array slot 0 */
   int                   meh_last;          /* error number matching last slot */
 } my_errmsgs_globerrs = {NULL, get_global_errmsgs, EE_ERROR_FIRST, EE_ERROR_LAST};
+
+const char *g_error_desc[] = {
+    [CM_ERROR_UNSET] = "Normal, no error reported",
+    [CM_ERROR] = "unknown error",
+
+    [ERR_NO_FREE_UNDO_PAGE] = "Fatal error, Out of undo segment tablespace",
+    [ERR_UNDO_RECORD_TOO_BIG] = "Size of undo row is too large, row size=%u",
+
+
+    [ERR_ALLOC_MEMORY] = "Failed to allocate %llu bytes for %s",
+    [ERR_STACK_OVERFLOW] = "Session stack overflow",
+    [ERR_SYSTEM_CALL] = "api has thrown an error %d for system call",
+
+
+    [ERR_TOO_BIG_RECORD] = "Size of row is too large, row size=%u",
+    [ERR_VARIANT_DATA_TOO_BIG] = "Size of variant data is too large, size=%lu",
+
+    // NOTICE: the error code defined should be smaller than ERR_ERRNO_CEIL
+    [ERR_ERRNO_CEIL] = "",
+};
+
+
+
 
 static struct my_err_head *my_errmsgs_list = &my_errmsgs_globerrs;
 
@@ -25,16 +50,16 @@ const char **get_global_errmsgs()
 }
 
 
-const char* ut_strerr(dberr_t num) /*!< in: error number */
+const char* ut_strerr(errno_t num) /*!< in: error number */
 {
     switch (num) {
-    case DB_SUCCESS:
+    case CM_SUCCESS:
         return("Success");
-    case DB_SUCCESS_LOCKED_REC:
+    case CM_SUCCESS_LOCKED_REC:
         return("Success, record lock created");
-    case DB_ERROR:
+    case CM_ERROR:
         return("Generic error");
-    case DB_IO_ERROR:
+    case ERR_IO_ERROR:
         return("I/O error");
 
     /* do not add default: in order to produce a warning if new code

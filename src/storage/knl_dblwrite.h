@@ -5,7 +5,7 @@
 #include "knl_page_id.h"
 
 
-extern bool32 buf_dblwr_page_inside(page_id_t *page_id);
+extern bool32 buf_dblwr_page_inside(const page_id_t &page_id);
 
 extern bool32    buf_dblwr_being_created;
 

@@ -5,7 +5,7 @@ bool32    buf_dblwr_being_created = FALSE;
 
 // Determines if a page number is located inside the doublewrite buffer.
 // return TRUE if the location is inside the two blocks of the doublewrite buffer
-bool32 buf_dblwr_page_inside(page_id_t *page_id)
+bool32 buf_dblwr_page_inside(const page_id_t &page_id)
 {
 #if 0
 	if (buf_dblwr == NULL) {

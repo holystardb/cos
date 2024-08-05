@@ -12,16 +12,16 @@
 #define VM_GET_PAGE_NO_BY_SWAP_PAGE_ID(id)   (id & 0xFFFFFFFF)
 #define VM_PAGE_SLOT_IS_FULL(bits)           (bits == 0xFFFFFFFFFFFFFFFF)
 
-static vm_page_t* vm_alloc_page(vm_pool_t *pool);
-static vm_page_t* vm_swap_out_page(vm_pool_t *pool);
+static inline vm_page_t* vm_alloc_page(vm_pool_t *pool);
+static inline vm_page_t* vm_swap_out_page(vm_pool_t *pool);
 
-static void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_page_id);
-static bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl);
-static bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_page_id);
+static inline void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_page_id);
+static inline bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl);
+static inline bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_page_id);
 
 vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
 {
-    vm_pool_t *pool;
+    vm_pool_t* pool;
     uint64     tmp_memory_size;
     uint32     ctrl_page_max_count;
 
@@ -61,12 +61,12 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
     }
 
     tmp_memory_size = (memory_size / page_size) * page_size;
-    if (tmp_memory_size < 1024 * 1024) {
+    if (tmp_memory_size < 1024 * 1024 || (tmp_memory_size / page_size) > ctrl_page_max_count) {
         LOGGER_ERROR(LOGGER, "vm_pool_create: error, invalid memory size %lu", memory_size);
         return FALSE;
     }
 
-    pool = (vm_pool_t *)malloc(sizeof(vm_pool_t));
+    pool = (vm_pool_t *)ut_malloc_zero(sizeof(vm_pool_t));
     if (pool == NULL) {
         LOGGER_ERROR(LOGGER, "vm_pool_create: error, can not alloc memory for vm_pool_t");
         return NULL;
@@ -105,9 +105,9 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
         }
     }
 
-    uint32 max_io_operation_count = 100;
+    uint32 io_pending_count_per_context = 1;
     uint32 io_context_count = 100;
-    pool->aio_array = os_aio_array_create(max_io_operation_count, io_context_count);
+    pool->aio_array = os_aio_array_create(io_pending_count_per_context, io_context_count);
     if (pool->aio_array == NULL) {
         os_mem_free_large(pool->buf, pool->memory_size);
         free(pool);
@@ -290,7 +290,7 @@ err_exit:
     return FALSE;
 }
 
-static void vm_pool_fill_ctrls_by_page(vm_pool_t *pool, vm_page_t *page)
+static inline void vm_pool_fill_ctrls_by_page(vm_pool_t *pool, vm_page_t *page)
 {
     vm_ctrl_t * ctrl;
 
@@ -305,7 +305,7 @@ static void vm_pool_fill_ctrls_by_page(vm_pool_t *pool, vm_page_t *page)
     }
 }
 
-static vm_page_t* vm_alloc_ctrls_from_free_pages(vm_pool_t *pool)
+static inline vm_page_t* vm_alloc_ctrls_from_free_pages(vm_pool_t *pool)
 {
     vm_page_t *page;
 
@@ -327,7 +327,7 @@ static vm_page_t* vm_alloc_ctrls_from_free_pages(vm_pool_t *pool)
     return page;
 }
 
-vm_ctrl_t* vm_alloc(vm_pool_t *pool)
+inline vm_ctrl_t* vm_alloc(vm_pool_t *pool)
 {
     vm_ctrl_t *ctrl = NULL;
     vm_page_t *page;
@@ -389,7 +389,7 @@ vm_ctrl_t* vm_alloc(vm_pool_t *pool)
     return ctrl;
 }
 
-static void vm_lock_ctrl_for_free(vm_ctrl_t* ctrl)
+static inline void vm_lock_ctrl_for_free(vm_ctrl_t* ctrl)
 {
     for (;;) {
         mutex_enter(&ctrl->mutex, NULL);
@@ -402,7 +402,7 @@ static void vm_lock_ctrl_for_free(vm_ctrl_t* ctrl)
     }
 }
 
-bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl)
+inline bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl)
 {
     uint64     swap_page_id;
     vm_page_t *page;
@@ -441,7 +441,7 @@ bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl)
     DBUG_RETURN(TRUE);
 }
 
-static vm_page_t* vm_swap_out_page(vm_pool_t *pool)
+static inline vm_page_t* vm_swap_out_page(vm_pool_t *pool)
 {
     bool32     is_found = FALSE;
     uint64     swap_page_id = INVALID_SWAP_PAGE_ID;
@@ -501,7 +501,7 @@ static vm_page_t* vm_swap_out_page(vm_pool_t *pool)
     DBUG_RETURN(page);
 }
 
-static vm_page_t* vm_alloc_page(vm_pool_t *pool)
+static inline vm_page_t* vm_alloc_page(vm_pool_t *pool)
 {
     vm_page_t *page;
 
@@ -524,7 +524,7 @@ static vm_page_t* vm_alloc_page(vm_pool_t *pool)
     DBUG_RETURN(page);
 }
 
-static void vm_lock_ctrl_for_open_close(vm_ctrl_t* ctrl)
+static inline void vm_lock_ctrl_for_open_close(vm_ctrl_t* ctrl)
 {
     for (;;) {
         mutex_enter(&ctrl->mutex, NULL);
@@ -536,7 +536,7 @@ static void vm_lock_ctrl_for_open_close(vm_ctrl_t* ctrl)
     }
 }
 
-bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl)
+inline bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl)
 {
     vm_page_t *page = NULL;
 
@@ -622,7 +622,7 @@ bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl)
     DBUG_RETURN(FALSE);
 }
 
-bool32 vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl)
+inline bool32 vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl)
 {
     bool32 is_need_add_closed_list = FALSE;
 
@@ -656,7 +656,7 @@ bool32 vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl)
     return TRUE;
 }
 
-static void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_page_id)
+static inline void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_page_id)
 {
     vm_ctrl_t      *ctrl;
     vm_page_slot_t *slot;
@@ -718,7 +718,7 @@ static void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_p
     DBUG_VOID_RETURN;
 }
 
-static void vm_file_get_slot_page_index_by_slot(vm_pool_t *pool, vm_file_t *vm_file,
+static inline void vm_file_get_slot_page_index_by_slot(vm_pool_t *pool, vm_file_t *vm_file,
     vm_page_slot_t *slot, uint32 *slot_page_index, uint32 *slot_index)
 {
     vm_ctrl_t *ctrl;
@@ -741,7 +741,7 @@ static void vm_file_get_slot_page_index_by_slot(vm_pool_t *pool, vm_file_t *vm_f
     DBUG_VOID_RETURN;
 }
 
-static uint64 vm_file_alloc_page_low(vm_pool_t *pool,
+static inline uint64 vm_file_alloc_page_low(vm_pool_t *pool,
     vm_file_t *vm_file, vm_page_slot_t *slot, uint32 byte_index, vm_ctrl_t *ctrl)
 {
     DBUG_ENTER("vm_file_alloc_page_low");
@@ -771,7 +771,7 @@ static uint64 vm_file_alloc_page_low(vm_pool_t *pool,
                            slot_page_index * pool->slot_count_pre_page * pool->page_count_pre_slot +
                            slot_index * pool->page_count_pre_slot +
                            byte_index * 8 + bit_index;
-            DBUG_PRINT("slot %p file %u page no %u£ºpage index %u slot index %u byte index %d bit index %d",
+            DBUG_PRINT("slot %p file %u page no %uï¿½ï¿½page index %u slot index %u byte index %d bit index %d",
                 slot, VM_GET_FILE_BY_SWAP_PAGE_ID(swap_page_id), VM_GET_PAGE_NO_BY_SWAP_PAGE_ID(swap_page_id),
                 slot_page_index, slot_index, byte_index, bit_index);
             break;
@@ -781,7 +781,7 @@ static uint64 vm_file_alloc_page_low(vm_pool_t *pool,
     DBUG_RETURN(swap_page_id);
 }
 
-static uint64 vm_file_alloc_page(vm_pool_t *pool, vm_file_t *vm_file, vm_ctrl_t *ctrl)
+static inline uint64 vm_file_alloc_page(vm_pool_t *pool, vm_file_t *vm_file, vm_ctrl_t *ctrl)
 {
     DBUG_ENTER("vm_file_alloc_page");
 
@@ -809,14 +809,14 @@ static uint64 vm_file_alloc_page(vm_pool_t *pool, vm_file_t *vm_file, vm_ctrl_t 
     DBUG_RETURN(swap_page_id);
 }
 
-static bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_page_id)
+static inline bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_page_id)
 {
     bool32            ret = TRUE;
     const char       *name = ""; // name of the file or path as a null-terminated string
     uint64            offset; // file offset where to read or write */
     void*             message1 = NULL;
     void*             message2 = NULL;
-    uint32            microseconds = 120 * 1000000; // 120 seconds
+    uint32            timeout_us = 120 * 1000000; // 120 seconds
     vm_file_t        *vm_file = NULL;
     os_aio_context_t* aio_ctx;
     int               aio_ret;
@@ -860,7 +860,7 @@ static bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *swap_pa
         DBUG_PRINT("ctrl %p error for os_file_aio_submit", ctrl);
         goto err_exit;
     }
-    aio_ret = os_file_aio_wait(aio_ctx, microseconds);
+    aio_ret = os_file_aio_wait(aio_ctx, timeout_us);
     switch (aio_ret) {
     case OS_FILE_IO_COMPLETION:
         ret = TRUE;
@@ -879,14 +879,14 @@ err_exit:
     DBUG_RETURN(ret);
 }
 
-static bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl)
+static inline bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl)
 {
     bool32      ret = TRUE;
     const char* name = ""; // name of the file or path as a null-terminated string
     uint64      offset; // file offset where to read or write */
     void*       message1 = NULL;
     void*       message2 = NULL;
-    uint32      microseconds = 120 * 1000000; // 120 seconds
+    uint32      timeout_us = 120 * 1000000; // 120 seconds
     vm_file_t  *vm_file = NULL;
     os_aio_context_t* aio_ctx;
     int aio_ret;
@@ -913,7 +913,7 @@ static bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t *ctrl)
         DBUG_PRINT("ctrl %p error for os_file_aio_submit", ctrl);
         goto err_exit;
     }
-    aio_ret = os_file_aio_wait(aio_ctx, microseconds);
+    aio_ret = os_file_aio_wait(aio_ctx, timeout_us);
     switch (aio_ret) {
     case OS_FILE_IO_COMPLETION:
         ret = TRUE;
@@ -931,3 +931,344 @@ err_exit:
 
     DBUG_RETURN(ret);
 }
+
+
+
+
+
+// ==================================================================================
+//                          vm_variant
+// ==================================================================================
+
+
+inline vm_variant_t* vm_variant_create(vm_variant_t* var,
+    uint64 chunk_id, uint32 chunk_size, bool32 is_resident_memory, vm_pool_t* pool)
+
+{
+    if (pool->page_size < chunk_size) {
+        return NULL;
+    }
+
+    var->chunk_id = chunk_id;
+    var->chunk_size = chunk_size;
+    var->pool = pool;
+    var->current_page_used = 0;
+    var->size = 0;
+    var->current_open_ctrl = NULL;
+    var->is_resident_memory = is_resident_memory;
+
+    UT_LIST_INIT(var->ctrls);
+    UT_LIST_INIT(var->used_chunks);
+    UT_LIST_INIT(var->free_chunks);
+
+    ut_d(var->buf_end = 0);
+
+    return var;
+}
+
+inline void vm_variant_destroy(vm_variant_t* var)
+{
+    if (!var->is_resident_memory && var->current_open_ctrl) {
+        ut_a(vm_close(var->pool, var->current_open_ctrl));
+        var->current_open_ctrl = NULL;
+    }
+
+    vm_ctrl_t* ctrl = UT_LIST_GET_FIRST(var->ctrls);
+    while (ctrl) {
+        UT_LIST_REMOVE(list_node, var->ctrls, ctrl);
+
+        if (var->is_resident_memory) {
+            ut_a(vm_close(var->pool, ctrl));
+        }
+        ut_a(vm_free(var->pool, ctrl));
+
+        ctrl = UT_LIST_GET_FIRST(var->ctrls);
+    }
+
+    var->current_page_used = 0;
+    var->size = 0;
+    UT_LIST_INIT(var->used_chunks);
+    UT_LIST_INIT(var->free_chunks);
+
+    ut_d(var->buf_end = 0);
+}
+
+static inline void vm_variant_ctrl_open_if_not_open(vm_variant_t* var, vm_ctrl_t* ctrl)
+{
+    if (var->is_resident_memory) {
+        return;
+    }
+
+    if (var->current_open_ctrl == ctrl) {
+        return;
+    }
+
+    if (var->current_open_ctrl) {
+        ut_a(vm_close(var->pool, var->current_open_ctrl));
+        var->current_open_ctrl = NULL;
+    }
+
+    ut_a(vm_open(var->pool, ctrl));
+    var->current_open_ctrl = ctrl;
+}
+
+static inline void vm_variant_chunk_open_if_not_open(vm_variant_t* var, vm_variant_chunk_t* chunk)
+{
+    ut_a(var == chunk->var);
+
+    vm_variant_ctrl_open_if_not_open(var, chunk->ctrl);
+}
+
+static inline char* vm_variant_alloc_chunk_data(vm_variant_t* var)
+{
+    char*      data;
+    vm_ctrl_t* ctrl;
+
+    ctrl = UT_LIST_GET_LAST(var->ctrls);
+    if (ctrl == NULL || var->current_page_used + var->chunk_size > var->pool->page_size) {
+        // old ctrl is full, need to close ctrl for reuse page
+        if (!var->is_resident_memory && var->current_open_ctrl) {
+            ut_a(vm_close(var->pool, var->current_open_ctrl));
+            var->current_open_ctrl = NULL;
+        }
+
+        // alloc a new ctrl
+        ctrl = vm_alloc(var->pool);
+        if (ctrl == NULL) {
+            return NULL;
+        }
+        var->current_page_used = 0;
+        UT_LIST_ADD_LAST(list_node, var->ctrls, ctrl);
+
+        // open page for ctrl
+        if (vm_open(var->pool, ctrl) == FALSE) {
+            UT_LIST_REMOVE(list_node, var->ctrls, ctrl);
+            ut_a(vm_free(var->pool, ctrl));
+            return NULL;
+        }
+        if (!var->is_resident_memory) {
+            var->current_open_ctrl = ctrl;
+        }
+    }
+
+    vm_variant_ctrl_open_if_not_open(var, ctrl);
+
+    data = VM_CTRL_GET_DATA_PTR(ctrl) + var->current_page_used;
+    var->current_page_used += var->chunk_size;
+
+    return data;
+}
+
+inline uint32 vm_variant_chunk_get_used(vm_variant_chunk_t* chunk)
+{
+    return ((chunk->used) & ~VM_VARIANT_CHUNK_FULL_FLAG);
+}
+
+static inline vm_variant_chunk_t* vm_variant_add_chunk(vm_variant_t* var)
+{
+    // old block
+    vm_variant_chunk_t* chunk = vm_variant_get_last_chunk(var);
+    if (chunk) {
+        chunk->used = chunk->used | VM_VARIANT_CHUNK_FULL_FLAG;
+    }
+
+    // alloc a new block
+    chunk = UT_LIST_GET_FIRST(var->free_chunks);
+    if (chunk == NULL) {  // create blocks
+        // get buf for create chunks
+        char *data = vm_variant_alloc_chunk_data(var);
+        if (data == NULL) {
+            return NULL;
+        }
+
+        // create chunks and insert into free_chunks
+        uint32 used = 0;
+        const uint32 size = ut_align8(sizeof(vm_variant_chunk_t));
+        while (used + size <= var->chunk_size) {
+            chunk = (vm_variant_chunk_t *)((char *)data + used);
+            chunk->data = NULL;
+            chunk->var = var;
+            chunk->chunk_seq = UT_LIST_GET_LAST(var->used_chunks) + UT_LIST_GET_LAST(var->free_chunks);
+            chunk->ctrl = UT_LIST_GET_LAST(var->ctrls);
+            UT_LIST_ADD_LAST(list_node, var->free_chunks, chunk);
+            used += size;
+        }
+
+        // get new chunk from free_chunks
+        chunk = UT_LIST_GET_FIRST(var->free_chunks);
+    }
+
+    // set data for new chunk
+    if (chunk->data == NULL) {
+        chunk->data = (byte *)vm_variant_alloc_chunk_data(var);
+        if (chunk->data == NULL) {
+            return NULL;
+        }
+    }
+
+    // init
+    chunk->used = 0;
+    UT_LIST_ADD_LAST(list_node, var->used_chunks, chunk);
+    UT_LIST_REMOVE(list_node, var->free_chunks, chunk);
+
+    return chunk;
+}
+
+inline byte* vm_variant_open(vm_variant_t* var, uint32 size)
+{
+    vm_variant_chunk_t* chunk;
+
+    ut_ad(size <= var->chunk_size);
+    ut_ad(size);
+
+    if (vm_variant_get_data_size(var) + size >= VM_VARIANT_DATA_MAX_SIZE) {
+        CM_SET_ERROR(ERR_VARIANT_DATA_TOO_BIG, vm_variant_get_data_size(var) + size);
+        return NULL;
+    }
+
+    chunk = vm_variant_get_last_chunk(var);
+    if (chunk == NULL || chunk->used + size > var->chunk_size) {
+        chunk = vm_variant_add_chunk(var);
+        if (chunk == NULL) {
+            return NULL;
+        }
+    }
+
+    ut_ad(chunk->used <= var->chunk_size);
+    ut_ad(var->buf_end == 0);
+    ut_d(var->buf_end = chunk->used + size);
+
+    vm_variant_chunk_open_if_not_open(var, chunk);
+
+    return chunk->data + chunk->used;
+}
+
+inline void vm_variant_close(vm_variant_t* var, byte* ptr)
+{
+    vm_variant_chunk_t* chunk;
+
+    chunk = vm_variant_get_last_chunk(var);
+
+    if (!var->is_resident_memory) {
+        ut_a(var->current_open_ctrl == chunk->ctrl);
+    }
+
+    ut_ad(var->buf_end + chunk->data >= ptr);
+
+    //
+    var->size +=  (ptr - chunk->data) - chunk->used;
+
+    chunk->used = ptr - chunk->data;
+    ut_ad(chunk->used <= var->chunk_size);
+    ut_d(var->buf_end = 0);
+}
+
+inline void* vm_variant_push(vm_variant_t* var, uint32 size)
+{
+    vm_variant_chunk_t *chunk;
+    uint32 used;
+
+    ut_ad(size <= var->chunk_size);
+    ut_ad(size);
+
+    if (vm_variant_get_data_size(var) + size >= VM_VARIANT_DATA_MAX_SIZE) {
+        CM_SET_ERROR(ERR_VARIANT_DATA_TOO_BIG, vm_variant_get_data_size(var) + size);
+        return NULL;
+    }
+
+    chunk = vm_variant_get_last_chunk(var);
+    if (chunk == NULL || chunk->used + size > var->chunk_size) {
+        chunk = vm_variant_add_chunk(var);
+        if (chunk == NULL) {
+            return NULL;
+        }
+    }
+
+    used = chunk->used;
+    chunk->used += size;
+    ut_ad(chunk->used <= var->chunk_size);
+
+    var->size += size;
+
+    vm_variant_chunk_open_if_not_open(var, chunk);
+
+    return chunk->data + used;
+}
+
+inline bool32 vm_variant_push_string(vm_variant_t* var, byte* str, uint32 len)
+{
+    byte*  ptr;
+    uint32 n_copied;
+
+    if (vm_variant_get_data_size(var) + len >= VM_VARIANT_DATA_MAX_SIZE) {
+        CM_SET_ERROR(ERR_VARIANT_DATA_TOO_BIG, vm_variant_get_data_size(var) + len);
+        return FALSE;
+    }
+
+    while (len > 0) {
+        if (len > var->chunk_size) {
+            n_copied = var->chunk_size;
+        } else {
+            n_copied = len;
+        }
+
+        ptr = (byte*)vm_variant_push(var, n_copied);
+        memcpy(ptr, str, n_copied);
+        str += n_copied;
+        len -= n_copied;
+    }
+
+    return TRUE;
+}
+
+inline void* vm_variant_get_element(vm_variant_t* var, uint64 offset)
+{
+    vm_variant_chunk_t* chunk;
+    uint32 used;
+
+    chunk = vm_variant_get_first_chunk(var);
+    ut_ad(chunk);
+    used = vm_variant_chunk_get_used(chunk);
+
+    while (offset >= used) {
+        offset -= used;
+        chunk = vm_variant_get_next_chunk(var, chunk);
+        ut_ad(chunk);
+        used = vm_variant_chunk_get_used(chunk);
+    }
+
+    ut_ad(chunk);
+    ut_ad(vm_variant_chunk_get_used(chunk) >= offset);
+
+    vm_variant_chunk_open_if_not_open(var, chunk);
+
+    return chunk->data + offset;
+}
+
+inline uint64 vm_variant_get_data_size(vm_variant_t* var)
+{
+#ifdef UNIV_DEBUG
+
+    vm_variant_chunk_t* chunk;
+    uint64 sum = 0;
+
+    chunk = vm_variant_get_first_chunk(var);
+    while (chunk != NULL) {
+        sum += vm_variant_chunk_get_used(chunk);
+        chunk = vm_variant_get_next_chunk(var, chunk);
+    }
+    ut_a(sum == var->size);
+
+#endif
+
+    return var->size;
+}
+
+inline byte* vm_variant_chunk_get_data(vm_variant_chunk_t* chunk)
+{
+    vm_variant_chunk_open_if_not_open(chunk->var, chunk);
+
+    return chunk->data;
+}
+
+

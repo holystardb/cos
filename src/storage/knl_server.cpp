@@ -43,8 +43,9 @@ uint32 srv_fil_node_max_count;
 uint32 srv_purge_threads;
 /* Use srv_n_io_[read|write]_threads instead. */
 uint32 srv_n_file_io_threads;
-uint32 srv_read_io_threads;
-uint32 srv_write_io_threads;
+uint32 srv_read_io_threads = 4;
+uint32 srv_write_io_threads = 4;
+uint32 srv_sync_io_contexts = 16;
 
 uint32 srv_read_io_timeout_seconds = 30;
 uint32 srv_write_io_timeout_seconds = 30;
@@ -64,7 +65,13 @@ bool32 recv_no_ibuf_operations;
 Protected by log_sys->mutex. */
 bool32 recv_no_log_write = FALSE;
 
+shutdown_state_enum_t srv_shutdown_state = SHUTDOWN_NONE;
 
+os_aio_array_t* srv_os_aio_async_read_array = NULL;
+os_aio_array_t* srv_os_aio_async_write_array = NULL;
+os_aio_array_t* srv_os_aio_sync_array = NULL;
+
+memory_area_t*  srv_memory_sga = NULL;
 
 
 /*-------------------------------------------------- */
@@ -566,11 +573,56 @@ dberr_t srv_create_system()
 
     ctrl_file = &srv_db_ctrl.system;
     os_del_file(ctrl_file->name);
-    dberr_t err = create_db_file(ctrl_file);
-    if (err != DB_SUCCESS) {
-        return err;
+
+    //dberr_t err = create_db_file(ctrl_file);
+    //if (err != DB_SUCCESS) {
+    //    return err;
+    //}
+    bool32 ret;
+    os_file_t file;
+
+    ret = os_open_file(ctrl_file->name, OS_FILE_CREATE, OS_FILE_SYNC, &file);
+    if (!ret) {
+        LOGGER_ERROR(LOGGER, "can not create file, name = %s", ctrl_file->name);
+        return(DB_ERROR);
     }
+    ret = os_close_file(file);
+    ut_a(ret);
 
     return DB_SUCCESS;
+}
+
+void* write_io_handler_thread(void *arg)
+{
+    os_aio_context_t* context;
+    uint32 index = *(uint32 *)arg;
+
+    ut_ad(index < srv_write_io_threads);
+
+    context = os_aio_array_get_nth_context(srv_os_aio_async_write_array, index);
+
+    while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
+        os_file_aio_wait(context, srv_write_io_timeout_seconds * 1000000);
+    }
+
+    os_thread_exit(NULL);
+    OS_THREAD_DUMMY_RETURN;
+}
+
+void* read_io_handler_thread(void *arg)
+{
+    os_aio_context_t* context;
+    uint32 index = *(uint32 *)arg;
+
+    ut_ad(index < srv_read_io_threads);
+
+    context = os_aio_array_get_nth_context(srv_os_aio_async_read_array, index);;
+
+    while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
+        os_file_aio_wait(context, srv_read_io_timeout_seconds * 1000000);
+    }
+
+    os_thread_exit(NULL);
+    OS_THREAD_DUMMY_RETURN;
 }
 

@@ -27,7 +27,7 @@ of the address is FIL_NULL, the address is considered undefined. */
 typedef byte fil_faddr_t; /* 'type' definition in C: an address stored in a file page is a string of bytes */
 #define FIL_ADDR_PAGE   0   /* first in address is the page offset */
 #define FIL_ADDR_BYTE   4   /* then comes 2-byte byte offset within page*/
-#define FIL_ADDR_SIZE   6   /* address size is 6 bytes */
+#define FIL_ADDR_SIZE   6   /* address size is 6 bytes (page_no, offset) */
 
 /* A struct for storing a space address FIL_ADDR, when it is used in C program data structures. */
 typedef struct fil_addr_struct {
@@ -41,18 +41,15 @@ extern fil_addr_t   fil_addr_null;
 /* The byte offsets on a file page for various variables */
 #define FIL_PAGE_SPACE          0   /* space id the page belongs to */
 #define FIL_PAGE_OFFSET         4   /* page offset inside space */
-#define FIL_PAGE_PREV           8   /* if there is a 'natural' predecessor of the page, its offset */
-#define FIL_PAGE_NEXT           12  /* if there is a 'natural' successor of the page, its offset */
+#define FIL_PAGE_PREV           8   /* for table */
+#define FIL_PAGE_NEXT           12  /* for table */
 #define FIL_PAGE_LSN            16  /* lsn of the end of the newest modification log record to the page */
-#define	FIL_PAGE_TYPE           24  /* file page type: FIL_PAGE_INDEX,..., 2 bytes */
+#define FIL_PAGE_TYPE           24  /* file page type: FIL_PAGE_INDEX,..., 2 bytes */
 #define FIL_PAGE_FILE_FLUSH_LSN 26  /* this is only defined for the first page in a data file:
                                        the file has been flushed to disk at least up to this lsn */
 #define FIL_PAGE_ARCH_LOG_NO    34  /* this is only defined for the first page in a data file:
                                        the latest archived log file number when the flush lsn above was written */
-#define FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID  34 /*!< starting from 4.1.x this contains the space id of the page */
 #define FIL_PAGE_DATA           38  /* start of the data on the page */
-
-#define FIL_PAGE_SPACE_ID       34
 
 /* File page trailer */
 #define FIL_PAGE_END_LSN        8 /* this should be same as FIL_PAGE_LSN */
@@ -62,21 +59,32 @@ extern fil_addr_t   fil_addr_null;
 /*-----------------------------------------------------------------*/
 
 /** File page types (values of FIL_PAGE_TYPE) */
-#define FIL_PAGE_INDEX		17855	/*!< B-tree node */
-#define FIL_PAGE_UNDO_LOG	2	/*!< Undo log page */
-#define FIL_PAGE_INODE		3	/*!< Index node */
-#define FIL_PAGE_IBUF_FREE_LIST	4	/*!< Insert buffer free list */
-/* File page types introduced in MySQL/InnoDB 5.1.7 */
-#define FIL_PAGE_TYPE_ALLOCATED	0	/*!< Freshly allocated page */
-#define FIL_PAGE_IBUF_BITMAP	5	/*!< Insert buffer bitmap */
-#define FIL_PAGE_TYPE_SYS	6	/*!< System page */
-#define FIL_PAGE_TYPE_TRX_SYS	7	/*!< Transaction system data */
-#define FIL_PAGE_TYPE_FSP_HDR	8	/*!< File space header */
-#define FIL_PAGE_TYPE_XDES	9	/*!< Extent descriptor page */
-#define FIL_PAGE_TYPE_BLOB	10	/*!< Uncompressed BLOB page */
-#define FIL_PAGE_TYPE_ZBLOB	11	/*!< First compressed BLOB page */
-#define FIL_PAGE_TYPE_ZBLOB2	12	/*!< Subsequent compressed BLOB page */
-#define FIL_PAGE_TYPE_LAST	FIL_PAGE_TYPE_ZBLOB2    /*!< Last page type */
+#define FIL_PAGE_ALLOCATED          0       /*!< Freshly allocated page */
+#define FIL_PAGE_FSP_HDR            1       /*!< File space header */
+#define FIL_PAGE_XDES               2       /*!< Extent descriptor page */
+#define FIL_PAGE_INODE              3       /*!< Index node */
+#define FIL_PAGE_TRX_SYS            4       /*!< Transaction system data */
+#define FIL_PAGE_TRX_SLOT           5       /*!< Transaction system data */
+#define FIL_PAGE_UNDO_LOG           6       /*!< Undo log page */
+#define FIL_PAGE_DICT_HDR           7       /*!< Dictionary header */
+#define FIL_PAGE_DICT_DATA          8       /*!< Dictionary data */
+#define FIL_PAGE_IBUF_FREE_LIST     9       /*!< Insert buffer free list */
+#define FIL_PAGE_IBUF_BITMAP        10      /*!< Insert buffer bitmap */
+#define FIL_PAGE_DOUBLE_WRITE       11      /*!< Double write page */
+#define FIL_PAGE_SYS                12      /*!< System page */
+#define FIL_PAGE_BTREE_ROOT         13      /*!< B-tree root node */
+#define FIL_PAGE_BTREE_DATA         14      /*!< B-tree node */
+#define FIL_PAGE_HEAP_ROOT          15      /*!< Heap root page */
+#define FIL_PAGE_HEAP_DATA          16      /*!< Heap data page */
+#define FIL_PAGE_HEAP_FSM           17      /*!< Heap Map root page */
+#define FIL_PAGE_HEAP_MAP_DATA      18      /*!< Heap Map data page */
+#define FIL_PAGE_HASH_INDEX_ROOT    19      /*!< Hash root page */
+#define FIL_PAGE_HASH_INDEX_DATA    20      /*!< Hash data page */
+#define FIL_PAGE_TOAST              21      /*!< Toast page */
+#define FIL_PAGE_TYPE_BLOB          22      /*!< Uncompressed BLOB page */
+#define FIL_PAGE_TYPE_ZBLOB         23      /*!< First compressed BLOB page */
+#define FIL_PAGE_TYPE_ZBLOB2        24      /*!< Subsequent compressed BLOB page */
+#define FIL_PAGE_TYPE_LAST          FIL_PAGE_TYPE_ZBLOB2    /*!< Last page type */
 
 
 
@@ -89,6 +97,7 @@ typedef struct st_fil_space fil_space_t;
 
 typedef struct st_fil_node {
     char        *name;
+    mutex_t      mutex;
     os_file_t    handle;
     uint32       id;
     uint32       page_max_count;
@@ -96,10 +105,10 @@ typedef struct st_fil_node {
     uint32       magic_n;
     uint32       is_open : 1;   /* TRUE if file open */
     uint32       is_extend : 1;
+    uint32       is_io_progress : 1;  // io progress for open or close
     uint32       n_pending : 16; /* count of pending i/o-ops on this file */
-    uint32       reserved : 14;
-    os_aio_context_t *aio_ctx;
-    fil_space_t      *space;
+    uint32       reserved : 13;
+    fil_space_t *space;
 
     UT_LIST_NODE_T(struct st_fil_node) chain_list_node;
     UT_LIST_NODE_T(struct st_fil_node) lru_list_node; /* link field for the LRU list */
@@ -158,7 +167,7 @@ struct st_fil_space {
     rw_lock_t    latch;
     HASH_NODE_T  hash;   /*!< hash chain node */
 
-    uint32       refcount;
+    atomic32_t   refcount;
 
 
     UT_LIST_BASE_NODE_T(fil_node_t) fil_nodes;
@@ -170,7 +179,7 @@ struct st_fil_space {
 
 typedef struct st_fil_system {
     uint32              max_n_open; /* maximum allowed open files */
-    uint32              open_pending_num; /* current number of open files with pending i/o-ops on them */
+    atomic32_t          open_pending_num; /* current number of open files with pending i/o-ops on them */
     uint32              fil_node_max_count;
     uint32              fil_node_num;
     fil_node_t        **fil_nodes;
@@ -181,6 +190,9 @@ typedef struct st_fil_system {
     memory_area_t      *mem_area;
     memory_pool_t      *mem_pool;
     memory_context_t   *mem_context;
+
+    uint32              aio_pending_count_per_context;
+    uint32              aio_context_count;
     os_aio_array_t     *aio_array;
 
     HASH_TABLE         *spaces; /*!< The hash table of spaces in the system; they are hashed on the space id */
@@ -217,30 +229,31 @@ inline void fil_system_unpin_space(fil_space_t *space)
 
 //-----------------------------------------------------------------------------------------------------
 
-bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open,
-                             uint32 space_max_count, uint32 fil_node_max_count);
-fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
-void fil_space_destroy(uint32 space_id);
-fil_node_t* fil_node_create(fil_space_t *space, char *name,
-                                  uint32 page_max_count, uint32 page_size, bool32 is_extend);
-bool32 fil_node_destroy(fil_space_t *space, fil_node_t *node);
-bool32 fil_node_open(fil_space_t *space, fil_node_t *node);
-bool32 fil_node_close(fil_space_t *space, fil_node_t *node);
-fil_space_t* fil_space_get_by_id(uint32 space_id);
+extern bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open,
+                                    uint32 space_max_count, uint32 fil_node_max_count);
+extern fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
+extern void fil_space_destroy(uint32 space_id);
+extern fil_node_t* fil_node_create(fil_space_t *space, char *name,
+                                         uint32 page_max_count, uint32 page_size, bool32 is_extend);
+extern bool32 fil_node_destroy(fil_space_t *space, fil_node_t *node);
+extern bool32 fil_node_open(fil_space_t *space, fil_node_t *node);
+extern bool32 fil_node_close(fil_space_t *space, fil_node_t *node);
+extern fil_space_t* fil_get_space_by_id(uint32 space_id);
+extern void fil_release_space(fil_space_t* space);
 rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags = NULL);
 
-bool fil_addr_is_null(fil_addr_t addr);
+extern bool fil_addr_is_null(fil_addr_t addr);
 
 
-dberr_t fil_write(bool32 sync, page_id_t *page_id, const page_size_t &page_size,
-                      uint32 len, void*  buf, void*  message);
-dberr_t fil_read(bool32 sync, page_id_t *page_id, const page_size_t &page_size,
-                    uint32 len, void*  buf, void*  message);
+extern  dberr_t fil_write(bool32 sync, const page_id_t &page_id, const page_size_t &page_size,
+                              uint32 len, void*  buf, void*  message);
+extern dberr_t fil_read(bool32 sync, const page_id_t &page_id, const page_size_t &page_size,
+                           uint32 len, void*  buf, void*  message);
 
-bool32 fil_space_reserve_free_extents(uint32 id, uint32 n_free_now, uint32 n_to_reserve);
-void fil_space_release_free_extents(uint32 id, uint32 n_reserved);
-bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size);
-uint32 fil_space_get_size(uint32 space_id);
+extern bool32 fil_space_reserve_free_extents(uint32 id, uint32 n_free_now, uint32 n_to_reserve);
+extern void fil_space_release_free_extents(uint32 id, uint32 n_reserved);
+extern bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size);
+extern uint32 fil_space_get_size(uint32 space_id);
 
 
 //-----------------------------------------------------------------------------------------------------

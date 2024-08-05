@@ -7,6 +7,8 @@
 #include "io.h"
 #endif // __WIN__
 
+extern shutdown_state_enum_t srv_shutdown_state;
+
 /*================================================ file io  ==================================================*/
 
 
@@ -334,41 +336,37 @@ bool32 os_truncate_file(os_file_t file, uint64 offset)
     return TRUE;
 }
 
+void os_file_get_error_desc_by_err(uint32 err, char *desc, uint32 size)
+{
+    if (err == OS_FILE_NOT_FOUND) {
+        sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
+    } else if (err == OS_FILE_DISK_FULL) {
+        sprintf_s(desc, size, "OS_FILE_DISK_FULL");
+    } else if (err == OS_FILE_ALREADY_EXISTS) {
+        sprintf_s(desc, size, "OS_FILE_ALREADY_EXISTS");
+    } else if (err == OS_FILE_AIO_RESOURCES_RESERVED) {
+        sprintf_s(desc, size, "OS_FILE_AIO_RESOURCES_RESERVED");
+    } else if (err == OS_FILE_ERROR_NOT_SPECIFIED) {
+        sprintf_s(desc, size, "OS_FILE_NOT_SPECIFIED");
+    } else if (err == OS_FILE_ACCESS_DENIED) {
+        sprintf_s(desc, size, "OS_FILE_ACCESS_DENIED");
+    } else if (err == OS_FILE_PATH_NOT_FOUND) {
+        sprintf_s(desc, size, "OS_FILE_PATH_NOT_FOUND");
+    } else if (err == OS_FILE_ACCESS_DENIED) {
+        sprintf_s(desc, size, "OS_FILE_ACCESS_DENIED");
+    } else if (err == OS_FILE_IO_TIMEOUT) {
+        sprintf_s(desc, size, "OS_FILE_IO_TIMEOUT");
+    } else if (err == OS_FILE_IO_ABANDONED) {
+        sprintf_s(desc, size, "OS_FILE_IO_ABANDONED");
+    } else {
+        sprintf_s(desc, size, "unknow error %d", err);
+    }
+}
+
 void os_file_get_last_error_desc(char *desc, uint32 size)
 {
-    uint32   err;
-
-#ifdef __WIN__
-    err = (uint32) GetLastError();
-    if (err == ERROR_FILE_NOT_FOUND) {
-        sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
-    } else if (err == ERROR_DISK_FULL) {
-        sprintf_s(desc, size, "OS_FILE_DISK_FULL");
-    } else if (err == ERROR_FILE_EXISTS) {
-        sprintf_s(desc, size, "OS_FILE_ALREADY_EXISTS");
-    } else if (err == ERROR_PATH_NOT_FOUND) {
-        sprintf_s(desc, size, "OS_FILE_PATH_NOT_FOUND");
-    } else if (err == ERROR_ACCESS_DENIED) {
-        sprintf_s(desc, size, "OS_FILE_ACCESS_DENIED");
-    } else {
-        sprintf_s(desc, size, "unknow error %d", err);
-    }
-#else
-    err = (uint32) errno;
-    if (err == ENOSPC ) {
-        sprintf_s(desc, size, "OS_FILE_DISK_FULL");
-    } else if (err == EAGAIN) {
-        sprintf_s(desc, size, "OS_FILE_AIO_RESOURCES_RESERVED");
-    } else if (err == ENOENT) {
-        sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
-    } else if (err == EEXIST) {
-        sprintf_s(desc, size, "OS_FILE_ALREADY_EXISTS");
-    } else if (err == EACCES) {
-        sprintf_s(desc, size, "OS_FILE_ACCESS_DENIED");
-    } else {
-        sprintf_s(desc, size, "unknow error %d", err);
-    }
-#endif
+    uint32 err = os_file_get_last_error();
+    os_file_get_error_desc_by_err(err, desc, size);
 }
 
 //If the number is not known to this program, the OS error number + 100 is returned.
@@ -685,23 +683,23 @@ void os_aio_close_dl(void *lib_handle)
 
 #endif
 
-static os_aio_slot_t* os_aio_array_get_nth_slot(os_aio_array_t* array, uint32 index)
+static os_aio_slot_t* os_aio_context_get_nth_slot(os_aio_context_t* context, uint32 index)
 {
-    ut_a(index < array->slot_count);
+    ut_a(index < context->slot_count);
 
-    return(&array->aio_slots[index]);
+    return(&context->slots[index]);
 }
 
-static os_aio_slot_t* os_aio_array_alloc_slot(
-    os_aio_array_t* aio_array,  /* in: aio array */
-    uint32          type,   /* in: OS_FILE_READ or OS_FILE_WRITE */
-    void*           message1,/* in: message to be passed along with the aio operation */
-    void*           message2,/* in: message to be passed along with the aio operation */
-    os_file_t       file,   /* in: file handle */
-    const char*     name,   /* in: name of the file or path as a null-terminated string */
-    void*           buf,    /* in: buffer where to read or from which to write */
-    uint64          offset, /* in: file offset */
-    uint32          len)    /* in: length of the block to read or write */
+static os_aio_slot_t* os_aio_context_alloc_slot(
+    os_aio_context_t* context,  /* in: aio context */
+    uint32            type,   /* in: OS_FILE_READ or OS_FILE_WRITE */
+    void*             message1,/* in: message to be passed along with the aio operation */
+    void*             message2,/* in: message to be passed along with the aio operation */
+    os_file_t         file,   /* in: file handle */
+    const char*       name,   /* in: name of the file or path as a null-terminated string */
+    void*             buf,    /* in: buffer where to read or from which to write */
+    uint64            offset, /* in: file offset */
+    uint32            len)    /* in: length of the block to read or write */
 {
     uint64          signal_count = 0;
     os_aio_slot_t*  slot = NULL;
@@ -718,20 +716,21 @@ static os_aio_slot_t* os_aio_array_alloc_slot(
 
 loop:
 
-    mutex_enter(&aio_array->mutex);
-    if (UT_LIST_GET_LEN(aio_array->free_slots) == 0) {
-        mutex_exit(&aio_array->mutex);
-        os_event_wait_time(aio_array->aio_slot_event, 1000, signal_count);
-        signal_count = os_event_reset(aio_array->aio_slot_event);
+    mutex_enter(&context->mutex);
+    if (UT_LIST_GET_LEN(context->free_slots) == 0) {
+        mutex_exit(&context->mutex);
+        os_event_wait_time(context->slot_event, 1000, signal_count);
+        signal_count = os_event_reset(context->slot_event);
         goto loop;
     }
-    slot = UT_LIST_GET_FIRST(aio_array->free_slots);
-    UT_LIST_REMOVE(list_node, aio_array->free_slots, slot);
-    mutex_exit(&aio_array->mutex);
+    slot = UT_LIST_GET_FIRST(context->free_slots);
+    UT_LIST_REMOVE(list_node, context->free_slots, slot);
+    mutex_exit(&context->mutex);
+
+    ut_ad(slot->is_used == FALSE);
 
     slot->file      = file;
     slot->len       = len;
-#ifdef UNIV_DEBUG
     slot->is_used   = TRUE;
     slot->used_time = time(NULL);
     slot->message1  = message1;
@@ -740,7 +739,6 @@ loop:
     slot->type      = type;
     slot->buf       = (byte*)buf;
     slot->offset    = offset;
-#endif
 
 #ifdef __WIN__
     control = &slot->control;
@@ -769,7 +767,7 @@ loop:
     return slot;
 }
 
-static void os_aio_array_free_slot(os_aio_array_t* aio_array, os_aio_slot_t* slot)
+static void os_aio_context_free_slot(os_aio_context_t* context, os_aio_slot_t* slot)
 {
     uint32 len;
 
@@ -785,57 +783,53 @@ static void os_aio_array_free_slot(os_aio_array_t* aio_array, os_aio_slot_t* slo
     slot->ret = 0;
 #endif
 
-    mutex_enter(&aio_array->mutex);
-    len = UT_LIST_GET_LEN(aio_array->free_slots);
-    UT_LIST_ADD_LAST(list_node, aio_array->free_slots, slot);
-    mutex_exit(&aio_array->mutex);
+    mutex_enter(&context->mutex);
+    len = UT_LIST_GET_LEN(context->free_slots);
+    UT_LIST_ADD_LAST(list_node, context->free_slots, slot);
+    mutex_exit(&context->mutex);
 
     if (len == 0) {
-        os_event_set(aio_array->aio_slot_event);
+        os_event_set(context->slot_event);
     }
 }
 
 #ifdef __WIN__
-static int os_aio_windows_handle(os_aio_context_t* aio_context, uint32 microseconds)
+static int os_aio_windows_handle(
+    os_aio_context_t* context,
+    uint32            timeout_us,
+    void**            message1, /* out: message to be passed along with the aio operation */
+    void**            message2, /* out: message to be passed along with the aio operation */
+    uint32*           type) /* out: OS_FILE_WRITE or OS_FILE_READ */
 {
-    os_aio_slot_t*  slot;
     uint32          index;
     int             ret_val;
-    bool32          ret;
-    DWORD           len;
     DWORD           dwMilliseconds = INFINITE;
-    HANDLE          events[AIO_GET_EVENTS_MAX_COUNT];
-    DWORD           event_count;
-    os_aio_slot_t*  slot_array[AIO_GET_EVENTS_MAX_COUNT];
 
-    mutex_enter(&aio_context->mutex, NULL);
-    event_count = UT_LIST_GET_LEN(aio_context->slots);
-    slot = UT_LIST_GET_FIRST(aio_context->slots);
-    for (uint32 i = 0; i < event_count; i++) {
-        events[i] = slot->handle;
-        slot_array[i] = slot;
-        slot = UT_LIST_GET_NEXT(list_node, slot);
-    }
-    mutex_exit(&aio_context->mutex);
-
-    if (microseconds != OS_WAIT_INFINITE_TIME) {
-        dwMilliseconds = microseconds / 1000;
+    if (timeout_us != OS_WAIT_INFINITE_TIME) {
+        dwMilliseconds = timeout_us / 1000;
     }
 
-    index = WaitForMultipleObjects(event_count, events, TRUE, dwMilliseconds);
-    if (index == WAIT_OBJECT_0) {
-        ret_val = OS_FILE_IO_COMPLETION;
-        for (uint32 i = 0; i < event_count; i++) {
-            slot = slot_array[i];
-            ut_a(slot->is_used);
+    index = WaitForMultipleObjects(context->slot_count, context->handles, FALSE, dwMilliseconds);
 
-            ret = GetOverlappedResult(slot->file, &(slot->control), &len, TRUE);
-            if (ret && len == slot->len) {
-                slot->ret = OS_FILE_IO_COMPLETION;
-            } else {
-                slot->ret = os_file_get_last_error();
-            }
+    if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
+        *message1 = NULL;
+        *message2 = NULL;
+        return OS_FILE_IO_COMPLETION;
+    }
+
+    if (index >= WAIT_OBJECT_0 && index < WAIT_OBJECT_0 + context->slot_count) {
+        DWORD len;
+        os_aio_slot_t* slot = os_aio_context_get_nth_slot(context, index);
+        bool32 ret = GetOverlappedResult(slot->file, &(slot->control), &len, TRUE);
+        *message1 = slot->message1;
+        *message2 = slot->message2;
+        *type = slot->type;
+        if (ret && len == slot->len) {
+            ret_val = OS_FILE_IO_COMPLETION;
+        } else {
+            ret_val = os_file_get_last_error();
         }
+        os_aio_context_free_slot(context, slot);
     } else if (index == WAIT_TIMEOUT) {
         ret_val = OS_FILE_IO_TIMEOUT;
     } else if (index == WAIT_FAILED) {
@@ -849,28 +843,27 @@ static int os_aio_windows_handle(os_aio_context_t* aio_context, uint32 microseco
 
 #else
 
-static bool32 os_aio_linux_handle(os_aio_context_t* aio_context, uint32 microseconds)
+static bool32 os_aio_linux_handle(
+    os_aio_context_t* context,
+    uint32            timeout_us,
+    void**            message1, /* out: message to be passed along with the aio operation */
+    void**            message2, /* out: message to be passed along with the aio operation */
+    uint32*           type) /* out: OS_FILE_WRITE or OS_FILE_READ */
 {
     os_aio_slot_t*    slot;
     int               ret;
     struct timespec   timeout;
-    struct io_event   events[AIO_GET_EVENTS_MAX_COUNT];
-    DWORD             event_count;
-
-    mutex_enter(&aio_context->mutex, NULL);
-    event_count = UT_LIST_GET_LEN(aio_context->slots);
-    mutex_exit(&aio_context->mutex);
 
 retry:
 
-    if (microseconds != OS_WAIT_INFINITE_TIME) {
-        timeout.tv_sec = microseconds / 1000000;
-        timeout.tv_nsec = (microseconds % 1000000) * 1000;
+    if (timeout_us != OS_WAIT_INFINITE_TIME) {
+        timeout.tv_sec = timeout_us / 1000000;
+        timeout.tv_nsec = (timeout_us % 1000000) * 1000;
     }
 
-    memset(events, 0, sizeof(struct io_event) * event_count);
-    ret = aio_getevents_func(aio_context->io_ctx, 1, event_count, events,
-                          microseconds == OS_WAIT_INFINITE_TIME ? NULL : &timeout);
+    ret = aio_getevents_func(context->io_context, 1,
+        context->slot_count, context->io_events,
+        timeout_us == OS_WAIT_INFINITE_TIME ? NULL : &timeout);
     if (ret <= 0) {
         //if (unlikely(srv_shutdown_state == SRV_SHUTDOWN_EXIT_THREADS)) {
         //    return;
@@ -919,7 +912,7 @@ retry:
     return OS_FILE_IO_COMPLETION;
 }
 
-static bool32 os_aio_linux_submit(os_aio_context_t* aio_context, os_aio_slot_t* slot)
+static bool32 os_aio_linux_submit(os_aio_context_t* context, os_aio_slot_t* slot)
 {
     int           ret;
     cm_iocb_t*    iocb;
@@ -928,7 +921,7 @@ static bool32 os_aio_linux_submit(os_aio_context_t* aio_context, os_aio_slot_t* 
     ut_a(slot->is_used == TRUE);
 
     iocb = &slot->control;
-    ret = aio_submit_func(aio_context, 1, &iocb);
+    ret = aio_submit_func(context, 1, &iocb);
 
     /* io_submit returns number of successfully queued requests or -errno. */
     if (unlikely(ret != 1)) {
@@ -942,15 +935,15 @@ static bool32 os_aio_linux_submit(os_aio_context_t* aio_context, os_aio_slot_t* 
 #endif
 
 bool32 os_file_aio_submit(
-    os_aio_context_t* aio_context,
-    uint32      type,     /* in: OS_FILE_READ or OS_FILE_WRITE */
-    const char* name,     /* in: name of the file or path as a null-terminated string */
-    os_file_t   file,     /* in: handle to a file */
-    void*       buf,      /* in: buffer where to read or from which to write */
-    uint32      count,    /* in: number of bytes to read or write */
-    uint64      offset,   /* in: file offset where to read or write */
-    void*       message1, /* in: message to be passed along with the aio operation */
-    void*       message2) /* in: message to be passed along with the aio operation */
+    os_aio_context_t* context,
+    uint32            type,     /* in: OS_FILE_READ or OS_FILE_WRITE */
+    const char*       name,     /* in: name of the file or path as a null-terminated string */
+    os_file_t         file,     /* in: handle to a file */
+    void*             buf,      /* in: buffer where to read or from which to write */
+    uint32            count,    /* in: number of bytes to read or write */
+    uint64            offset,   /* in: file offset where to read or write */
+    void*             message1, /* in: message to be passed along with the aio operation */
+    void*             message2) /* in: message to be passed along with the aio operation */
 {
     os_aio_slot_t*  slot;
 
@@ -958,47 +951,38 @@ bool32 os_file_aio_submit(
         return FALSE;
     }
 
-    slot = os_aio_array_alloc_slot(aio_context->aio_array,
-        type, message1, message2, file, name, buf, offset, count);
+    slot = os_aio_context_alloc_slot(context, type,
+        message1, message2, file, name, buf, offset, count);
     if (slot == NULL) {
         return FALSE;
     }
 
-    mutex_enter(&aio_context->mutex, NULL);
-    if (UT_LIST_GET_LEN(aio_context->slots) >= AIO_GET_EVENTS_MAX_COUNT) {
-        mutex_exit(&aio_context->mutex);
-        os_aio_array_free_slot(aio_context->aio_array, slot);
-        return FALSE;
-    }
-    UT_LIST_ADD_LAST(list_node, aio_context->slots, slot);
-    mutex_exit(&aio_context->mutex);
-
 #ifdef __WIN__
 
-    DWORD           offset_low; /* least significant 32 bits of file offset where to read */
-    LONG            offset_high; /* most significant 32 bits of offset */
-    DWORD           ret2;
-    uint32          mutex_index;
+    //DWORD           offset_low; /* least significant 32 bits of file offset where to read */
+    //LONG            offset_high; /* most significant 32 bits of offset */
+    //DWORD           ret2;
+    //uint32          mutex_index;
     DWORD           len = (DWORD)count;
     bool32          ret = TRUE;
 
     /* Protect the seek / read operation with a mutex */
-    mutex_index = ((uint64)file) % OS_FILE_N_SEEK_MUTEXES;
-    offset_low = (offset & 0xFFFFFFFF);
-    offset_high = (offset >> 32);
+    //mutex_index = ((uint64)file) % OS_FILE_N_SEEK_MUTEXES;
+    //offset_low = (offset & 0xFFFFFFFF);
+    //offset_high = (offset >> 32);
 
-    os_mutex_enter(&os_file_seek_mutexes[mutex_index]);
-    ret2 = SetFilePointer(file, offset_low, &offset_high, FILE_BEGIN);
-    if (ret2 == 0xFFFFFFFF && GetLastError() != NO_ERROR) {
-        os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
-        goto err_exit;
-    }
+    //os_mutex_enter(&os_file_seek_mutexes[mutex_index]);
+    //ret2 = SetFilePointer(file, offset_low, &offset_high, FILE_BEGIN);
+    //if (ret2 == 0xFFFFFFFF && GetLastError() != NO_ERROR) {
+    //    os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
+    //    goto err_exit;
+    //}
     if (type == OS_FILE_READ) {
         ret = ReadFile(file, buf, (DWORD)count, &len, &(slot->control));
     } else {
         ret = WriteFile(file, buf, (DWORD)count, &len, &(slot->control));
     }
-    os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
+    //os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
 
     if ((ret && len == count) || (!ret && GetLastError() == ERROR_IO_PENDING)) {
         /* aio was queued successfully! */
@@ -1009,7 +993,7 @@ bool32 os_file_aio_submit(
 
 #else
 
-    if (!os_aio_linux_submit(aio_context, slot)) {
+    if (!os_aio_linux_submit(context, slot)) {
         goto err_exit;
     }
 
@@ -1024,213 +1008,213 @@ err_exit:
 }
 
 //Waits for an aio operation to complete.
-int os_file_aio_wait(os_aio_context_t* aio_context, uint32 microseconds)
+int os_file_aio_wait(os_aio_context_t* context, uint32 timeout_us)
 {
-    int            ret;
+    int         ret;
+    void*       fil_node;
+    void*       message;
+    uint32      type;
 
 #ifdef __WIN__
-    ret = os_aio_windows_handle(aio_context, microseconds);
+    ret = os_aio_windows_handle(context, timeout_us, &fil_node, &message, &type);
 #else
-    ret = os_aio_linux_handle(aio_context, microseconds);
+    ret = os_aio_linux_handle(context, timeout_us, &fil_node, &message, &type);
 #endif /* WIN_ASYNC_IO */
 
-    return ret;
+    if (ret != OS_FILE_IO_COMPLETION) {
+        return ret;
+    }
+
+    if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
+        return OS_FILE_IO_COMPLETION;
+    }
+
+    if (fil_node) {
+        //srv_set_io_thread_op_info(segment, "complete io for fil node");
+        
+        //mutex_enter(&fil_system->mutex);
+        //fil_node_complete_io(fil_node, fil_system, type);
+        ///mutex_exit(&fil_system->mutex);
+        //ut_ad(fil_validate_skip());
+    }
+
+    return OS_FILE_IO_COMPLETION;
 }
 
-os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* aio_array)
+//Waits for all aio operation to complete.
+int os_file_aio_wait_all(os_aio_context_t* context, uint32 slot_count, uint32 timeout_us)
+{
+    uint32      index = 0;
+    int         ret;
+    void*       message1;
+    void*       message2;
+    uint32      type;
+
+    while (index < slot_count) {
+
+#ifdef __WIN__
+        ret = os_aio_windows_handle(context, timeout_us, &message1, &message2, &type);
+#else
+        ret = os_aio_linux_handle(context, timeout_us, &fil_node, &message, &type);
+#endif /* WIN_ASYNC_IO */
+
+        if (ret != OS_FILE_IO_COMPLETION) {
+            return ret;
+        }
+
+        if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
+            return OS_FILE_IO_COMPLETION;
+        }
+
+        index++;
+    }
+
+    return OS_FILE_IO_COMPLETION;
+}
+
+os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array)
 {
     uint64            signal_count = 0;
     os_aio_context_t *ctx;
 
 retry:
 
-    mutex_enter(&aio_array->mutex, NULL);
-    ctx = UT_LIST_GET_FIRST(aio_array->free_contexts);
+    mutex_enter(&array->mutex, NULL);
+    ctx = UT_LIST_GET_FIRST(array->free_contexts);
     if (ctx) {
-        UT_LIST_REMOVE(list_node, aio_array->free_contexts, ctx);
-        UT_LIST_ADD_LAST(list_node, aio_array->used_contexts, ctx);
+        ut_ad(ctx->is_used == FALSE);
+        ctx->is_used = TRUE;
+        UT_LIST_REMOVE(list_node, array->free_contexts, ctx);
     }
-    mutex_exit(&aio_array->mutex);
+    mutex_exit(&array->mutex);
 
     if (ctx == NULL) {
-        os_event_wait_time(aio_array->aio_context_event, 1000, signal_count);
-        signal_count = os_event_reset(aio_array->aio_context_event);
+        os_event_wait_time(array->context_event, 1000, signal_count);
+        signal_count = os_event_reset(array->context_event);
         goto retry;
     }
 
     return ctx;
 }
 
-void os_aio_array_free_context(os_aio_context_t* aio_context)
+void os_aio_array_free_context(os_aio_context_t* context)
 {
-    uint32 aio_context_len;
-    os_aio_slot_t* slot;
-    os_aio_array_t* aio_array = aio_context->aio_array;
+    uint32 len;
+    os_aio_array_t* array = context->array;
 
-    mutex_enter(&aio_context->mutex, NULL);
-    while ((slot = UT_LIST_GET_FIRST(aio_context->slots))) {
-        UT_LIST_REMOVE(list_node, aio_context->slots, slot);
-        os_aio_array_free_slot(aio_array, slot);
-    }
-    mutex_exit(&aio_context->mutex);
+    mutex_enter(&array->mutex, NULL);
+    len = UT_LIST_GET_LEN(array->free_contexts);
+    ut_ad(context->is_used)
+    context->is_used = FALSE;
+    UT_LIST_ADD_LAST(list_node, array->free_contexts, context);
+    mutex_exit(&array->mutex);
 
-    mutex_enter(&aio_array->mutex, NULL);
-    aio_context_len = UT_LIST_GET_LEN(aio_array->free_contexts);
-    UT_LIST_REMOVE(list_node, aio_array->used_contexts, aio_context);
-    UT_LIST_ADD_LAST(list_node, aio_array->free_contexts, aio_context);
-    mutex_exit(&aio_array->mutex);
-
-    if (aio_context_len == 0) {
-        os_event_set(aio_array->aio_context_event);
+    if (len == 0) {
+        os_event_set(array->context_event);
     }
 }
 
-void os_aio_context_enter_mutex(os_aio_context_t* aio_context)
+os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index)
 {
-    mutex_enter(&aio_context->mutex, NULL);
+    ut_a(index < array->context_count);
+
+    return(&array->contexts[index]);
 }
 
-void os_aio_context_exit_mutex(os_aio_context_t* aio_context)
+os_aio_array_t* os_aio_array_create(
+    uint32 io_pending_count_per_context, // in: maximum number of pending aio operations allowed;
+                             //     it must be divisible by n_segments
+    uint32 io_context_count) // in: number of io_context in the aio array
 {
-    ut_a(mutex_own(&aio_context->mutex));
+    os_aio_array_t* array;
 
-    mutex_exit(&aio_context->mutex);
-}
-
-uint32 os_aio_context_get_slot_count(os_aio_context_t* aio_context)
-{
-    ut_a(mutex_own(&aio_context->mutex));
-
-    return UT_LIST_GET_LEN(aio_context->slots);
-}
-
-os_aio_slot_t* os_aio_context_get_slot(os_aio_context_t* aio_context, uint index)
-{
-    os_aio_slot_t* slot;
-
-    ut_a(mutex_own(&aio_context->mutex));
-
-    slot = UT_LIST_GET_FIRST(aio_context->slots);
-    for (uint32 i = 0; i < index && slot != NULL; i++) {
-        slot = UT_LIST_GET_NEXT(list_node, slot);
-    }
-    return slot;
-}
-
-void os_aio_context_free_slots(os_aio_context_t* aio_context)
-{
-    os_aio_slot_t* slot;
-    os_aio_array_t* aio_array = aio_context->aio_array;
-
-    mutex_enter(&aio_context->mutex, NULL);
-    while ((slot = UT_LIST_GET_FIRST(aio_context->slots))) {
-        UT_LIST_REMOVE(list_node, aio_context->slots, slot);
-        os_aio_array_free_slot(aio_array, slot);
-    }
-    mutex_exit(&aio_context->mutex);
-}
-
-os_aio_array_t* os_aio_array_create(uint32 max_io_operation_count, uint32 io_context_count)
-{
-    os_aio_array_t*   array;
-#ifdef __WIN__
-    OVERLAPPED*        over;
-#else
-    int max_events = 10;
-#endif /* __WIN__ */
-
-    ut_a(max_io_operation_count > 0);
+    ut_a(io_pending_count_per_context > 0);
     ut_a(io_context_count > 0);
 
     array = (os_aio_array_t *)malloc(sizeof(os_aio_array_t));
     memset(array, 0x0, sizeof(os_aio_array_t));
-    UT_LIST_INIT(array->free_slots);
     UT_LIST_INIT(array->free_contexts);
-    UT_LIST_INIT(array->used_contexts);
     mutex_create(&array->mutex);
-    array->aio_slot_event = os_event_create(NULL);
-    array->aio_context_event = os_event_create(NULL);
-    array->slot_count = max_io_operation_count;
-    array->io_context_count = io_context_count;
+    array->context_event = os_event_create(NULL);
+    array->context_count = io_context_count;
 
-    //
-    array->aio_contexts = (os_aio_context_t *)malloc(io_context_count * sizeof(os_aio_context_t));
-    memset(array->aio_contexts, 0x0, sizeof(io_context_count * sizeof(os_aio_context_t)));
+    array->contexts = (os_aio_context_t *)malloc(io_context_count * sizeof(os_aio_context_t));
+    memset(array->contexts, 0x0, sizeof(io_context_count * sizeof(os_aio_context_t)));
     for (uint32 i = 0; i < io_context_count; i++) {
-        os_aio_context_t *ctx = array->aio_contexts + i;
-        ctx->aio_array = array;
+        os_aio_context_t *ctx = &array->contexts[i];
+        ctx->array = array;
+        ctx->is_used = FALSE;
+        ctx->slot_count = io_pending_count_per_context;
+        ctx->slot_event = os_event_create(NULL);
         mutex_create(&ctx->mutex);
-        UT_LIST_INIT(ctx->slots);
+        UT_LIST_INIT(ctx->free_slots);
+
+#ifdef __WIN__
+        ctx->handles = (HANDLE *)malloc(ctx->slot_count * sizeof(HANDLE));
+#else
+        // Initialize the io_context array
+        ctx->io_context = (io_context_t *)malloc(sizeof(io_context_t));
+        if (aio_setup_func(ctx->slot_count, &ctx->io_context) != 0) {
+            // If something bad happened during aio setup
+            return NULL;
+        }
+        // Initialize the event array. One event per slot
+        ctx->aio_events = (struct io_event *)malloc(ctx->slot_count * sizeof(struct io_event)));
+        memset(ctx->aio_events, 0x0, ctx->slot_count * sizeof(struct io_event));
+#endif
+
+        ctx->slots = (os_aio_slot_t *)malloc(ctx->slot_count * sizeof(os_aio_slot_t));
+        memset(ctx->slots, 0x00, sizeof(ctx->slot_count * sizeof(os_aio_slot_t)));
+        for (uint32 i = 0; i < ctx->slot_count; i++) {
+            os_aio_slot_t* slot = &ctx->slots[i];
+            slot->is_used = FALSE;
+            UT_LIST_ADD_LAST(list_node, ctx->free_slots, slot);
+#ifdef __WIN__
+            slot->handle = CreateEvent(NULL,TRUE, FALSE, NULL);
+            OVERLAPPED* over = &slot->control;
+            over->hEvent = slot->handle;
+            ctx->handles[i] = slot->handle;
+#else
+            memset(&slot->control, 0x0, sizeof(slot->control));
+            slot->n_bytes = 0;
+            slot->ret = 0;
+#endif /* __WIN__ */
+        }
+
         UT_LIST_ADD_LAST(list_node, array->free_contexts, ctx);
     }
 
-#ifdef __WIN__
-
-#else
-    /* Initialize the io_context array. One io_context per segment in the array. */
-    array->aio_ctxs = (io_context_t **)malloc(io_context_count * sizeof(io_context_t));
-    for (uint32 i = 0; i < io_context_count; ++i) {
-        if (aio_setup_func(max_events, &array->aio_ctxs[i]) != 0) {
-            goto err_exit;
-        }
-    }
-
-    for (uint32 i = 0; i < io_context_count; i++) {
-        os_aio_context_t *ctx = array->aio_contexts + i;
-        ctx->io_ctx = array->aio_ctxs[i];
-    }
-#endif /* __WIN__ */
-
-    //
-    array->aio_slots = (os_aio_slot_t *)malloc(max_io_operation_count * sizeof(os_aio_slot_t));
-    memset(array->aio_slots, 0x0, sizeof(max_io_operation_count * sizeof(os_aio_slot_t)));
-    for (uint32 i = 0; i < max_io_operation_count; i++) {
-        os_aio_slot_t* slot;
-        slot = os_aio_array_get_nth_slot(array, i);
-        slot->is_used = TRUE;
-        UT_LIST_ADD_LAST(list_node, array->free_slots, slot);
-#ifdef __WIN__
-        slot->handle = CreateEvent(NULL,TRUE, FALSE, NULL);
-        over = &slot->control;
-        over->hEvent = slot->handle;
-#else
-        memset(&slot->control, 0x0, sizeof(slot->control));
-        //slot->n_bytes = 0;
-        slot->ret = 0;
-#endif /* __WIN__ */
-    }
-
     return array;
-
-#ifndef __WIN__
-
-err_exit:
-
-#endif
-    return NULL;
 }
 
-void os_aio_array_free(os_aio_array_t* aio_array)
+void os_aio_array_free(os_aio_array_t* array)
 {
+    for (uint32 i = 0; i < array->context_count; i++) {
+        os_aio_context_t *ctx = &array->contexts[i];
+        for (uint32 i = 0; i < ctx->slot_count; i++) {
+            os_aio_slot_t* slot = &ctx->slots[i];
 #ifdef __WIN__
-    for (uint32 i = 0; i < aio_array->slot_count; i++) {
-        os_aio_slot_t* slot = os_aio_array_get_nth_slot(aio_array, i);
-        CloseHandle(slot->handle);
-    }
-    //free(aio_array->handles);
+            CloseHandle(slot->handle);
 #else
-    //free(aio_array->aio_events);
-    free(aio_array->aio_ctxs);
+
 #endif /* __WIN__ */
+        }
 
-    mutex_destroy(&aio_array->mutex);
+#ifdef __WIN__
+        free(ctx->handles);
+#else
+        aio_setup_func(ctx->io_context);
+        free(ctx->io_context);
+        free(ctx->io_events);
+#endif
+        os_event_destroy(ctx->slot_event);
+        mutex_destroy(&ctx->mutex);
+        free(ctx->slots);
+    }
 
-    os_event_destroy(aio_array->aio_slot_event);
-    os_event_destroy(aio_array->aio_context_event);
-
-    free(aio_array->aio_slots);
-    free(aio_array->aio_contexts);
-    free(aio_array);
+    free(array->contexts);
+    mutex_destroy(&array->mutex);
+    os_event_destroy(array->context_event);
+    free(array);
 }
-
 

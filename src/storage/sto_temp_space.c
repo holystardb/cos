@@ -2,7 +2,7 @@
 #include "cm_dbug.h"
 #include "cm_util.h"
 
-#define INVAID_PAGE_NO    0xFFFFFFFF
+#define INVALID_PAGE_NO    0xFFFFFFFF
 
 static temp_space_t fil_temp_space;
 

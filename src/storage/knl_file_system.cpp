@@ -68,9 +68,10 @@ bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open,
         goto err_exit;
     }
 
-    uint32 max_io_operation_count = 1024;
-    uint32 io_context_count = 256;
-    fil_system->aio_array = os_aio_array_create(max_io_operation_count, io_context_count);
+    fil_system->aio_pending_count_per_context = OS_AIO_N_PENDING_IOS_PER_THREAD;
+    fil_system->aio_context_count = 16;
+    fil_system->aio_array = os_aio_array_create(fil_system->aio_pending_count_per_context,
+                                                fil_system->aio_context_count);
     if (fil_system->aio_array == NULL) {
         LOGGER_ERROR(LOGGER, "fil_system_init: failed to create aio array");
         goto err_exit;
@@ -152,7 +153,7 @@ void fil_space_destroy(uint32 space_id)
     UT_LIST_BASE_NODE_T(fil_node_t) fil_node_list;
 
     mutex_enter(&fil_system->mutex, NULL);
-    space = fil_space_get_by_id(space_id);
+    space = fil_get_space_by_id(space_id);
     ut_a(space->magic_n == M_FIL_SPACE_MAGIC_N);
     mutex_exit(&fil_system->mutex);
 
@@ -214,11 +215,13 @@ fil_node_t* fil_node_create(fil_space_t *space, char *name, uint32 page_max_coun
     node->page_size = page_size;
     node->handle = OS_FILE_INVALID_HANDLE;
     node->magic_n = M_FIL_NODE_MAGIC_N;
+    mutex_create(&node->mutex);
     node->is_open = 0;
+    node->is_io_progress = 0;
     node->is_extend = is_extend;
     node->n_pending = 0;
 
-    spin_lock(&fil_system->mutex, NULL);
+    mutex_enter(&fil_system->mutex, NULL);
     for (uint32 i = 0; i < fil_system->fil_node_max_count; i++) {
         if (fil_system->fil_nodes[i] == NULL) {
             node->id = i;
@@ -226,7 +229,7 @@ fil_node_t* fil_node_create(fil_space_t *space, char *name, uint32 page_max_coun
             break;
         }
     }
-    spin_unlock(&fil_system->mutex);
+    mutex_exit(&fil_system->mutex);
 
     mutex_enter(&space->mutex, NULL);
     tmp = UT_LIST_GET_FIRST(space->fil_nodes);
@@ -277,7 +280,7 @@ bool32 fil_node_destroy(fil_space_t *space, fil_node_t *node)
     spin_unlock(&fil_system->mutex);
 
     os_del_file(node->name);
-
+    mutex_destroy(&node->mutex);
     my_free((void *)node);
 
     return TRUE;
@@ -398,9 +401,10 @@ static bool32 fil_space_extend_node(fil_space_t *space,
     os_aio_context_t *aio_ctx = NULL;
     uint32            timeout_seconds = 300;
     memory_page_t    *page = NULL;
-    char             *buf;
+    uchar            *buf;
     uint32            size;
     uint64            offset;
+    bool32            ret = FALSE;
 
     if (size_increase == 0) {
         *actual_size = 0;
@@ -415,12 +419,16 @@ static bool32 fil_space_extend_node(fil_space_t *space,
     }
 
     aio_ctx = os_aio_array_alloc_context(fil_system->aio_array);
-    page = marea_alloc_page(fil_system->mem_area, UNIV_PAGE_SIZE, TRUE);
-    buf = MEM_PAGE_DATA_PTR(page);
+    page = marea_alloc_page(fil_system->mem_area, UNIV_PAGE_SIZE);
+    buf = (uchar *)MEM_PAGE_DATA_PTR(page);
+    memset(buf, 0x00, UNIV_PAGE_SIZE);
 
-    for (uint32 loop = 0; loop < size_increase; loop += AIO_GET_EVENTS_MAX_COUNT) {
-        for (uint32 i = page_hwm + loop; i < page_hwm + loop + AIO_GET_EVENTS_MAX_COUNT; i++) {
+    for (uint32 loop = 0; loop < size_increase; loop += OS_AIO_N_PENDING_IOS_PER_THREAD) {
+        uint32 io_count = 0;
+        for (uint32 i = page_hwm + loop; i < page_hwm + loop + OS_AIO_N_PENDING_IOS_PER_THREAD; i++) {
             offset = i * UNIV_PAGE_SIZE;
+            mach_write_to_4(buf + FIL_PAGE_SPACE, space->id);
+            mach_write_to_4(buf + FIL_PAGE_OFFSET, i);
             if (!os_file_aio_submit(aio_ctx, OS_FILE_WRITE, node->name, node->handle,
                                     (void *)buf, UNIV_PAGE_SIZE, offset, NULL, NULL)) {
                 char errinfo[1024];
@@ -430,9 +438,10 @@ static bool32 fil_space_extend_node(fil_space_t *space,
                     node->name, errinfo);
                 goto err_exit;
             }
+            io_count++;
         }
 
-        int ret = os_file_aio_wait(aio_ctx, timeout_seconds * 1000000);
+        int ret = os_file_aio_wait_all(aio_ctx, io_count, timeout_seconds * 1000000);
         switch (ret) {
         case OS_FILE_IO_COMPLETION:
             break;
@@ -444,16 +453,13 @@ static bool32 fil_space_extend_node(fil_space_t *space,
 
         default:
             char err_info[1024];
-            os_file_get_last_error_desc(err_info, 1024);
+            os_file_get_error_desc_by_err(ret, err_info, 1024);
             LOGGER_FATAL(LOGGER,
                 "fil_space_extend: fail to write file, name %s error %s",
                 node->name, err_info);
             goto err_exit;
         }
-
-        os_aio_context_free_slots(aio_ctx);
     }
-    os_aio_array_free_context(aio_ctx);
 
     if (!os_fsync_file(node->handle)) {
         char errinfo[1024];
@@ -464,24 +470,23 @@ static bool32 fil_space_extend_node(fil_space_t *space,
         goto err_exit;
     }
 
-    fil_node_complete_io(node, OS_FILE_WRITE);
-
     *actual_size = size_increase;
-
-    return TRUE;
+    ret = TRUE;
 
 err_exit:
 
-    fil_node_complete_io(node, OS_FILE_WRITE);
-
-    if (page) {
-        marea_free_page(fil_system->mem_area, page, UNIV_PAGE_SIZE);
-    }
     if (aio_ctx) {
         os_aio_array_free_context(aio_ctx);
     }
 
-    return FALSE;
+    if (page) {
+        marea_free_page(fil_system->mem_area, page, UNIV_PAGE_SIZE);
+    }
+
+    fil_node_complete_io(node, OS_FILE_WRITE);
+
+
+    return ret;
 }
 
 bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size)
@@ -538,16 +543,16 @@ err_exit:
 
 uint32 fil_space_get_size(uint32 space_id)
 {
-	fil_space_t *space;
-	uint32       size;
+    fil_space_t *space;
+    uint32       size;
 
-	ut_ad(fil_system);
-	mutex_enter(&fil_system->mutex);
-	space = fil_space_get_by_id(space_id);
-	size = space ? space->size_in_header : 0;
-	mutex_exit(&fil_system->mutex);
+    ut_ad(fil_system);
+    mutex_enter(&fil_system->mutex);
+    space = fil_get_space_by_id(space_id);
+    size = space ? space->size_in_header : 0;
+    mutex_exit(&fil_system->mutex);
 
-	return(size);
+    return(size);
 }
 
 
@@ -582,8 +587,10 @@ static uint32 fsp_get_autoextend_increment(fil_space_t* space)
     if (space->id >= FIL_USER_SPACE_ID) {
         
     } else if (space->id == FIL_SYSTEM_SPACE_ID) {
+        return FSP_EXTENT_SIZE * FSP_FREE_ADD;
     } else {
     }
+
     return FSP_EXTENT_SIZE * FSP_FREE_ADD;
 }
 
@@ -620,7 +627,7 @@ static bool32 fsp_try_extend_data_file(
     return TRUE;
 }
 
-fil_space_t* fil_space_get_by_id(uint32 space_id)
+fil_space_t* fil_get_space_by_id(uint32 space_id)
 {
     fil_space_t *space;
 
@@ -630,8 +637,16 @@ fil_space_t* fil_space_get_by_id(uint32 space_id)
         fil_space_t*, space,
         ut_ad(space->magic_n == M_FIL_SPACE_MAGIC_N),
         space->id == space_id);
+    if (space) {
+        atomic32_inc(&space->refcount);
+    }
 
     return space;
+}
+
+void fil_release_space(fil_space_t* space)
+{
+    atomic32_dec(&space->refcount);
 }
 
 rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags)
@@ -642,7 +657,7 @@ rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags)
 
     mutex_enter(&fil_system->mutex);
 
-    space = fil_space_get_by_id(space_id);
+    space = fil_get_space_by_id(space_id);
 
     ut_a(space);
 
@@ -678,21 +693,24 @@ static void fil_node_close_file(fil_node_t *node)
     ut_a(node->n_pending == 0);
     ut_a(node->is_extend);
 
-    ut_ad(mutex_own(&(fil_system->lru_mutex)));
-
     ret = os_close_file(node->handle);
     ut_a(ret);
 
-    node->is_open = FALSE;
-
-    ut_ad(fil_system->open_pending_num > 0);
-    fil_system->open_pending_num--;
-
     if (fil_space_belongs_in_lru(node->space)) {
+        mutex_enter(&(fil_system->lru_mutex), NULL);
         ut_a(UT_LIST_GET_LEN(fil_system->fil_node_lru) > 0);
         /* The node is in the LRU list, remove it */
         UT_LIST_REMOVE(lru_list_node, fil_system->fil_node_lru, node);
+        mutex_exit(&(fil_system->lru_mutex));
     }
+
+    mutex_enter(&node->mutex);
+    node->is_open = FALSE;
+    node->is_io_progress = FALSE;
+    mutex_exit(&node->mutex);
+
+    ut_ad(fil_system->open_pending_num > 0);
+    atomic32_dec(&fil_system->open_pending_num);
 }
 
 // Opens a file of a node of a tablespace.
@@ -701,8 +719,6 @@ static bool32 fil_node_open_file(fil_node_t *node)
 {
     bool32      ret;
 
-    ut_ad(mutex_own(&(fil_system->mutex)));
-
     ut_a(node->n_pending == 0);
     ut_a(node->is_open == FALSE);
 
@@ -710,12 +726,18 @@ static bool32 fil_node_open_file(fil_node_t *node)
     ret = os_open_file(node->name, OS_FILE_OPEN, OS_FILE_AIO, &node->handle);
     ut_a(ret);
 
+    mutex_enter(&node->mutex);
     node->is_open = TRUE;
-    fil_system->open_pending_num++;
+    node->is_io_progress = FALSE;
+    mutex_exit(&node->mutex);
+
+    atomic32_inc(&fil_system->open_pending_num);
 
     if (fil_space_belongs_in_lru(node->space)) {
         /* Put the node to the LRU list */
+        mutex_enter(&fil_system->lru_mutex);
         UT_LIST_ADD_FIRST(lru_list_node, fil_system->fil_node_lru, node);
+        mutex_exit(&fil_system->lru_mutex);
     }
 
     return TRUE;
@@ -731,18 +753,25 @@ static bool32 fil_try_to_close_file_in_LRU()
          node != NULL;
          node = UT_LIST_GET_PREV(lru_list_node, node)) {
 
-        if (node->n_pending == 0 && !node->is_open) {
-            mutex_exit(&(fil_system->lru_mutex));
-            fil_node_close_file(node);
-            return TRUE;
+        mutex_enter(&node->mutex);
+        if (node->n_pending > 0 || node->is_open || node->is_io_progress) {
+            mutex_exit(&node->mutex);
+            continue;
         }
+        node->is_io_progress = TRUE;
+        mutex_exit(&node->mutex);
 
-        LOGGER_DEBUG(LOGGER,
-            "cannot close file %s, because n_pending %u",
-            node->name, node->is_open, node->n_pending);
+        break;
     }
 
     mutex_exit(&(fil_system->lru_mutex));
+
+    if (node) {
+        LOGGER_INFO(LOGGER, "close file %s", node->name);
+        fil_node_close_file(node);
+
+        return TRUE;
+    }
 
     return FALSE;
 }
@@ -754,13 +783,23 @@ static bool32 fil_try_to_close_file_in_LRU()
 // The caller must hold the fil_sys mutex.
 static bool32 fil_node_prepare_for_io(fil_node_t *node)
 {
-    ut_ad(mutex_own(&(fil_system->mutex)));
 
+open_retry:
+
+    mutex_enter(&node->mutex);
     if (node->is_open) {
         node->n_pending++;
         //node->time = current_monotonic_time();
+        mutex_exit(&node->mutex);
         return TRUE;
     }
+    if (node->is_io_progress) {
+        mutex_exit(&node->mutex);
+        os_thread_sleep(100); // 100us
+        goto open_retry;
+    }
+    node->is_io_progress = TRUE;
+    mutex_exit(&node->mutex);
 
     // We keep log files and system tablespace files always open
 
@@ -772,57 +811,44 @@ close_retry:
 
         /* Too many files are open, try to close some */
         bool32 success = fil_try_to_close_file_in_LRU();
-        if (success && fil_system->open_pending_num >= fil_system->max_n_open) {
+        if (success && atomic32_get(&fil_system->open_pending_num) >= fil_system->max_n_open) {
             os_thread_sleep(100); // 100us
             goto close_retry;
         }
     }
 
-    if (node->is_open == FALSE) {
-        /* File is closed: open it */
-        ut_a(node->n_pending == 0);
-        if (!fil_node_open_file(node)) {
-            return FALSE;
-        }
+    /* File is closed: open it */
+
+    ut_a(node->is_open == FALSE);
+    ut_a(node->n_pending == 0);
+
+    bool32 ret = fil_node_open_file(node);
+    mutex_enter(&node->mutex);
+    if (ret) {
+        node->n_pending++;
     }
+    node->is_io_progress = FALSE;
+    mutex_exit(&node->mutex);
 
-    if (node->n_pending == 0 && fil_space_belongs_in_lru(node->space)) {
-        /* The node is in the LRU list, remove it */
-        ut_a(UT_LIST_GET_LEN(fil_system->fil_node_lru) > 0);
-        UT_LIST_REMOVE(lru_list_node, fil_system->fil_node_lru, node);
-    }
-
-    node->n_pending++;
-
-    return TRUE;
+    return ret;
 }
 
-
-/********************************************************************//**
- Updates the data structures when an i/o operation finishes.
- Updates the pending i/o's field in the node appropriately. */
+// Updates the data structures when an i/o operation finishes.
+// Updates the pending i/o's field in the node appropriately.
 static void fil_node_complete_io(
     fil_node_t* node, /*!< in: file node */
     uint32 type) /*!< in: OS_FILE_WRITE or OS_FILE_READ; marks the node as modified if type == OS_FILE_WRITE */
 {
-    mutex_enter(&(fil_system->lru_mutex), NULL);
-
+    mutex_enter(&node->mutex);
     ut_a(node->n_pending > 0);
-
     node->n_pending--;
-
-    if (node->n_pending == 0 && fil_space_belongs_in_lru(node->space)) {
-        /* The node must be put back to the LRU list */
-        UT_LIST_ADD_FIRST(lru_list_node, fil_system->fil_node_lru, node);
-    }
-
-    mutex_exit(&(fil_system->lru_mutex));
+    mutex_exit(&node->mutex);
 }
 
 dberr_t fil_io(
     uint32 type,
     bool32 sync, /*!< in: true if synchronous aio is desired */
-    page_id_t *page_id,
+    const page_id_t &page_id,
     const page_size_t &page_size,
     uint32 len, /*!< in: this must be a block size multiple */
     void*  buf, /*!< in/out: buffer where to store data read */
@@ -833,12 +859,12 @@ dberr_t fil_io(
     uint32        block_offset;
 
     mutex_enter(&fil_system->mutex, NULL);
-    space = fil_space_get_by_id(page_id->space());
+    space = fil_get_space_by_id(page_id.space());
     fil_system_pin_space(space);
     mutex_exit(&fil_system->mutex);
 
     mutex_enter(&space->mutex);
-    block_offset = page_id->page_no();
+    block_offset = page_id.page_no();
     node = UT_LIST_GET_FIRST(space->fil_nodes);
     for (;;) {
         if (node == NULL) {
@@ -858,37 +884,50 @@ dberr_t fil_io(
         LOGGER_ERROR(LOGGER,
             "Trying to do read i/o to a tablespace which exists without %s data file, "
             "space id %lu, page no %lu",
-            node->name, page_id->space(), page_id->page_no());
+            node->name, page_id.space(), page_id.page_no());
         return(DB_TABLESPACE_DELETED);
     }
 
+    os_aio_context_t *aio_ctx;
+    if (sync) {
+        uint32 ctx_index = page_id.page_no() % srv_sync_io_contexts;
+        aio_ctx = os_aio_array_get_nth_context(srv_os_aio_sync_array, ctx_index);
+    } else {
+        uint32 ctx_index = page_id.page_no() % srv_read_io_threads;
+        if (type == OS_FILE_READ) {
+            aio_ctx = os_aio_array_get_nth_context(srv_os_aio_async_read_array, ctx_index);
+        } else {
+            aio_ctx = os_aio_array_get_nth_context(srv_os_aio_async_write_array, ctx_index);
+        }
+    }
+
     uint64 offset = block_offset << UNIV_PAGE_SIZE_SHIFT_DEF;
-    if (!os_file_aio_submit(node->aio_ctx, type, node->name, node->handle,
+    if (!os_file_aio_submit(aio_ctx, type, node->name, node->handle,
                             (void *)buf, len, offset, NULL, NULL)) {
         char err_info[1024];
         os_file_get_last_error_desc(err_info, 1024);
         LOGGER_ERROR(LOGGER,
             "Error: Trying to do read i/o from %s data file, space id %lu, page no %lu, error %s",
-            node->name, page_id->space(), page_id->page_no(), err_info);
+            node->name, page_id.space(), page_id.page_no(), err_info);
         goto err_exit;
     }
 
     if (sync) {
-        int ret = os_file_aio_wait(node->aio_ctx, srv_read_io_timeout_seconds * 1000000);
+        int ret = os_file_aio_wait(aio_ctx, srv_read_io_timeout_seconds * 1000000);
         switch (ret) {
         case OS_FILE_IO_COMPLETION:
             break;
         case OS_FILE_IO_TIMEOUT:
             LOGGER_ERROR(LOGGER,
                 "Error: timeout(%lu seconds) for do read i/o from %s data file, space id %lu, page no %lu",
-                srv_read_io_timeout_seconds, node->name, page_id->space(), page_id->page_no());
+                srv_read_io_timeout_seconds, node->name, page_id.space(), page_id.page_no());
             goto err_exit;
         default:
             char err_info[1024];
             os_file_get_last_error_desc(err_info, 1024);
             LOGGER_ERROR(LOGGER,
                 "Error: Trying to do read i/o from %s data file, space id %lu, page no %lu, error %s",
-                node->name, page_id->space(), page_id->page_no(), err_info);
+                node->name, page_id.space(), page_id.page_no(), err_info);
             goto err_exit;
         }
 
@@ -908,7 +947,7 @@ err_exit:
 
 dberr_t fil_read(
     bool32 sync, /*!< in: true if synchronous aio is desired */
-    page_id_t *page_id,
+    const page_id_t &page_id,
     const page_size_t &page_size,
     uint32 len, /*!< in: this must be a block size multiple */
     void*  buf, /*!< in/out: buffer where to store data read */
@@ -919,7 +958,7 @@ dberr_t fil_read(
 
 dberr_t fil_write(
     bool32 sync, /*!< in: true if synchronous aio is desired */
-    page_id_t *page_id,
+    const page_id_t &page_id,
     const page_size_t &page_size,
     uint32 len, /*!< in: this must be a block size multiple */
     void*  buf, /*!< in/out: buffer where to store data read */
@@ -943,7 +982,7 @@ bool32 fil_space_reserve_free_extents(
 
     mutex_enter(&fil_system->mutex);
 
-    space = fil_space_get_by_id(id);
+    space = fil_get_space_by_id(id);
     ut_a(space);
 
     if (space->n_reserved_extents + n_to_reserve > n_free_now) {
@@ -969,7 +1008,7 @@ void fil_space_release_free_extents(
 
     mutex_enter(&fil_system->mutex);
 
-    space = fil_space_get_by_id(id);
+    space = fil_get_space_by_id(id);
 
     ut_a(space);
     ut_a(space->n_reserved_extents >= n_reserved);

@@ -360,11 +360,8 @@ void flst_remove(
 	node3_addr = flst_get_next_addr(node2, mtr);
 
 	if (!fil_addr_is_null(node1_addr)) {
-
 		/* Update next field of node1 */
-
 		if (node1_addr.page == node2_addr.page) {
-
 			node1 = page_align(node2) + node1_addr.boffset;
 		} else {
 			node1 = fut_get_ptr(space, page_size, node1_addr, RW_X_LATCH, mtr, NULL);
@@ -380,9 +377,7 @@ void flst_remove(
 
 	if (!fil_addr_is_null(node3_addr)) {
 		/* Update prev field of node3 */
-
 		if (node3_addr.page == node2_addr.page) {
-
 			node3 = page_align(node2) + node3_addr.boffset;
 		} else {
 			node3 = fut_get_ptr(space, page_size, node3_addr, RW_X_LATCH, mtr, NULL);

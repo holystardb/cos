@@ -5,6 +5,8 @@
 #include "cm_error.h"
 #include "cm_counter.h"
 #include "m_ctype.h"
+#include "cm_file.h"
+#include "cm_memory.h"
 
 
 /** Maximum number of srv_n_log_files, or innodb_log_files_in_group */
@@ -18,21 +20,29 @@ typedef uint32              page_no_t;
 
 typedef uint64              ib_uint64_t;
 typedef uint64              ib_id_t;
-typedef uint64              trx_id_t;
 
 typedef byte                page_t;
-//typedef uint64              lsn_t;
 typedef uint16              page_type_t;
+
+typedef uint64              roll_ptr_t;
 
 typedef byte                buf_frame_t;
 
 /* Type used for all log sequence number storage and arithmetics */
-typedef uint64          lsn_t;
-#define LSN_MAX         uint64
-#define LSN_PF          UINT64PF
+typedef uint64              lsn_t;
 
-typedef ib_id_t         table_id_t;
-typedef ib_id_t         index_id_t;
+typedef uint64              scn_t;
+#define SCN_MAX             UINT_MAX64
+#define INVALID_SCN         UINT_MAX64
+
+typedef ib_id_t             table_id_t;
+typedef ib_id_t             index_id_t;
+
+typedef uint32              command_id_t;
+
+#define FIRST_COMMAND_ID    0
+#define INVALID_COMMAND_ID  (~(command_id_t)0)
+
 
 
 /*------------------------- global config ------------------------ */
@@ -73,6 +83,7 @@ extern uint32 srv_purge_threads;
 extern uint32 srv_n_file_io_threads;
 extern uint32 srv_read_io_threads;
 extern uint32 srv_write_io_threads;
+extern uint32 srv_sync_io_contexts;
 
 extern uint32 srv_read_io_timeout_seconds;
 extern uint32 srv_write_io_timeout_seconds;
@@ -81,6 +92,10 @@ extern uint32 srv_write_io_timeout_seconds;
 // Move blocks to "new" LRU list only if the first access was at least this many milliseconds ago.
 // Not protected by any mutex or latch.
 extern uint32 srv_buf_LRU_old_threshold_ms;
+
+extern os_aio_array_t* srv_os_aio_async_read_array;
+extern os_aio_array_t* srv_os_aio_async_write_array;
+extern os_aio_array_t* srv_os_aio_sync_array;
 
 
 /*-------------------------------------------------- */
@@ -194,6 +209,8 @@ typedef struct st_srv_stats {
     /** We increase this counter, when we have to wait for log sync to file */
     uint64_ctr_1_t      trx_sync_log_waits;
 
+    uint64_ctr_1_t      trx_commits;
+    uint64_ctr_1_t      trx_rollbacks;
 
     /** Count the number of times the doublewrite buffer was flushed */
     uint64_ctr_1_t      dblwr_writes;
@@ -211,6 +228,9 @@ typedef struct st_srv_stats {
 
     /** Count the number of pages that were written from buffer pool to the disk */
     uint64_ctr_1_t      buf_pool_flushed;
+
+    // Wait time for log_sys->log_flush_order_mutex lock
+    spinlock_stats_t    buf_pool_insert_flush_list;
 
     /** Number of buffer pool reads that led to the reading of a disk page */
     uint64_ctr_1_t      buf_pool_reads;
@@ -240,6 +260,26 @@ typedef struct st_srv_stats {
     uint64_ctr_64_t     n_rows_inserted;
 } srv_stats_t;
 
+typedef struct st_thread
+{
+    uint32     id;
+
+    uint64     cid; // command id
+    uint64     query_scn;
+} thread_t;
+
+
+typedef struct st_session
+{
+    uint32     id;
+
+    uint64     cid; // command id
+    uint64     query_scn;
+} session_t;
+
+
+
+
 
 dberr_t srv_start(bool32 create_new_db);
 
@@ -261,6 +301,8 @@ extern bool32 db_ctrl_add_temp(char *name, uint64 size, uint64 max_size, bool32 
 
 extern bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl);
 
+extern void* write_io_handler_thread(void *arg);
+extern void* read_io_handler_thread(void *arg);
 
 //------------------------------------------------------------------
 
@@ -272,9 +314,13 @@ extern bool32 recv_no_log_write;
 
 extern bool32 srv_read_only_mode;
 
-
-
 extern db_ctrl_t srv_db_ctrl;
+
+/** At a shutdown this value climbs from SRV_SHUTDOWN_NONE to
+SRV_SHUTDOWN_CLEANUP and then to SRV_SHUTDOWN_LAST_PHASE, and so on */
+extern shutdown_state_enum_t srv_shutdown_state;
+
+extern memory_area_t*  srv_memory_sga;
 
 
 #endif  /* _KNL_SERVER_H */

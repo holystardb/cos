@@ -133,7 +133,7 @@ bool32 log_info::create_log_file()
     return TRUE;
 }
 
-void log_info::log_to_file(log_level_t log_level, const char *fmt,...)
+void log_info::log_to_file(log_level_t log_level, const char *file, uint32 line, const char *fmt, ...)
 {
     int             len, write_size = 0;
     va_list         ap;
@@ -306,7 +306,7 @@ void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 }
 
 
-void log_info::log_to_stderr(log_level_t log_level, const char *fmt,...)
+void log_info::log_to_stderr(log_level_t log_level, const char *file, uint32 line, const char *fmt, ...)
 {
     int             len;
     va_list         ap;

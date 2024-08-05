@@ -144,42 +144,46 @@ typedef struct st_log_group {
 
 /** Redo log buffer */
 typedef struct st_log {
-    byte             pad[64]; /*!< padding to prevent other memory update hotspots from residing on the same memory cache line */
-    mutex_t          mutex; /*!< mutex protecting the log */
-    log_buf_lsn_t    buf_lsn;
-    uint64           buf_base_lsn;
+    // padding to prevent other memory update hotspots from residing on the same memory cache line
+    byte              pad[64];
+    mutex_t           mutex; // mutex protecting the log
+    // mutex to serialize access to the flush list when we are putting dirty blocks in the list
+    mutex_t           log_flush_order_mutex;
+    log_buf_lsn_t     buf_lsn;
+    uint64            buf_base_lsn;
 
-    byte*            buf_ptr; /* unaligned log buffer */
-    byte*            buf; /*!< log buffer */
-    uint32           buf_size; /*!< log buffer size in bytes */
-    uint32           max_buf_free; /*!< recommended maximum value of buf_free, after which the buffer is flushed */
-    uint32           buf_free; /*!< first free offset within the log buffer */
+    byte*             buf_ptr; /* unaligned log buffer */
+    byte*             buf; /*!< log buffer */
+    uint32            buf_size; /*!< log buffer size in bytes */
+    uint32            max_buf_free; /*!< recommended maximum value of buf_free, after which the buffer is flushed */
+    uint32            buf_free; /*!< first free offset within the log buffer */
 
-    uint8            group_count; // number of log file
-    uint8            current_write_group;
-    uint8            current_flush_group;
-    log_group_t      groups[LOG_GROUP_MAX_COUNT];
-    uint64           file_size;
-    os_aio_array_t  *aio_array;
+    uint8             group_count; // number of log file
+    uint8             current_write_group;
+    uint8             current_flush_group;
+    log_group_t       groups[LOG_GROUP_MAX_COUNT];
+    uint64            file_size;
+    os_aio_array_t*   aio_array;
+    os_aio_context_t* aio_ctx;
 
-    log_slot_t      *slots;
-    volatile uint64  slot_write_pos;
-    volatile uint64  writer_writed_lsn;
-    volatile uint64  flusher_flushed_lsn;
+    log_slot_t*       slots;
+    volatile uint64   slot_write_pos;
+    volatile uint64   writer_writed_lsn;
+    volatile uint64   flusher_flushed_lsn;
 
-    os_event_t       writer_event;
-    os_event_t       flusher_event;
-    os_event_t       session_wait_event[LOG_SESSION_WAIT_EVENT_COUNT];
+    os_event_t        writer_event;
+    os_event_t        flusher_event;
+    os_event_t        session_wait_event[LOG_SESSION_WAIT_EVENT_COUNT];
 
-    os_thread_t      writer_thread;
-    os_thread_t      flusher_thread;
+    os_thread_t       writer_thread;
+    os_thread_t       flusher_thread;
 
-    uint64           max_checkpoint_age;
-    uint64           next_checkpoint_no; // next checkpoint number
-    uint64           last_checkpoint_lsn; // latest checkpoint lsn
-    uint64           next_checkpoint_lsn; // next checkpoint lsn
+    uint64            max_checkpoint_age;
+    uint64            next_checkpoint_no; // next checkpoint number
+    uint64            last_checkpoint_lsn; // latest checkpoint lsn
+    uint64            next_checkpoint_lsn; // next checkpoint lsn
 
-    uint32           n_pending_checkpoint_writes; // number of currently pending checkpoint writes
+    uint32            n_pending_checkpoint_writes; // number of currently pending checkpoint writes
 
 } log_t;
 
@@ -195,6 +199,25 @@ extern void log_write_complete(log_buf_lsn_t *log_lsn);
 
 extern void log_write_up_to(lsn_t lsn);
 extern void log_checkpoint();
+
+extern inline lsn_t log_get_flushed_lsn();
+
+
+// Test if flush order mutex is owned.
+#define log_flush_order_mutex_own()   mutex_own(&log_sys->log_flush_order_mutex)
+
+// Acquire the flush order mutex.
+#define log_flush_order_mutex_enter()                   \
+    do {                                                \
+        mutex_enter(&log_sys->log_flush_order_mutex, &srv_stats.buf_pool_insert_flush_list); \
+    } while (0)
+
+// Release the flush order mutex
+# define log_flush_order_mutex_exit()                \
+    do {                                             \
+        mutex_exit(&log_sys->log_flush_order_mutex); \
+    } while (0)
+
 
 /*-----------------------------------------------------------------------*/
 

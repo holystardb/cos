@@ -1,8 +1,7 @@
 #ifndef _CM_DBUG_H
 #define _CM_DBUG_H
 
-#include <assert.h>
-#include <stdlib.h>
+#include "cm_type.h"
 #include "cm_thread.h"
 
 extern uint64  ut_dbg_zero; /* This is used to eliminate compiler warnings */
@@ -11,7 +10,7 @@ extern uint64 *ut_dbg_null_ptr;
 
 #define ut_a(EXPR) {                                                            \
     uint64 dbg_i;                                                               \
-    if (!((uint64)(EXPR) + ut_dbg_zero)) {                                      \
+    if (UNLIKELY(!((uint64)(EXPR) + ut_dbg_zero))) {                                      \
         fprintf(stderr, "\nAssertion failure in thread %lu in file %s line %lu\n",\
             os_thread_get_curr_id(), __FILE__, (uint32)__LINE__);               \
         fprintf(stderr, "We intentionally generate a memory trap.\n");          \
@@ -22,7 +21,7 @@ extern uint64 *ut_dbg_null_ptr;
             ut_dbg_null_ptr = NULL;                                             \
         }                                                                       \
     }                                                                           \
-    if (ut_dbg_stop_threads) {                                                  \
+    if (UNLIKELY(ut_dbg_stop_threads)) {                                                  \
         fprintf(stderr, "Thread %lu stopped in file %s line %lu\n",             \
             os_thread_get_curr_id(), __FILE__, (uint32)__LINE__);               \
             os_thread_sleep(1000000000);                                        \
@@ -41,15 +40,15 @@ extern uint64 *ut_dbg_null_ptr;
 }
 
 
-
-
-#ifdef UNIV_DEBUG_OUTPUT
-#define ut_ad(EXPR) ut_a(EXPR)
-#define ut_d(EXPR)  {EXPR;}
+#ifdef UNIV_DEBUG
+#define ut_ad(EXPR)     ut_a(EXPR)
+#define ut_d(EXPR)      {EXPR;}
+#define CM_ASSERT(EXPR) ut_a(EXPR)
 #else
 #define ut_ad(EXPR)
 #define ut_d(EXPR)
-#endif
+#define CM_ASSERT(EXPR)
+#endif // UNIV_DEBUG
 
 #define UT_NOT_USED(A)
 
@@ -105,7 +104,8 @@ extern int do_debug;
 #define DBUG_RETURN(a)                 do { return(a); } while(0)
 #define DBUG_VOID_RETURN               do { return; } while(0)
 #define DBUG_TRACE
-#endif
+
+#endif // UNIV_DEBUG_OUTPUT
 
 extern bool32 dbug_init(char *log_path, char *file_name, int level);
 extern void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...);

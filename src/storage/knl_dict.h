@@ -13,62 +13,48 @@
 #define DICT_HDR_PAGE_NO    FSP_DICT_HDR_PAGE_NO
 
 /* The ids for the basic system tables and their indexes */
-#define DICT_TABLES_ID		1
-#define DICT_COLUMNS_ID		2
-#define DICT_INDEXES_ID		3
-#define DICT_FIELDS_ID		4
+#define DICT_TABLES_ID          1
+#define DICT_COLUMNS_ID         2
+#define DICT_INDEXES_ID         3
+#define DICT_FIELDS_ID          4
 /* The following is a secondary index on SYS_TABLES */
-#define DICT_TABLE_IDS_ID	5
+#define DICT_TABLE_IDS_ID       5
 
-#define	DICT_HDR_FIRST_ID	10	/* the ids for tables etc. start
-from this number, except for basic
-system tables and their above defined
-indexes; ibuf tables and indexes are
-assigned as the id the number
-DICT_IBUF_ID_MIN plus the space id */
+/* the ids for tables etc.
+   start from this number, except for basic system tables and their above defined indexes;
+   ibuf tables and indexes are assigned as the id the number DICT_IBUF_ID_MIN plus the space id */
+#define DICT_HDR_FIRST_ID       256
 
 /* The offset of the dictionary header on the page */
-#define	DICT_HDR		FSEG_PAGE_DATA
+#define DICT_HDR                FSEG_PAGE_DATA
 
 /*-------------------------------------------------------------*/
 /* Dictionary header offsets */
-#define DICT_HDR_ROW_ID		0	/* The latest assigned row id */
-#define DICT_HDR_TABLE_ID	8	/* The latest assigned table id */
-#define DICT_HDR_INDEX_ID	16	/* The latest assigned index id */
-#define DICT_HDR_MAX_SPACE_ID	24	/* The latest assigned space id,or 0*/
-#define DICT_HDR_MIX_ID_LOW	28	/* Obsolete,always DICT_HDR_FIRST_ID*/
-#define DICT_HDR_TABLES		32	/* Root of SYS_TABLES clust index */
-#define DICT_HDR_TABLE_IDS	36	/* Root of SYS_TABLE_IDS sec index */
-#define DICT_HDR_COLUMNS	40	/* Root of SYS_COLUMNS clust index */
-#define DICT_HDR_INDEXES	44	/* Root of SYS_INDEXES clust index */
-#define DICT_HDR_FIELDS		48	/* Root of SYS_FIELDS clust index */
-
-#define DICT_HDR_FSEG_HEADER	56	/* Segment header for the tablespace
-segment into which the dictionary
-header is created */
+#define DICT_HDR_ROW_ID         0   /* The latest assigned row id */
+#define DICT_HDR_TABLE_ID       8   /* The latest assigned table id */
+#define DICT_HDR_INDEX_ID       16  /* The latest assigned index id */
+#define DICT_HDR_MAX_SPACE_ID   24  /* The latest assigned space id,or 0*/
+#define DICT_HDR_MIX_ID_LOW     28  /* Obsolete,always DICT_HDR_FIRST_ID*/
+#define DICT_HDR_TABLES         32  /* Root of SYS_TABLES clust index */
+#define DICT_HDR_TABLE_IDS      36  /* Root of SYS_TABLE_IDS sec index */
+#define DICT_HDR_COLUMNS        40  /* Root of SYS_COLUMNS clust index */
+#define DICT_HDR_INDEXES        44  /* Root of SYS_INDEXES clust index */
+#define DICT_HDR_FIELDS         48  /* Root of SYS_FIELDS clust index */
+#define DICT_HDR_FSEG_HEADER    1024  /* Segment header for the tablespace segment
+                                       into which the dictionary header is created */
 /*-------------------------------------------------------------*/
 
 
-/** Max number of rollback segments */
-#define TRX_SYS_N_RSEGS 128
+/** Type flags of an index:
+    OR'ing of the flags is allowed to define a combination of types */
+#define DICT_CLUSTERED      1   /*!< clustered index */
+#define DICT_UNIQUE         2   /*!< unique index */
+#define DICT_UNIVERSAL      4   /*!< index which can contain records from any other index */
+#define DICT_IBUF           8   /*!< insert buffer tree */
+#define DICT_CORRUPT        16  /*!< bit to store the corrupted flag in SYS_INDEXES.TYPE */
+#define DICT_FTS            32  /* FTS index; can't be combined with the other flags */
 
-/** Minimum and Maximum number of undo tablespaces */
-#define FSP_MIN_UNDO_TABLESPACES 2
-#define FSP_MAX_UNDO_TABLESPACES (TRX_SYS_N_RSEGS - 1)
-
-/** Type flags of an index: OR'ing of the flags is allowed to define a
-combination of types */
-#define DICT_CLUSTERED	1	/*!< clustered index */
-#define DICT_UNIQUE	2	/*!< unique index */
-#define	DICT_UNIVERSAL	4	/*!< index which can contain records from any
-				other index */
-#define	DICT_IBUF	8	/*!< insert buffer tree */
-#define	DICT_CORRUPT	16	/*!< bit to store the corrupted flag
-				in SYS_INDEXES.TYPE */
-#define	DICT_FTS	32	/* FTS index; can't be combined with the
-				other flags */
-
-#define	DICT_IT_BITS	6	/*!< number of bits used for SYS_INDEXES.TYPE */
+#define DICT_IT_BITS        6   /*!< number of bits used for SYS_INDEXES.TYPE */
 
 
 /** Width of the COMPACT flag */
@@ -104,15 +90,15 @@ allows InnoDB to update_create_info() accordingly. */
 
 /* The columns in SYS_TABLES */
 enum dict_col_sys_tables_enum {
-	DICT_COL__SYS_TABLES__NAME		= 0,
-	DICT_COL__SYS_TABLES__ID		= 1,
-	DICT_COL__SYS_TABLES__N_COLS		= 2,
-	DICT_COL__SYS_TABLES__TYPE		= 3,
-	DICT_COL__SYS_TABLES__MIX_ID		= 4,
-	DICT_COL__SYS_TABLES__MIX_LEN		= 5,
-	DICT_COL__SYS_TABLES__CLUSTER_ID	= 6,
-	DICT_COL__SYS_TABLES__SPACE		= 7,
-	DICT_NUM_COLS__SYS_TABLES		= 8
+    DICT_COL__SYS_TABLES__NAME          = 0,
+    DICT_COL__SYS_TABLES__ID            = 1,
+    DICT_COL__SYS_TABLES__N_COLS        = 2,
+    DICT_COL__SYS_TABLES__TYPE          = 3,
+    DICT_COL__SYS_TABLES__MIX_ID        = 4,
+    DICT_COL__SYS_TABLES__MIX_LEN       = 5,
+    DICT_COL__SYS_TABLES__CLUSTER_ID    = 6,
+    DICT_COL__SYS_TABLES__SPACE         = 7,
+    DICT_NUM_COLS__SYS_TABLES           = 8
 };
 /* The field numbers in the SYS_TABLES clustered index */
 enum dict_fld_sys_tables_enum {
@@ -286,42 +272,39 @@ typedef	byte    dict_hdr_t;
 typedef struct st_dict_table dict_table_t;
 typedef struct st_dict_index dict_index_t;
 
+
+#define M_MIN_NUM_SCALE         (int32)(-84)
+#define M_MAX_NUM_SCALE         (int32)127
+
+#define M_MIN_NUM_PRECISION     (int32)1
+#define M_MAX_NUM_PRECISION     (int32)38
+
+
+
 /** Data structure for a column in a table */
 typedef struct st_dict_col {
-	/*----------------------*/
-	/** The following are copied from dtype_t,
-	so that all bit-fields can be packed tightly. */
-	/* @{ */
-	unsigned	prtype:32;	/*!< precise type; MySQL data
-					type, charset code, flags to
-					indicate nullability,
-					signedness, whether this is a
-					binary string, whether this is
-					a true VARCHAR where MySQL
-					uses 2 bytes to store the length */
-	unsigned	mtype:8;	/*!< main data type */
+    uint8  mtype;  // main data type
+    union {
+        struct {
+            uint8  precision;
+            uint8  scale;
+            uint8  aligned1;
+        };
+        struct {
+            uint16 len;
+            uint8  mbminmaxlen : 5; // minimum and maximum length of a character, in bytes
+            uint8  aligned2    : 3;
+        };
+    };
 
-	/* the remaining fields do not affect alphabetical ordering: */
+    uint32 ind           : 10; // table column position (starting from 0)
+    uint32 nullable      : 1;  // null or not null
+    uint32 is_compressed : 1;
+    uint32 is_droped     : 1;
+    uint32 is_hidden     : 1;
+    uint32 reserved      : 18;
 
-	unsigned	len:16;		/*!< length; for MySQL data this
-					is field->pack_length(),
-					except that for a >= 5.0.3
-					type true VARCHAR this is the
-					maximum byte length of the
-					string data (in addition to
-					the string, MySQL uses 1 or 2
-					bytes to store the string length) */
-
-	unsigned	mbminmaxlen:5;	/*!< minimum and maximum length of a
-					character, in bytes;
-					DATA_MBMINMAXLEN(mbminlen,mbmaxlen);
-					mbminlen=DATA_MBMINLEN(mbminmaxlen);
-					mbmaxlen=DATA_MBMINLEN(mbminmaxlen) */
-
-	unsigned	ind:10; /*!< table column position (starting from 0) */
-	unsigned	ord_part:1;	/*!< nonzero if this column appears in the ordering fields of an index */
-	unsigned	max_prefix:12; /*!< maximum index prefix length on this column.
-                                    Our current max limit is 3072 for Barracuda table */
+    void*  default_expr;  // deserialized default expr
 } dict_col_t;
 
 
@@ -342,12 +325,17 @@ typedef struct st_dict_field{
 					DICT_ANTELOPE_MAX_INDEX_COL_LEN */
 } dict_field_t;
 
+struct st_dict_heap {
+    dict_table_t*   table;
+    uint32          space_id;
+    uint32          map_root_page;  // map root page number */
+
+};
 
 /** Data structure for an index.  Most fields will be
 initialized to 0, NULL or FALSE in dict_mem_index_create(). */
 struct st_dict_index{
 	index_id_t	id;	/*!< id of the index */
-	//mem_heap_t*	heap;	/*!< memory heap */
 	const char*	name;	/*!< index name */
 	const char*	table_name;/*!< table name */
 	dict_table_t*	table;	/*!< back pointer to table */
@@ -388,17 +376,13 @@ struct st_dict_index{
 				dict_sys->mutex. Other changes are
 				protected by index->lock. */
 	dict_field_t*	fields;	/*!< array of field descriptions */
-#ifndef UNIV_HOTBACKUP
+
+    HASH_NODE_T	name_hash; /*!< hash chain node */
+    HASH_NODE_T	id_hash; /*!< hash chain node */
+
 	UT_LIST_NODE_T(dict_index_t) indexes; /*!< list of indexes of the table */
-	//btr_search_t*	search_info; /*!< info used in optimistic searches */
-	//row_log_t*	online_log;
-				/*!< the log of modifications
-				during online index creation;
-				valid when online_status is
-				ONLINE_INDEX_CREATION */
-	/*----------------------*/
+
 	/** Statistics for query optimization */
-	/* @{ */
 	uint64*	stat_n_diff_key_vals;
 				/*!< approximate number of different
 				key values for this index, for each
@@ -419,32 +403,16 @@ struct st_dict_index{
 				is indexed from 0 to n_uniq-1); This
 				is used when innodb_stats_method is
 				"nulls_ignored". */
-	uint32		stat_index_size;
-				/*!< approximate index size in
-				database pages */
+	uint32		stat_index_size;  /*!< approximate index size in database pages */
     uint32		stat_n_leaf_pages;
-				/*!< approximate number of leaf pages in the
-				index tree */
-	/* @} */
+				/*!< approximate number of leaf pages in the index tree */
+
 	rw_lock_t	lock;	/*!< read-write lock protecting the
 				upper levels of the index tree */
 	trx_id_t	trx_id; /*!< id of the transaction that created this
 				index, or 0 if the index existed
 				when InnoDB was started up */
-	//zip_pad_info_t	zip_pad;/*!< Information about state of compression failures and successes */
-#endif /* !UNIV_HOTBACKUP */
-#ifdef UNIV_BLOB_DEBUG
-	ib_mutex_t		blobs_mutex;
-				/*!< mutex protecting blobs */
-	ib_rbt_t*	blobs;	/*!< map of (page_no,heap_no,field_no)
-				to first_blob_page_no; protected by
-				blobs_mutex; @see btr_blob_dbg_t */
-#endif /* UNIV_BLOB_DEBUG */
-#ifdef UNIV_DEBUG
-	uint32		magic_n;/*!< magic number */
-/** Value of dict_index_t::magic_n */
-# define DICT_INDEX_MAGIC_N	76789786
-#endif
+
 };
 
 
@@ -452,7 +420,7 @@ struct st_dict_index{
 initialized to 0, NULL or FALSE in dict_mem_table_create(). */
 struct st_dict_table{
 	table_id_t	id;	/*!< id of the table */
-	//mem_heap_t*	heap;	/*!< memory heap */
+    memory_context_t* mem_ctx;
 	char*		name;	/*!< table name */
 	const char*	dir_path_of_temp_table;/*!< NULL or the directory path
 				where a TEMPORARY table that was explicitly
@@ -462,9 +430,13 @@ struct st_dict_table{
 				temp\... */
 	char*		data_dir_path; /*!< NULL or the directory path
 				specified by DATA DIRECTORY */
-	unsigned	space:32;
-				/*!< space where the clustered index of the
-				table is placed */
+	uint32      space_id;
+    uint32      entry_page_no;
+    bool32      heap_io_in_progress;
+    uint8       init_trans;
+    uint8       pctfree;
+    mutex_t     mutex;
+
 	unsigned	flags:DICT_TF_BITS;	/*!< DICT_TF_... */
 	unsigned	flags2:DICT_TF2_BITS;	/*!< DICT_TF2_... */
 	unsigned	ibd_file_missing:1;
@@ -501,8 +473,8 @@ struct st_dict_table{
 				allocated from a temporary heap.  The final
 				string will be allocated from table->heap. */
 #ifndef UNIV_HOTBACKUP
-	//hash_node_t	name_hash; /*!< hash chain node */
-	//hash_node_t	id_hash; /*!< hash chain node */
+	HASH_NODE_T name_hash; /*!< hash chain node */
+	HASH_NODE_T id_hash; /*!< hash chain node */
 	UT_LIST_BASE_NODE_T(dict_index_t)
 			indexes; /*!< list of indexes of the table */
 	//UT_LIST_BASE_NODE_T(dict_foreign_t)
@@ -730,38 +702,40 @@ struct st_dict_table{
 
 /* Dictionary system struct */
 struct dict_sys_t {
-  mutex_t mutex;          /*!< mutex protecting the data dictionary; */
-  uint64  row_id;             /*!< the next row id to assign;
-                               NOTE that at a checkpoint this
-                               must be written to the dict system
-                               header and flushed to a file; in
-                               recovery this must be derived from
-                               the log records */
-  HASH_TABLE *table_hash;    /*!< hash table of the tables, based on name */
-  HASH_TABLE *table_id_hash; /*!< hash table of the tables, based on id */
-  uint32 size;                   /*!< varying space in bytes occupied by the data dictionary table and index objects */
-  /** Handler to sys_* tables, they're only for upgrade */
-  dict_table_t *sys_tables;  /*!< SYS_TABLES table */
-  dict_table_t *sys_columns; /*!< SYS_COLUMNS table */
-  dict_table_t *sys_indexes; /*!< SYS_INDEXES table */
-  dict_table_t *sys_fields;  /*!< SYS_FIELDS table */
-  dict_table_t *sys_virtual; /*!< SYS_VIRTUAL table */
+    mutex_t             mutex;
+    uint64              row_id;
+    /*!< hash table of the tables, based on name */
+    HASH_TABLE*         table_hash;
+    /*!< hash table of the tables, based on id */
+    HASH_TABLE*         table_id_hash;
+    /*!< varying space in bytes occupied by the data dictionary table and index objects */
+    uint32              size;
 
-  /** Permanent handle to mysql.innodb_table_stats */
-  dict_table_t *table_stats;
-  /** Permanent handle to mysql.innodb_index_stats */
-  dict_table_t *index_stats;
-  /** Permanent handle to mysql.innodb_ddl_log */
-  dict_table_t *ddl_log;
-  /** Permanent handle to mysql.innodb_dynamic_metadata */
-  dict_table_t *dynamic_metadata;
+    /** Handler to sys_* tables, they're only for upgrade */
+    dict_table_t*       sys_tables;  /*!< SYS_TABLES table */
+    dict_table_t*       sys_columns; /*!< SYS_COLUMNS table */
+    dict_table_t*       sys_indexes; /*!< SYS_INDEXES table */
+    dict_table_t*       sys_fields;  /*!< SYS_FIELDS table */
+    dict_table_t*       sys_virtual; /*!< SYS_VIRTUAL table */
 
-  UT_LIST_BASE_NODE_T(dict_table_t)
-  table_LRU; /*!< List of tables that can be evicted
-             from the cache */
-  UT_LIST_BASE_NODE_T(dict_table_t)
-  table_non_LRU; /*!< List of tables that can't be
-                 evicted from the cache */
+    /** Permanent handle to mysql.innodb_table_stats */
+    dict_table_t*       table_stats;
+    /** Permanent handle to mysql.innodb_index_stats */
+    dict_table_t*       index_stats;
+    /** Permanent handle to mysql.innodb_ddl_log */
+    dict_table_t*       ddl_log;
+    /** Permanent handle to mysql.innodb_dynamic_metadata */
+    dict_table_t*       dynamic_metadata;
+    memory_pool_t*      mem_pool;
+
+    UT_LIST_BASE_NODE_T(dict_table_t) table_LRU;
+    UT_LIST_BASE_NODE_T(dict_table_t) table_non_LRU;
+
+
+
+
+
+
 
   /** Iterate each table.
   @tparam Functor visitor
@@ -881,13 +855,33 @@ struct dict_sys_t {
 
   /** The clustered index ID of mysql.innodb_dynamic_metadata */
   //static constexpr space_index_t s_dynamic_meta_index_id = 2;
+
+
 };
 
 
 //------------------------------------------------------
 
+#define dict_table_get_nth_col(table, pos) ((table)->cols + (pos))
+#define dict_table_get_sys_col(table, sys) \
+    ((table)->cols + (table)->n_cols + (sys) - DATA_N_SYS_COLS)
+#define dict_index_get_nth_field(index, pos) ((index)->fields + (pos))
+
+
 extern dberr_t dict_boot(void);
 extern dberr_t dict_create(void);
+
+extern dict_table_t* dict_mem_table_create(const char* name, uint32 space, uint32 n_cols, uint32 flags, uint32 flags2);
+extern void dict_mem_table_add_col(dict_table_t* table, const char* name, uint32 mtype, uint32 prtype, uint32 len);
+extern dict_index_t* dict_mem_index_create(dict_table_t* table, const char* index_name, uint32 space_id, uint32 type, uint32 n_fields);
+extern void dict_mem_index_add_field(dict_index_t* index, const char* name, uint32 prefix_len);
+extern void dict_table_add_to_cache(dict_table_t* table, bool32 can_be_evicted);
+
+
+//------------------------------------------------------
+
+/** the dictionary system */
+extern dict_sys_t*    dict_sys;
 
 
 #endif  /* _KNL_DICT_H */

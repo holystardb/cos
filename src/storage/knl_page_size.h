@@ -2,6 +2,9 @@
 #define _KNL_PAGE_SIZE_H
 
 #include "cm_type.h"
+#include "cm_dbug.h"
+#include "cm_util.h"
+
 
 #ifdef __cplusplus
 extern "C" {

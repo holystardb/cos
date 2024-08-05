@@ -27,7 +27,7 @@ void test_memory()
     uint32 page_size = 1024 * 8;
 
     area = marea_create(size, is_extend);
-    pool = mpool_create(area, local_page_count, max_page_count, page_size);
+    pool = mpool_create(area, 0, local_page_count, max_page_count, page_size);
     
 
     printf("case 1:\n");
@@ -131,7 +131,7 @@ bool32 test_vm_memory()
             goto err_exit;
         }
 
-        char *buf = ctrl[i]->val.data;
+        char *buf = VM_CTRL_GET_DATA(ctrl[i]);
         memset(buf, 0x00, page_size);
         sprintf_s(buf, page_size, "data: %08d", i);
 
@@ -153,7 +153,7 @@ bool32 test_vm_memory()
         }
 
         sprintf_s(temp, 1024, "data: %08d", i);
-        if (strncmp(ctrl[i]->val.data, temp, strlen(temp)) == 0) {
+        if (strncmp(VM_CTRL_GET_DATA(ctrl[i]), temp, strlen(temp)) == 0) {
             //printf("read check: ok, i=%d\n", i);
         } else {
             printf("read check: fail, i=%d\n", i);

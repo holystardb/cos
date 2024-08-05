@@ -44,7 +44,7 @@ void os_event_set_signal(os_event_t event);
 uint64 os_event_reset(os_event_t event);
 void os_event_destroy(os_event_t event);
 void os_event_wait(os_event_t event, uint64 reset_sig_count = 0);
-int os_event_wait_time(os_event_t event, uint32 time, uint64 reset_sig_count = 0);
+int os_event_wait_time(os_event_t event, uint32 timeout_us, uint64 reset_sig_count = 0);
 
 void os_mutex_create(os_mutex_t *mutex);
 void os_mutex_enter(os_mutex_t *mutex);

@@ -37,7 +37,7 @@ constexpr uint32 MAX_BUFFER_POOLS = 64;
 
 /** Get appropriate page_hash_lock. */
 #define buf_page_hash_lock_get(buf_pool, page_id) \
-  hash_get_lock((buf_pool)->page_hash, (page_id)->fold())
+  hash_get_lock((buf_pool)->page_hash, (page_id).fold())
 
 /** If not appropriate page_hash_lock, relock until appropriate. */
 #define buf_page_hash_lock_s_confirm(hash_lock, buf_pool, page_id) \
@@ -46,36 +46,24 @@ constexpr uint32 MAX_BUFFER_POOLS = 64;
 #define buf_page_hash_lock_x_confirm(hash_lock, buf_pool, page_id) \
   hash_lock_x_confirm(hash_lock, (buf_pool)->page_hash, (page_id).fold())
 
-#define buf_block_get_frame(block) (block)->frame
+#define buf_block_get_frame(block) ((block)->frame)
 
 
 
 enum class Page_fetch {
-    /** Get always */
+    // Get always
     NORMAL,
 
-    /** Same as NORMAL, but hint that the fetch is part of a large scan.
-    Try not to flood the buffer pool with pages that may not be accessed again any time soon. */
-    SCAN,
-
-    /** get if in pool */
+    // get if in pool
     IF_IN_POOL,
 
-    /** get if in pool, do not make the block young in the LRU list */
+    // get if in pool, do not make the block young in the LRU list
     PEEK_IF_IN_POOL,
 
-    /** get and bufferfix, but set no latch; we have separated this case, because
-    it is error-prone programming not to set a latch, and it  should be used with care */
-    NO_LATCH,
-
-    /** Get the page only if it's in the buffer pool, if not then set a watch on the page. */
-    IF_IN_POOL_OR_WATCH,
-
-    /** Like Page_fetch::NORMAL, but do not mind if the file page has been freed. */
-    POSSIBLY_FREED
+    RESIDENT
 };
 
-enum buf_page_state {
+typedef enum en_buf_page_state {
   BUF_BLOCK_POOL_WATCH, /*!< a sentinel for the buffer pool
                         watch, element of buf_pool->watch[] */
   BUF_BLOCK_ZIP_PAGE,   /*!< contains a clean
@@ -94,16 +82,16 @@ enum buf_page_state {
   BUF_BLOCK_MEMORY,        /*!< contains some main memory object */
   BUF_BLOCK_REMOVE_HASH    /*!< hash index should be removed
                            before putting to the free list */
-};
+} buf_page_state_t;
 
 /** Flags for io_fix types */
-enum buf_io_fix {
+typedef enum en_buf_io_fix {
   BUF_IO_NONE = 0, /**< no pending I/O */
   BUF_IO_READ,     /**< read pending */
   BUF_IO_WRITE,    /**< write pending */
   BUF_IO_PIN       /**< disallow relocation of
                    block and its removal of from the flush_list */
-};
+} buf_io_fix_t;
 
 
 
@@ -119,11 +107,12 @@ public:
     atomic32_t buf_fix_count;
 
     /** type of pending I/O operation. */
-    buf_io_fix io_fix;
+    buf_io_fix_t io_fix;
 
     /** Block state. */
-    buf_page_state state;
+    buf_page_state_t state;
 
+    bool32 is_resident;
     bool32 in_page_hash;
     bool32 in_flush_list;
     bool32 in_free_list;
@@ -155,8 +144,8 @@ public:
     //        - BUF_BLOCK_ZIP_PAGE:   zip_clean
     UT_LIST_NODE_T(buf_page_t) list_node;
 
+    uint64 recovery_lsn;
     uint64 newest_modification;
-    uint64 oldest_modification;
 
     UT_LIST_NODE_T(buf_page_t) LRU;
     unsigned old:1; /*!< TRUE if the block is in the old blocks in buf_pool->LRU_old */
@@ -179,16 +168,16 @@ public:
 
 class buf_block_t {
 public:
-  buf_page_t page; /*!< page information; this must be the first field,
-                     so that buf_pool->page_hash can point to buf_page_t or buf_block_t */
-  byte *frame;     /*!< pointer to buffer frame which
-                   is of size UNIV_PAGE_SIZE, and aligned to an address divisible by UNIV_PAGE_SIZE */
+    buf_page_t page; /*!< page information; this must be the first field,
+                          so that buf_pool->page_hash can point to buf_page_t or buf_block_t */
+    byte *frame;     /*!< pointer to buffer frame which
+                          is of size UNIV_PAGE_SIZE, and aligned to an address divisible by UNIV_PAGE_SIZE */
 
-  rw_lock_t        rw_lock; /*!< read-write lock of the buffer frame */
+    rw_lock_t        rw_lock; /*!< read-write lock of the buffer frame */
 
-  UT_LIST_NODE_T(buf_block_t) unzip_LRU;  /* node of the decompressed LRU list */
+    UT_LIST_NODE_T(buf_block_t) unzip_LRU;  /* node of the decompressed LRU list */
 
-  uint64 modify_clock; /*!< this clock is incremented every
+    uint64 modify_clock; /*!< this clock is incremented every
                             time a pointer to a record on the
                             page may become obsolete; this is
                             used in the optimistic cursor
@@ -201,49 +190,36 @@ public:
                             x-latch on the block, or (3) the block
                             must belong to an intrinsic table */
 
-  uint32 n_hash_helps;      /*!< counter which controls building
+    uint32 n_hash_helps;      /*!< counter which controls building
                            of a new hash index for the page */
-  volatile uint32 n_bytes;  /*!< recommended prefix length for hash
+    volatile uint32 n_bytes;  /*!< recommended prefix length for hash
                            search: number of bytes in
                            an incomplete last field */
-  volatile uint32 n_fields; /*!< recommended prefix length for hash
+    volatile uint32 n_fields; /*!< recommended prefix length for hash
                            search: number of full fields */
-  volatile bool32 left_side; /*!< true or false, depending on
+    volatile bool32 left_side; /*!< true or false, depending on
                            whether the leftmost record of several
                            records with the same prefix should be
                            indexed in the hash index */
                            /* @} */
 
-  unsigned curr_n_fields : 10; /*!< prefix length for hash indexing:
-                              number of full fields */
-  unsigned curr_n_bytes : 15;  /*!< number of bytes in hash indexing */
-  unsigned curr_left_side : 1; /*!< TRUE or FALSE in hash indexing */
+    unsigned curr_n_fields : 10; /*!< prefix length for hash indexing: number of full fields */
+    unsigned curr_n_bytes : 15;  /*!< number of bytes in hash indexing */
+    unsigned curr_left_side : 1; /*!< TRUE or FALSE in hash indexing */
 
-  mutex_t mutex;
+    mutex_t mutex;
 
-  /** Get the page number of the current buffer block.
-  @return page number of the current buffer block. */
-  page_no_t get_page_no() const { return (page.id.page_no()); }
+    page_no_t get_page_no() const { return (page.id.page_no()); }
+    space_id_t get_space_id() const { return (page.id.space_id()); }
+    page_no_t get_next_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_NEXT)); }
+    page_no_t get_prev_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_PREV)); }
+    page_type_t get_page_type() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE)); }
+    bool32 is_resident() const { return page.is_resident; }
 
-  /** Get the next page number of the current buffer block.
-  @return next page number of the current buffer block. */
-  //page_no_t get_next_page_no() const {
-  //  return (mach_read_from_4(frame + FIL_PAGE_NEXT));
-  //}
-
-  /** Get the page type of the current buffer block.
-  @return page type of the current buffer block. */
-  //page_type_t get_page_type() const {
-  //  return (mach_read_from_2(frame + FIL_PAGE_TYPE));
-  //}
-
-  /** Get the page type of the current buffer block as string.
-  @return page type of the current buffer block as string. */
-  //const char *get_page_type_str() const;
 };
 
-/** @brief The buffer pool statistics structure. */
-struct buf_pool_stat_t {
+// The buffer pool statistics structure
+typedef struct st_buf_pool_stat {
   uint32 n_page_gets;            /*!< number of page gets performed;
                                 also successful searches through the adaptive hash index are
                                 counted as page gets; this field is NOT protected by the buffer pool mutex */
@@ -260,17 +236,17 @@ struct buf_pool_stat_t {
                         was not long enough ago, in buf_page_peek_if_too_old(). Not protected. */
   uint32 LRU_bytes;              /*!< LRU size in bytes. Protected by LRU_list_mutex. */
   uint32 flush_list_bytes;       /*!< flush_list size in bytes. Protected by flush_list_mutex */
-};
+} buf_pool_stat_t;
 
 /** Flags for flush types */
-enum buf_flush_t {
+typedef enum en_buf_flush {
     BUF_FLUSH_LRU = 0,     /*!< flush via the LRU list */
     BUF_FLUSH_LIST,        /*!< flush via the flush list of dirty blocks */
     BUF_FLUSH_SINGLE_PAGE, /*!< flush via the LRU list but only a single page */
     BUF_FLUSH_N_TYPES      /*!< index of last element + 1  */
-};
+} buf_flush_t;
 
-struct buf_pool_t {
+typedef struct st_buf_pool {
     mutex_t    mutex;      /*!< Buffer pool mutex of this instance */
 
     mutex_t LRU_list_mutex;  /*!< LRU list mutex */
@@ -394,11 +370,11 @@ struct buf_pool_t {
   a corresponding individual page_hash
   latch. */
 
-};
+} buf_pool_t;
 
 
 dberr_t buf_pool_init(uint64 total_size, uint32 n_instances);
-buf_pool_t* buf_pool_get(page_id_t *page_id);
+buf_pool_t* buf_pool_get(const page_id_t &page_id);
 buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
 buf_pool_t* buf_pool_from_block(const buf_block_t *block);
 lsn_t buf_pool_get_oldest_modification(void);
@@ -407,87 +383,56 @@ lsn_t buf_pool_get_oldest_modification(void);
 
 
 // in: buffer pool instance, or NULL for round-robin selection of the buffer pool
-buf_block_t* buf_block_alloc(buf_pool_t *buf_pool);
+buf_block_t* buf_block_alloc(buf_pool_t* buf_pool);
 
 // Frees a buffer block which does not contain a file page
-void buf_block_free(buf_block_t *    block);
+void buf_block_free(buf_block_t* block);
 
 buf_block_t* buf_block_align(const byte* ptr);
 
-uint32 buf_block_fix(buf_block_t *block);
-uint32 buf_page_fix(buf_page_t *bpage);
+extern inline uint32 buf_block_fix(buf_block_t* block, mtr_t* mtr);
+extern inline void buf_block_unfix(buf_block_t* block, mtr_t* mtr);
+extern inline uint32 buf_page_fix(buf_page_t* bpage);
+extern inline void buf_page_unfix(buf_page_t* bpage);
+#define buf_block_mark_dirty(block, mtr)  buf_block_fix(block, mtr)
+
+extern inline void buf_block_lock(buf_block_t *block, rw_lock_type_t lock_type, mtr_t* mtr);
+extern inline void buf_block_unlock(buf_block_t *block, rw_lock_type_t lock_type, mtr_t* mtr);
+
+
+// Initializes a page to the buffer buf_pool
+// not read from file even if it cannot be found in the buffer buf_pool
+buf_block_t* buf_page_create(    const page_id_t &page_id,   const page_size_t &page_size,
+    rw_lock_type_t rw_latch, Page_fetch mode, mtr_t *mtr);
+
+
+// This is the general function used to get access to a database page
+buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
+    uint32 rw_latch, Page_fetch mode, mtr_t *mtr);
+
+#define buf_page_get(ID, SIZE, RW_LOCK, MTR) buf_page_get_gen(ID, SIZE, RW_LOCK, Page_fetch::NORMAL, MTR)
 
 
 
-/********************************************************************//**
-Initializes a page to the buffer buf_pool.
-The page is usually not read from a file even if it cannot be found in the buffer buf_pool.
-This is one of the functions which perform to a block a state transition NOT_USED => FILE_PAGE (the other is buf_page_get_gen).
-@return pointer to the block, page bufferfixed */
-buf_block_t* buf_page_create(
-    page_id_t *page_id,
-    const page_size_t &page_size,
-    rw_lock_type_t rw_latch,
-    mtr_t *mtr);
-
-
-/** This is the general function used to get access to a database page.
-    @param[in] page_id      page id
-    @param[in] page_size    page size
-    @param[in] rw_latch     RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH
-    @param[in] guess        guessed block or NULL
-    @param[in] mode         Fetch mode.
-    @param[in] file         file name
-    @param[in] line         line where called
-    @param[in] mtr          mini-transaction
-    @param[in] dirty_with_no_latch mark page as dirty even if page is being pinned without any latch
-    @return pointer to the block or NULL */
-buf_block_t *buf_page_get_gen(page_id_t *page_id, const page_size_t &page_size,
-    uint32 rw_latch, buf_block_t *guess, Page_fetch mode,
-    const char *file, uint32 line, mtr_t *mtr, bool32 dirty_with_no_latch = FALSE);
-
-
-/** NOTE! The following macros should be used instead of buf_page_get_gen,
- to improve debugging. Only values RW_S_LATCH and RW_X_LATCH are allowed in LA! */
-#define buf_page_get(ID, SIZE, LA, MTR)                                        \
-    buf_page_get_gen(ID, SIZE, LA, NULL, Page_fetch::NORMAL, __FILE__, __LINE__, MTR)
-
-/** Use these macros to bufferfix a page with no latching. Remember not to
- read the contents of the page unless you know it is safe. Do not modify
- the contents of the page! We have separated this case, because it is
- error-prone programming not to set a latch, and it should be used with care. */
-#define buf_page_get_with_no_latch(ID, SIZE, MTR)                     \
-    buf_page_get_gen(ID, SIZE, RW_NO_LATCH, NULL, Page_fetch::NO_LATCH, __FILE__, __LINE__, MTR)
-
-
-/********************************************************************//**
-Completes an asynchronous read or write request of a file page to or from the buffer pool.
-@return true if successful */
-bool32 buf_page_io_complete(buf_page_t* bpage);  /*!< in: pointer to the block in question */
+// Completes an asynchronous read or write request of a file page to or from the buffer pool
+bool32 buf_page_io_complete(buf_page_t* bpage);
 bool32 buf_page_can_relocate(const buf_page_t *bpage);
 buf_page_t *buf_page_alloc_descriptor(void);
 void buf_page_free_descriptor(buf_page_t *bpage);
-buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, page_id_t *page_id);
+buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, const page_id_t &page_id);
 
 bool32 buf_page_in_file(const buf_page_t *bpage);
 bool32 buf_page_is_old(const buf_page_t* bpage);
 void buf_page_set_old(buf_page_t* bpage, bool32 old);
 
-enum buf_io_fix buf_page_get_io_fix(const buf_page_t *bpage);
-void buf_page_set_io_fix(buf_page_t *bpage, enum buf_io_fix io_fix);
+extern inline buf_io_fix_t buf_page_get_io_fix(const buf_page_t *bpage);
+extern inline void buf_page_set_io_fix(buf_page_t *bpage, buf_io_fix_t io_fix);
 
-enum buf_page_state buf_page_get_state(const buf_page_t *bpage);
-void buf_page_set_state(buf_page_t *bpage, enum buf_page_state state);
+extern inline buf_page_state_t buf_page_get_state(const buf_page_t *bpage);
+extern inline void buf_page_set_state(buf_page_t *bpage, buf_page_state_t state);
 
 
-/********************************************************************//**
-Inits a page to the buffer buf_pool. */
-static void buf_page_init(
-    buf_pool_t  *buf_pool,/*!< in/out: buffer pool */
-    page_id_t   *page_id,
-    const page_size_t &page_size,
-    //uint32       zip_size,/*!< in: compressed page size, or 0 */
-    buf_block_t *block);  /*!< in/out: block to init */
+
 
 uint32 buf_page_is_accessed(const buf_page_t *bpage);
 void buf_page_set_accessed(buf_page_t *bpage);
@@ -522,17 +467,10 @@ bool32 buf_page_peek(
     uint32  space,   /*!< in: space id */
     uint32  offset); /*!< in: page number */
 
-/********************************************************************//**
-Decrements the bufferfix count of a buffer control block and releases a latch, if specified. */
-void buf_page_release(
-    buf_block_t *block,      /*!< in: buffer block */
-    uint32       rw_latch);   /*!< in: RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH */
-
-
 void buf_ptr_get_fsp_addr(const void *ptr, uint32 *space,  fil_addr_t *addr);
 
-void buf_block_set_state(buf_block_t *block, enum buf_page_state state);
-enum buf_page_state buf_block_get_state(const buf_block_t *block);
+extern inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state);
+extern inline buf_page_state_t buf_block_get_state(const buf_block_t *block);
 spinlock_t *buf_page_get_mutex(const buf_page_t *bpage);
 
 

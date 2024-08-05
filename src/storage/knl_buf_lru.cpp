@@ -44,7 +44,7 @@ bool32 buf_flush_ready_for_replace(buf_page_t *bpage)
     ut_ad(bpage->in_LRU_list);
 
     if (buf_page_in_file(bpage)) {
-        return (bpage->oldest_modification == 0 &&
+        return (bpage->recovery_lsn == 0 &&
                 bpage->buf_fix_count == 0 &&
                 buf_page_get_io_fix(bpage) == BUF_IO_NONE);
     }
@@ -70,7 +70,7 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
     ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
     ut_ad(mutex_own(buf_page_get_mutex(bpage)));
 
-    hash_lock = buf_page_hash_lock_get(buf_pool, &bpage->id);
+    hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
 
     ut_ad(rw_lock_own(hash_lock, RW_LOCK_EXCLUSIVE));
 
@@ -105,7 +105,7 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
         break;
     }
 
-    hashed_bpage = buf_page_hash_get_low(buf_pool, &bpage->id);
+    hashed_bpage = buf_page_hash_get_low(buf_pool, bpage->id);
     if (bpage != hashed_bpage) {
         LOGGER_ERROR(LOGGER,
             "Page(space %lu page %lu) not found in the hash table",
@@ -133,7 +133,7 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
     switch (buf_page_get_state(bpage)) {
     case BUF_BLOCK_FILE_PAGE: {
         memset(((buf_block_t *)bpage)->frame + FIL_PAGE_OFFSET, 0xff, 4);
-        memset(((buf_block_t *)bpage)->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID,  0xff, 4);
+        memset(((buf_block_t *)bpage)->frame + FIL_PAGE_SPACE,  0xff, 4);
         //UNIV_MEM_INVALID(((buf_block_t *)bpage)->frame, UNIV_PAGE_SIZE);
         buf_page_set_state(bpage, BUF_BLOCK_REMOVE_HASH);
 
@@ -311,7 +311,7 @@ bool32 buf_LRU_free_page(buf_page_t *bpage)
 {
     buf_page_t *b = NULL;
     buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
-    rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, &bpage->id);
+    rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
     mutex_t *block_lock = buf_page_get_mutex(bpage);
 
     ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
@@ -339,7 +339,7 @@ void buf_LRU_free_one_page(buf_page_t *bpage, bool32 ignore_content)
 #ifdef UNIV_DEBUG
     buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
     mutex_t *block_mutex = buf_page_get_mutex(bpage);
-    rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, &bpage->id);
+    rw_lock_t *hash_lock = buf_page_hash_lock_get(buf_pool, bpage->id);
 
     ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
     ut_ad(mutex_own(block_mutex));
@@ -383,7 +383,7 @@ void buf_LRU_block_free_non_file_page(buf_block_t *block)
     buf_block_set_state(block, BUF_BLOCK_NOT_USED);
     /* Wipe page_no and space_id */
     memset(block->frame + FIL_PAGE_OFFSET, 0xfe, 4);
-    memset(block->frame + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID, 0xfe, 4);
+    memset(block->frame + FIL_PAGE_SPACE, 0xfe, 4);
 
     mutex_enter(&buf_pool->free_list_mutex, NULL);
     UT_LIST_ADD_FIRST(list_node, buf_pool->free_pages, (&block->page));

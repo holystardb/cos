@@ -51,6 +51,7 @@ void os_event_set_signal(os_event_t event)
         /* Do nothing */
     } else {
         event->is_set = TRUE;
+        event->signal_count += 1;
         pthread_cond_signal(&(event->cond_var));
     }
     os_mutex_exit(&(event->os_mutex));
@@ -113,14 +114,14 @@ void os_event_wait(os_event_t event, uint64 reset_sig_count)
 
 int os_event_wait_time(
         os_event_t   event,  /* in: event to wait */
-        uint32       microseconds,  /* in: timeout in microseconds, or  OS_SYNC_INFINITE_TIME */
+        uint32       timeout_us,  /* in: timeout in microseconds, or  OS_SYNC_INFINITE_TIME */
         uint64       reset_sig_count)
 {
 #ifdef __WIN__
     DWORD err;
     /* Specify an infinite time limit for waiting */
-    if (microseconds != OS_WAIT_INFINITE_TIME) {
-        err = WaitForSingleObject(event, microseconds / 1000);
+    if (timeout_us != OS_WAIT_INFINITE_TIME) {
+        err = WaitForSingleObject(event, timeout_us / 1000);
     } else {
         err = WaitForSingleObject(event, INFINITE);
     }
@@ -138,10 +139,10 @@ int os_event_wait_time(
     int err = 0;
     struct timeval tv;
 
-    if (microseconds != OS_WAIT_INFINITE_TIME) {
+    if (timeout_us != OS_WAIT_INFINITE_TIME) {
         gettimeofday(&tv,NULL);
-        tv.tv_sec = tv.tv_sec + microseconds / 1000000;
-        tv.tv_usec = tv.tv_usec + microseconds % 1000000;
+        tv.tv_sec = tv.tv_sec + timeout_us / 1000000;
+        tv.tv_usec = tv.tv_usec + timeout_us % 1000000;
         if (tv.tv_usec > 1000000)
         {
             tv.tv_sec += tv.tv_usec / 1000000;
@@ -162,8 +163,8 @@ int os_event_wait_time(
             break;
         }
 
-        if (microseconds != OS_WAIT_INFINITE_TIME) {
-            err = pthread_cond_timedwait(&(event->cond_var), &(event->os_mutex), &ts);
+        if (timeout_us != OS_WAIT_INFINITE_TIME) {
+            err = pthread_cond_timedwait(&(event->cond_var), &(event->os_mutex), &abstime);
         } else {
             err = pthread_cond_wait(&(event->cond_var), &(event->os_mutex));
         }

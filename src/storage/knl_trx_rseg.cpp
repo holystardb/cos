@@ -1,49 +1,30 @@
 #include "knl_trx_rseg.h"
 #include "knl_trx.h"
 #include "knl_buf.h"
+#include "knl_heap.h"
+
+
+const memory_pool_t* trx_rseg_mem_pool = NULL;
+
+static const uint32  trx_slot_count_per_page =
+    (UNIV_PAGE_SIZE - FIL_PAGE_DATA - FIL_PAGE_DATA_END - TRX_RSEG_SLOT_HEADER) / sizeof(trx_slot_t);
+static uint32        trx_undo_page_no = 0;
+
+static uint32        trx_undo_page_count_per_rseg = 0;
 
 
 
-/* Rollback segment specification slot offsets */
-/*-------------------------------------------------------------*/
-#define	TRX_SYS_RSEG_SPACE	0	/* space where the segment
-					header is placed; starting with
-					MySQL/InnoDB 5.1.7, this is
-					UNIV_UNDEFINED if the slot is unused */
-#define	TRX_SYS_RSEG_PAGE_NO	4	/*  page number where the segment
-					header is placed; this is FIL_NULL
-					if the slot is unused */
-/*-------------------------------------------------------------*/
-/* Size of a rollback segment specification slot */
-#define TRX_SYS_RSEG_SLOT_SIZE	8
-
-
-//Gets the page number of the nth rollback segment slot in the trx system header.
-//return page number, FIL_NULL if slot unused
-uint32 trx_sysf_rseg_get_page_no(
-	trx_sysf_t*	sys_header,	/*!< in: trx system header */
-	uint32		i,		/*!< in: slot index == rseg id */
-	mtr_t*		mtr)		/*!< in: mtr */
+trx_rsegf_t* trx_rsegf_get(
+    uint32              space_id,
+    uint32              page_no,
+    const page_size_t&  page_size,
+    mtr_t*              mtr)
 {
-	ut_ad(sys_header);
-	ut_ad(i < TRX_SYS_N_RSEGS);
+    buf_block_t*    block;
+    trx_rsegf_t*    header;
+    page_id_t       page_id(space_id, page_no);
 
-	return(mtr_read_uint32(sys_header + TRX_SYS_RSEGS
-			      + i * TRX_SYS_RSEG_SLOT_SIZE
-			      + TRX_SYS_RSEG_PAGE_NO, MLOG_4BYTES, mtr));
-}
-
-trx_rsegf_t* trx_rsegf_get_new(
-    uint32			space,
-    uint32			page_no,
-    const page_size_t&	page_size,
-    mtr_t*			mtr)
-{
-    buf_block_t*	block;
-    trx_rsegf_t*	header;
-    page_id_t       page_id(space, page_no);
-
-    block = buf_page_get(&page_id, page_size, RW_X_LATCH, mtr);
+    block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
 
     //buf_block_dbg_add_level(block, SYNC_RSEG_HEADER_NEW);
 
@@ -52,129 +33,371 @@ trx_rsegf_t* trx_rsegf_get_new(
     return(header);
 }
 
-uint32 trx_rsegf_get_nth_undo(
-    trx_rsegf_t*	rsegf,	/*!< in: rollback segment header */
-    uint32		n,	/*!< in: index of slot */
-    mtr_t*		mtr)	/*!< in: mtr */
-{
-    //ut_a(n < TRX_RSEG_N_SLOTS);
 
-    return(mtr_read_uint32(rsegf + TRX_RSEG_UNDO_SLOTS
-        + n * TRX_RSEG_SLOT_SIZE, MLOG_4BYTES, mtr));
+// Gets a pointer to the transaction system header and x-latches its page
+inline trx_sysf_t* trx_sysf_get(mtr_t* mtr)
+{
+    buf_block_t* block;
+    trx_sysf_t* header;
+    page_id_t page_id(TRX_SYS_SPACE, TRX_SYS_PAGE_NO);
+    const page_size_t page_size(0);
+
+    block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
+    //buf_block_dbg_add_level(block, SYNC_TRX_SYS_HEADER);
+
+    header = TRX_SYS + buf_block_get_frame(block);
+
+    return header;
 }
 
-void trx_rsegf_set_nth_undo(
-    trx_rsegf_t*	rsegf,	/*!< in: rollback segment header */
-    uint32		n,	/*!< in: index of slot */
-    uint32		page_no,/*!< in: page number of the undo log segment */
-    mtr_t*		mtr)	/*!< in: mtr */
-{
-    //ut_a(n < TRX_RSEG_N_SLOTS);
 
-    mlog_write_uint32(rsegf + TRX_RSEG_UNDO_SLOTS + n * TRX_RSEG_SLOT_SIZE,
-        page_no, MLOG_4BYTES, mtr);
+// Creates the file page for the transaction system.
+// This function is called only at the database creation, before trx_sys_init.
+static void trx_sysf_create()
+{
+    mtr_t mtr;
+
+    mtr_start(&mtr);
+
+    page_id_t page_id(TRX_SYS_SPACE, TRX_SYS_PAGE_NO);
+    const page_size_t page_size(0);
+    buf_block_t* block = buf_page_get(page_id, page_size, RW_X_LATCH, &mtr);
+    ut_a(block->get_page_no() == TRX_SYS_PAGE_NO);
+
+    page_t* page = buf_block_get_frame(block);
+    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TRX_SYS, MLOG_2BYTES, &mtr);
+
+    // 1. Transaction system header
+
+    trx_sysf_t* sys_header = TRX_SYS + page;
+    /* Start counting transaction ids from number 1 up */
+    mach_write_to_8(sys_header + TRX_SYS_TRX_ID_STORE, 1);
+
+    fseg_inode_t* inode = TRX_SYS_INODE + page;
+    flst_init(inode + FSEG_FREE, &mtr);
+    flst_init(inode + FSEG_NOT_FULL, &mtr);
+    flst_init(inode + FSEG_FULL, &mtr);
+
+    // 2. doublewrite
+
+    //mlog_write_uint32(page + TRX_SYS_DOUBLEWRITE + TRX_SYS_DOUBLEWRITE_MAGIC, 0, MLOG_4BYTES, mtr);
+
+    // 3. replication
+
+    mtr_commit(&mtr);
 }
 
-//Sets the space id of the nth rollback segment slot in the trx system file copy
-void trx_sysf_rseg_set_space(
-    trx_sysf_t*	sys_header,	/*!< in: trx sys file copy */
-    uint32		i,		/*!< in: slot index == rseg id */
-    uint32		space,		/*!< in: space id */
-    mtr_t*		mtr)		/*!< in: mtr */
+static void trx_rseg_undo_page_init(trx_rseg_t* rseg)
 {
-    ut_ad(sys_header);
-    ut_ad(i < TRX_SYS_N_RSEGS);
+    char *ptr;
+    uint32 count_per_page;
 
-    mlog_write_uint32(sys_header + TRX_SYS_RSEGS
-        + i * TRX_SYS_RSEG_SLOT_SIZE
-        + TRX_SYS_RSEG_SPACE,
-        space,
-        MLOG_4BYTES, mtr);
+    mutex_create(&rseg->undo_cache_mutex);
+
+    SLIST_INIT(rseg->history_undo_list);
+    SLIST_INIT(rseg->insert_undo_cache);
+    SLIST_INIT(rseg->update_undo_cache);
+
+    count_per_page = trx_rseg_mem_pool->page_size / sizeof(trx_undo_page_t);
+    while (trx_undo_page_count_per_rseg > SLIST_GET_LEN(rseg->insert_undo_cache)) {
+
+        memory_page_t* page = mpool_alloc_page(trx_rseg_mem_pool);
+        ptr = (char *)MEM_PAGE_DATA_PTR(page);
+
+        for (uint32 i = 0;
+             i < count_per_page && SLIST_GET_LEN(rseg->insert_undo_cache) < trx_undo_page_count_per_rseg;
+             i++) {
+            trx_undo_page_t* undo_page = (trx_undo_page_t*)(ptr + i * sizeof(trx_undo_page_t));
+            undo_page->type = TRX_UNDO_INSERT;
+            undo_page->scn = 0;
+            undo_page->free_size = UNIV_PAGE_SIZE - FSEG_PAGE_DATA - FIL_PAGE_DATA_END
+                - TRX_UNDO_PAGE_HDR_SIZE - TRX_UNDO_SEG_HDR_SIZE;
+            undo_page->page_no = trx_undo_page_no;
+            undo_page->block = NULL;
+            trx_undo_page_no++;
+
+            SLIST_ADD_LAST(list_node, rseg->insert_undo_cache, undo_page);
+        }
+    }
 }
 
-// Sets the page number of the nth rollback segment slot in the trx system header
-void trx_sysf_rseg_set_page_no(
-    trx_sysf_t*	sys_header,	/*!< in: trx sys header */
-    uint32		i,		/*!< in: slot index == rseg id */
-    uint32		page_no,	/*!< in: page number, FIL_NULL if the slot is reset to unused */
-    mtr_t*		mtr)		/*!< in: mtr */
+static void trx_rseg_trx_init(trx_rseg_t* rseg)
 {
-    ut_ad(sys_header);
-    ut_ad(i < TRX_SYS_N_RSEGS);
+    mutex_create(&rseg->trx_mutex);
+    SLIST_INIT(rseg->trx_base);
 
-    mlog_write_uint32(sys_header + TRX_SYS_RSEGS
-        + i * TRX_SYS_RSEG_SLOT_SIZE
-        + TRX_SYS_RSEG_PAGE_NO,
-        page_no,
-        MLOG_4BYTES, mtr);
+    uint32 trx_count = TRX_SLOT_PAGE_COUNT_PER_RSEG * trx_slot_count_per_page;
+    uint32 count_per_page = trx_rseg_mem_pool->page_size / sizeof(trx_t);
+    rseg->trxs = (trx_t**)malloc(sizeof(void *) * trx_count);
+
+    uint32 slot = 0;
+    while (trx_count > slot) {
+
+        memory_page_t* page = mpool_alloc_page(trx_rseg_mem_pool);
+        char* ptr = (char *)MEM_PAGE_DATA_PTR(page);
+
+        for (uint32 i = 0; i < count_per_page && slot < trx_count; i++) {
+            trx_t* trx = (trx_t*)(ptr + i * sizeof(trx_t));
+
+            trx->trx_slot_id.rseg_id = rseg->id;
+            trx->trx_slot_id.slot = slot;
+            trx->trx_slot_id.xnum = 0;
+
+            trx->is_active = FALSE;
+            rseg->trxs[slot] = trx;
+            SLIST_ADD_LAST(list_node, rseg->trx_base, trx);
+
+            slot++;
+        }
+    }
 }
 
-/** Creates a rollback segment header.
-This function is called only when a new rollback segment is created in
-the database.
-@param[in]	space		space id
-@param[in]	page_size	page size
-@param[in]	max_size	max size in pages
-@param[in]	rseg_slot_no	rseg id == slot number in trx sys
-@param[in,out]	mtr		mini-transaction
-@return page number of the created segment, FIL_NULL if fail */
-uint32 trx_rseg_header_create(
-	uint32			space,
-	const page_size_t&	page_size,
-	uint32			max_size,
-	uint32			rseg_slot_no,
-	mtr_t*			mtr)
+static void trx_rseg_trx_slot_init(trx_rseg_t* rseg, mtr_t* mtr)
 {
-	uint32		page_no;
-	trx_rsegf_t*	rsegf;
-	trx_sysf_t*	sys_header;
-	uint32		i;
-	buf_block_t*	block;
+    const page_size_t page_size(0);
 
-	ut_ad(mtr);
-	ut_ad(mtr_memo_contains(mtr, fil_space_get_latch(space, NULL), MTR_MEMO_X_LOCK));
+    rseg->trx_slots = (trx_slot_t**)malloc(sizeof(void *) * trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
 
-	/* Allocate a new file segment for the rollback segment */
-	block = fseg_create_general(space, 0, TRX_RSEG + TRX_RSEG_FSEG_HEADER, FALSE, mtr);
-	if (block == NULL) {
-		/* No space left */
-		return(FIL_NULL);
-	}
+    for (uint32 i = 0; i < TRX_SLOT_PAGE_COUNT_PER_RSEG; i++) {
+        //
+        uint32 page_no = FSP_FIRST_RSEG_PAGE_NO + rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG + i;
+        page_id_t page_id(TRX_SYS_SPACE, page_no);
+        rseg->trx_slot_blocks[i] = buf_page_get_gen(page_id, page_size, RW_X_LATCH, Page_fetch::RESIDENT, mtr);
+        ut_a(rseg->trx_slot_blocks[i]->get_page_no() == page_no);
+        //buf_block_dbg_add_level(rseg->trx_slot_blocks[i], SYNC_RSEG_HEADER_NEW);
 
-	//buf_block_dbg_add_level(block, SYNC_RSEG_HEADER_NEW);
+        //
+        page_t* page = buf_block_get_frame(rseg->trx_slot_blocks[i]);
+        mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TRX_SLOT, MLOG_2BYTES, NULL);
 
-	page_no = block->page.id.page_no();
+        trx_rsegf_t* rsegf = page + TRX_RSEG;
+        /* Initialize the history list */
+        mlog_write_uint32(rsegf + TRX_RSEG_HISTORY_SIZE, 0, MLOG_4BYTES, NULL);
+        flst_init(rsegf + TRX_RSEG_HISTORY, NULL);
 
-	/* Get the rollback segment file page */
-	rsegf = trx_rsegf_get_new(space, page_no, page_size, mtr);
+        fseg_inode_t* inode = TRX_RSEG_FSEG_HEADER + TRX_RSEG + page;
+        flst_init(inode + FSEG_FREE, NULL);
+        flst_init(inode + FSEG_NOT_FULL, NULL);
+        flst_init(inode + FSEG_FULL, NULL);
 
-	/* Initialize max size field */
-	mlog_write_uint32(rsegf + TRX_RSEG_MAX_SIZE, max_size,
-			 MLOG_4BYTES, mtr);
+        for (uint32 j = 0; j < trx_slot_count_per_page; j++) {
+            trx_slot_t* slot = (trx_slot_t *)(page + TRX_RSEG + TRX_RSEG_SLOT_HEADER + j * sizeof(trx_slot_t));
+            slot->scn = 0;
+            slot->insert_page_no = FIL_NULL;
+            slot->update_page_no = FIL_NULL;
+            slot->status = XACT_END;
+            slot->reserved = 0;
+            slot->xnum = 0;
+            rseg->trx_slots[i * trx_slot_count_per_page + j] = slot;
+        }
 
-	/* Initialize the history list */
+        // redo
+        mlog_write_initial_log_record(page, TRX_RSEG_PAGE_INIT, mtr);
+        mlog_catenate_uint32(mtr, rseg->id, MLOG_1BYTE);
+        mlog_catenate_uint32(mtr, page_no, MLOG_4BYTES);
+    }
+}
 
-	mlog_write_uint32(rsegf + TRX_RSEG_HISTORY_SIZE, 0, MLOG_4BYTES, mtr);
-	flst_init(rsegf + TRX_RSEG_HISTORY, mtr);
+// Creates a rollback segment
+static void trx_rseg_create(uint32 rseg_id)
+{
+    mtr_t mtr;
+    char *ptr;
+    uint32 count_per_page;
 
-	/* Reset the undo log slots */
-	for (i = 0; i < TRX_RSEG_UNDO_SLOTS; i++) {
-		trx_rsegf_set_nth_undo(rsegf, i, FIL_NULL, mtr);
-	}
+    mtr_start(&mtr);
 
-	//if (!trx_sys_is_noredo_rseg_slot(rseg_slot_no)) {
-		/* Non-redo rseg are re-created on restart and so no need
-		to persist this information in sys-header. Anyway, on restart
-		this information is not valid too as there is no space with
-		persisted space-id on restart. */
+    trx_rseg_t* rseg = TRX_GET_RSEG(rseg_id);
+    rseg->id = rseg_id;
 
-		/* Add the rollback segment info to the free slot in the trx system header */
+    trx_rseg_undo_page_init(rseg);
 
-		sys_header = trx_sysf_get(mtr);
-		trx_sysf_rseg_set_space(sys_header, rseg_slot_no, space, mtr);
-		trx_sysf_rseg_set_page_no(sys_header, rseg_slot_no, page_no, mtr);
-	//}
+    uint32 start_page_no = FSP_FIRST_RSEG_PAGE_NO + rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG;
+    trx_rseg_trx_init(rseg, start_page_no);
 
-	return(page_no);
+    trx_rseg_trx_slot_init(rseg, mtr);
+
+    mtr_commit(&mtr);
+}
+
+// Creates and initializes the transaction system at the database creation.
+void trx_sys_create_sys_pages(void)
+{
+    trx_undo_page_count_per_rseg = srv_undo_file_max_size / UNIV_PAGE_SIZE / trx_sys->rseg_count;
+    trx_rseg_mem_pool = mpool_create(srv_memory_sga, 0, 0, MEM_POOL_PAGE_UNLIMITED, UNIV_PAGE_SIZE);
+
+    trx_sysf_create();
+
+    // Create all rollback segment in the SYSTEM tablespace
+    for (uint32 rseg_id = 0;
+         rseg_id < TRX_RSEG_MAX_COUNT && rseg_id < trx_sys->rseg_count;
+         rseg_id++) {
+        trx_rseg_create(rseg_id);
+    }
+}
+
+static inline bool32 trx_rset_check_trx_slot(trx_t* trx)
+{
+    bool32 ret = TRUE;
+    mtr_t mtr;
+    page_t* page;
+    buf_block_t* block;
+    const page_size_t page_size(0);
+    page_id_t page_id(TRX_SYS_SPACE, TRX_GET_RSEG_TRX_SLOT_PAGE_NO(trx->trx_slot_id));
+    trx_rseg_t* rseg = TRX_GET_RSEG(trx->trx_slot_id.rseg_id);
+    trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
+
+    mtr_start(&mtr);
+
+    block = buf_page_get_gen(page_id, page_size, RW_NO_LATCH, Page_fetch::RESIDENT, &mtr);
+    if (block != TRX_GET_RSEG_TRX_SLOT_BLOCK(trx->trx_slot_id)) {
+        ret = FALSE;
+    }
+
+    page = buf_block_get_frame(block);
+    if ((byte *)slot != page + trx->trx_slot_id.slot * sizeof(trx_slot_t)) {
+        ret = FALSE;
+    }
+
+    mtr_commit(&mtr);
+
+    return ret;
+}
+
+static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg, mtr_t* mtr)
+{
+    trx_t* trx;
+
+    mutex_enter(&rseg->trx_mutex);
+    SLIST_GET_AND_REMOVE_FIRST(list_node, rseg->trx_base, trx);
+    mutex_exit(&rseg->trx_mutex);
+
+    if (LIKELY(trx)) {
+        trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
+
+        ut_ad(trx_rset_check_trx_slot(trx));
+
+        ut_a(slot->status == XACT_END);
+        slot->status = XACT_BEGIN;
+        slot->xnum++;
+
+        ut_a(trx->is_active == FALSE);
+        trx->is_active = TRUE;
+        trx->trx_slot_id.xnum = slot->xnum;
+
+        // redo log
+        mlog_write_initial_log_record((byte *)slot, TRX_RSEG_SLOT_BEGIN, mtr);
+        mlog_catenate_uint64(mtr, trx->trx_slot_id);
+
+        buf_block_mark_dirty(TRX_GET_RSEG_TRX_SLOT_BLOCK(trx->trx_slot_id), mtr);
+    }
+
+    return trx;
+}
+
+inline trx_t* trx_rseg_assign_and_alloc_trx(mtr_t* mtr)
+{
+    trx_t* trx;
+    trx_rseg_t* rseg;
+    static uint32  latest_rseg = 0;
+    uint32 index = latest_rseg++;
+
+    for (uint32 i = 0; i < trx_sys->rseg_count; i++) {
+        rseg = &trx_sys->rseg_array[(index + i) % trx_sys->rseg_count];
+        trx = trx_rseg_alloc_trx(rseg, mtr);
+        if (trx) {
+            break;
+        }
+    }
+
+    return trx;
+}
+
+
+static inline uint64 trx_inc_scn(time_t init_time, struct timeval* now, uint64 seq, atomic64_t* scn)
+{
+    uint64 curr_scn;
+
+    if (now->tv_sec < init_time) {
+        return atomic64_inc(scn);
+    }
+
+    curr_scn = TRX_TIMESEQ_TO_SCN(now, init_time, seq);
+    if (curr_scn <= TRX_GET_SCN(scn)) {
+        return TRX_INC_SCN(scn);
+    }
+
+    while (TRX_GET_SCN(scn) < curr_scn && !atomic64_compare_and_swap(scn, TRX_GET_SCN(scn), curr_scn)) {
+        // nothing to do
+    }
+
+    return curr_scn;
+}
+
+inline uint64 trx_get_next_scn()
+{
+    uint64 seq = 1;
+    uint64 scn;
+    struct timeval now;
+
+    get_time_of_day(&now);
+
+    scn = trx_inc_scn(trx_sys->init_time, &now, seq, &trx_sys->scn);
+
+    return scn;
+}
+
+inline void trx_rseg_set_end(trx_t* trx, mtr_t* mtr)
+{
+    trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
+    uint64 scn = trx_get_next_scn();
+
+    ut_ad(trx_rset_check_trx_slot(trx));
+
+    slot->scn = scn;
+    slot->status = XACT_END;
+
+    // redo log
+    mlog_write_initial_log_record((byte *)slot, TRX_RSEG_SLOT_END, mtr);
+    mlog_catenate_uint64(mtr, trx->trx_slot_id);
+    mlog_catenate_uint64(mtr, scn);
+
+    buf_block_mark_dirty(TRX_GET_RSEG_TRX_SLOT_BLOCK(trx->trx_slot_id), mtr);
+}
+
+inline void trx_rseg_release_trx(trx_t* trx)
+{
+    trx_rseg_t* rseg = TRX_GET_RSEG(trx->trx_slot_id.rseg_id);
+
+    ut_a(trx->is_active);
+    trx->is_active = FALSE;
+
+    mutex_enter(&rseg->trx_mutex);
+    SLIST_ADD_LAST(list_node, rseg->trx_base, trx);
+    mutex_exit(&rseg->trx_mutex);
+}
+
+inline void trx_get_status_by_itl(itl_t* itl, trx_status_t* trx_status)
+{
+    trx_rseg_t* rseg = TRX_GET_RSEG(itl->trx_slot_id.rseg_id);
+    trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(itl->trx_slot_id);
+    trx_t* trx = TRX_GET_RSEG_TRX(itl->trx_slot_id);
+
+    if (slot->xnum == itl->xnum) {
+        trx_status->is_overwrite_scn = FALSE;
+        if (slot->status == XACT_XA_PREPARE || slot->status == XACT_XA_ROLLBACK) {
+            trx_status->scn = slot->scn;
+            trx_status->status = slot->status;
+        } else if (slot->status != XACT_END || trx->is_active) {
+            trx_status->scn = 0;
+            trx_status->status = XACT_BEGIN;
+        } else {
+            trx_status->scn = slot->scn;
+            trx_status->status = XACT_END;
+        }
+    } else {
+        trx_status->scn = slot->scn;
+        trx_status->status = XACT_END;
+    }
 }
 

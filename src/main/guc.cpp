@@ -386,8 +386,7 @@ static config_string ConfigureNamesString[] =
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_STRING
         },
         &g_transaction_isolation,
-        "REPEATABLE-READ",
-        NULL, NULL, NULL
+        "REPEATABLE-READ", NULL, NULL, NULL
     },
 
     /* End-of-list marker */
@@ -398,6 +397,11 @@ static config_string ConfigureNamesString[] =
 
 static config_enum ConfigureNamesEnum[] =
 {
+    {
+        {"wal_level", "wal_level", GUC_CONTEXT_POSTMASTER, GUC_TYPE_ENUM},
+        &g_attribute.attr_storage.wal_level,
+        WAL_LEVEL_MINIMAL, NULL, NULL, NULL
+    },
 
     /* End-of-list marker */
     {

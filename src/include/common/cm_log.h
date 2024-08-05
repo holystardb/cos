@@ -13,8 +13,8 @@ public:
     log_info();
 
     bool32 log_init(log_level_t log_level, char *log_path, char *file_name, bool32 batch_flush = FALSE);
-    void log_to_stderr(log_level_t log_level, const char *fmt,...);
-    void log_to_file(log_level_t log_level, const char *fmt, ...);
+    void log_to_stderr(log_level_t log_level, const char *file, uint32 line, const char *fmt, ...);
+    void log_to_file(log_level_t log_level, const char *file, uint32 line, const char *fmt, ...);
     void log_file_flush();
     void coredump_to_file(char **symbol_strings, int len_symbols);
 
@@ -46,7 +46,7 @@ private:
         if (LOGINFO.basic_level < LOG_TRACE) {                  \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_TRACE, format, ##__VA_ARGS__);  \
+        LOGINFO.log_to_file(LOG_TRACE, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
     } while (0);
 
 #define LOGGER_DEBUG(LOGINFO, format, ...)                      \
@@ -54,7 +54,7 @@ private:
         if (LOGINFO.basic_level < LOG_DEBUG) {                  \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_DEBUG, format, ##__VA_ARGS__);  \
+        LOGINFO.log_to_file(LOG_DEBUG, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
     } while (0);
 
 #define LOGGER_NOTICE(LOGINFO, format, ...)                     \
@@ -62,7 +62,7 @@ private:
         if (LOGINFO.basic_level < LOG_NOTICE) {                 \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_NOTICE, format, ##__VA_ARGS__); \
+        LOGINFO.log_to_file(LOG_NOTICE, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__); \
     } while (0);
 
 #define LOGGER_INFO(LOGINFO, format, ...)                       \
@@ -70,7 +70,7 @@ private:
         if (LOGINFO.basic_level < LOG_INFO) {                   \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_INFO, format, ##__VA_ARGS__);   \
+        LOGINFO.log_to_file(LOG_INFO, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);   \
     } while (0);
 
 #define LOGGER_WARN(LOGINFO, format, ...)                       \
@@ -78,7 +78,7 @@ private:
         if (LOGINFO.basic_level < LOG_WARN) {                   \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_WARN, format, ##__VA_ARGS__);   \
+        LOGINFO.log_to_file(LOG_WARN, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);   \
     } while (0);
 
 #define LOGGER_ERROR(LOGINFO, format, ...)                      \
@@ -86,7 +86,7 @@ private:
         if (LOGINFO.basic_level < LOG_ERROR) {                  \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_ERROR, format, ##__VA_ARGS__);  \
+        LOGINFO.log_to_file(LOG_ERROR, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
     } while (0);
 
 #define LOGGER_FATAL(LOGINFO, format, ...)                      \
@@ -94,11 +94,21 @@ private:
         if (LOGINFO.basic_level < LOG_FATAL) {                  \
             break;                                              \
         }                                                       \
-        LOGINFO.log_to_file(LOG_FATAL, format, ##__VA_ARGS__);  \
+        LOGINFO.log_to_file(LOG_FATAL, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
+    } while (0);
+
+
+#define LOGGER_PANIC_CHECK(LOGINFO, condition, format, ...)                                             \
+    do {                                                                                                \
+        if (UNLIKELY(!(condition))) {                                                                   \
+            LOGINFO.log_to_file(LOG_FATAL, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
+            ut_error;                                                                                   \
+        }                                                                                               \
     } while (0);
 
 
 
+// ---------------------------------------------------------------------------------------------------
 
 extern log_info    LOGGER;
 

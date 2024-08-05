@@ -61,8 +61,25 @@ struct btr_create_t {
     uint32			trx_id_pos;
 };
 
+
+/********************************************************//**
+Sets the node level field in an index page. */
+inline void btr_page_set_level(
+    page_t* page,   /*!< in: index page */
+    uint32  level,  /*!< in: level, leaf level == 0 */
+    mtr_t*  mtr)    /*!< in: mini-transaction handle */
+{
+    ut_ad(page && mtr);
+    //ut_ad(level <= BTR_MAX_NODE_LEVEL);
+    //mlog_write_uint32(page + (PAGE_HEADER + PAGE_LEVEL), level, MLOG_2BYTES, mtr);
+}
+
+
+
+
+
 uint32 btr_create(
-    uint32			type,
+    uint32          type,
     uint32			space,
     const page_size_t&	page_size,
     index_id_t		index_id,

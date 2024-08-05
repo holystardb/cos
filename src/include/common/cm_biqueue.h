@@ -10,8 +10,6 @@
 
 #define BIQUEUE_MAGIC       123461526
 
-#define VAR_OFFSET(type, member)    ((unsigned long long)(&((type *)0)->member))
-#define OFFSET_OFF                  offsetof
 #define OBJECT_OF_QUEUE_NODE(type, node, member) ((type *)((char *)(&node->node_id) - VAR_OFFSET(type, member)))
 #define QUEUE_NODE_OF_OBJECT(node, member)       ((biqueue_node_t *)&node->member)
 

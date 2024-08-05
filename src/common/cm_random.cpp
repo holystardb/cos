@@ -63,46 +63,46 @@ uint64 ut_rnd_interval(
   return (low + (rnd % (high - low)));
 }
 
-uint32 ut_fold_ulint_pair(uint32 n1, uint32 n2)
+uint32 ut_fold_uint32_pair(uint32 n1, uint32 n2)
 {
     return(((((n1 ^ n2 ^ UT_HASH_RANDOM_MASK2) << 8) + n1) ^ UT_HASH_RANDOM_MASK) + n2);
 }
 
 uint32 ut_fold_binary(const byte *str, uint32 len)
 {
-	uint32		fold = 0;
-	const byte*	str_end	= str + (len & 0xFFFFFFF8);
+    uint32  fold = 0;
+    const byte* str_end = str + (len & 0xFFFFFFF8);
 
-	ut_ad(str || !len);
+    ut_ad(str || !len);
 
-	while (str < str_end) {
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	}
+    while (str < str_end) {
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+    }
 
-	switch (len & 0x7) {
-	case 7:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	case 6:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	case 5:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	case 4:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	case 3:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	case 2:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	case 1:
-		fold = ut_fold_ulint_pair(fold, (uint32)(*str++));
-	}
+    switch (len & 0x7) {
+        case 7:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        case 6:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        case 5:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        case 4:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        case 3:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        case 2:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+        case 1:
+            fold = ut_fold_uint32_pair(fold, (uint32)(*str++));
+    }
 
-	return(fold);
+    return(fold);
 }
 
