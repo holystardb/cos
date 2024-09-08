@@ -109,12 +109,12 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
     if (bpage != hashed_bpage) {
         LOGGER_ERROR(LOGGER,
             "Page(space %lu page %lu) not found in the hash table",
-            bpage->id.space(), bpage->id.page_no());
+            bpage->id.space_id(), bpage->id.page_no());
 
         if (hashed_bpage) {
             LOGGER_ERROR(LOGGER,
                 "In hash table we find block %p of space %lu page %lu which is not %p",
-                hashed_bpage, bpage->id.space(), bpage->id.page_no(), bpage);
+                hashed_bpage, bpage->id.space_id(), bpage->id.page_no(), bpage);
         }
 
         ut_d(mutex_exit(buf_page_get_mutex(bpage)));
@@ -151,10 +151,11 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
     case BUF_BLOCK_READY_FOR_USE:
     case BUF_BLOCK_MEMORY:
     case BUF_BLOCK_REMOVE_HASH:
+        ut_error;
         break;
     }
 
-    ut_error;
+    return FALSE;
 }
 
 
@@ -363,7 +364,7 @@ void buf_LRU_free_one_page(buf_page_t *bpage, bool32 ignore_content)
 // block block must not contain a file page
 void buf_LRU_block_free_non_file_page(buf_block_t *block)
 {
-    void*       data;
+    //void*       data;
     buf_pool_t* buf_pool = buf_pool_from_block(block);
 
     ut_ad(mutex_own(&block->mutex));

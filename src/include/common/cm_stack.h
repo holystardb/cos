@@ -2,7 +2,8 @@
 #define _CM_STACK_H
 
 #include "cm_type.h"
-
+#include "securec.h"
+#include "cm_error.h"
 
 #ifndef UNIV_MEMORY_DEBUG
 
@@ -15,8 +16,8 @@
 typedef struct st_stack {
     uint8 *buf;
     uint32 size;
-    uint32 push_offset; /* top postion of the stack, begin from max_stack_size to 0  */
-    uint32 heap_offset; /* bottom postion of the stack, begin from 0 to max_stack_size */
+    uint32 push_offset; // top postion of the stack, begin from max_stack_size to 0
+    uint32 heap_offset; // bottom postion of the stack, begin from 0 to max_stack_size
 } cm_stack_t;
 
 static inline void cm_stack_reset(cm_stack_t *stack)
@@ -204,7 +205,7 @@ static inline void *cm_push(cm_stack_t *stack, uint32 size)
     rc_memzero = memset_s(ptr, size, 0, size);
     if (rc_memzero != EOK) {
         free(ptr);
-        CM_THROW_ERROR(ERR_SYSTEM_CALL, rc_memzero);
+        //CM_THROW_ERROR(ERR_SYSTEM_CALL, rc_memzero);
         return NULL;
     }
     return ptr;
@@ -253,10 +254,10 @@ static inline status_t cm_stack_alloc(void *owner, uint32 size, void **ptr)
     stack->heap_addr[stack->heap_offset] = *ptr;
     stack->heap_offset++;
 
-    errcode = memset_sp(*ptr, size, 0, size);
+    errcode = memset_s(*ptr, size, 0, size);
     if (errcode != EOK) {
         free(*ptr);
-        CM_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
+        //CM_THROW_ERROR(ERR_SYSTEM_CALL, errcode);
         return CM_ERROR;
     }
 
@@ -300,7 +301,7 @@ static inline void cm_keep_stack_variant(cm_stack_t *stack, char *buf)
         return;
     }
 
-    for (i = 0; stack->stack_addr[i] != NULL && i < CM_MAX_TEST_STACK_DEPTH; i++) {
+    for (uint32 i = 0; stack->stack_addr[i] != NULL && i < CM_MAX_TEST_STACK_DEPTH; i++) {
         if (buf == stack->stack_addr[i]) {
             if (stack->push_depth < i + 1) {
                 stack->push_depth = i + 1;

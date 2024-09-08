@@ -9,7 +9,7 @@
 
 /*------------------------- global config ------------------------ */
 
-char *srv_data_home;
+
 uint64 srv_system_file_size;
 uint64 srv_system_file_max_size;
 uint64 srv_system_file_auto_extend_size;
@@ -58,6 +58,9 @@ recovery and open all tables in RO mode instead of RW mode. We don't
 sync the max trx id to disk either. */
 bool32 srv_read_only_mode = FALSE;
 
+bool32 srv_archive_recovery = FALSE;
+
+
 //TRUE means that recovery is running and no operations on the log files are allowed yet.
 bool32 recv_no_ibuf_operations;
 
@@ -72,7 +75,20 @@ os_aio_array_t* srv_os_aio_async_write_array = NULL;
 os_aio_array_t* srv_os_aio_sync_array = NULL;
 
 memory_area_t*  srv_memory_sga = NULL;
+vm_pool_t*      srv_temp_mem_pool = NULL;
+memory_pool_t*  srv_common_mpool = NULL;
+memory_pool_t*  srv_plan_mem_pool = NULL;
+memory_pool_t*  srv_mtr_memory_pool = NULL;
+memory_pool_t*  srv_dictionary_mem_pool = NULL;
 
+CHARSET_INFO    all_charsets[MY_ALL_CHARSETS_SIZE];
+
+
+srv_stats_t     srv_stats;
+
+db_ctrl_t       srv_ctrl_file = {0};
+char            srv_data_home[1024] = {0};
+const uint32    srv_data_home_len = 1023;
 
 /*-------------------------------------------------- */
 
@@ -134,29 +150,32 @@ db_charset_info_t srv_db_charset_info[] =
 };
 
 
-srv_stats_t  srv_stats;
 
-db_ctrl_t srv_db_ctrl;
 
-extern uint64 srv_lock_wait_timeout;
 
 #define DB_CTRL_FILE_MAGIC   97937874
 
-static bool32 write_ctrl_file(char *name, db_ctrl_t *ctrl)
+static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
 {
-    os_file_t file;
-    uchar    *buf;
-    uchar    *ptr;
-    uint32    ctrl_file_size = 1024 * 1024;
+    status_t  err = CM_ERROR;
+    os_file_t file = OS_FILE_INVALID_HANDLE;
+    uchar    *buf = NULL, *ptr;
+    uint32    size = SIZE_M(1);
 
-    buf = (uchar *)malloc(ctrl_file_size);
-    memset(buf, 0x00, ctrl_file_size);
+    buf = (uchar *)ut_malloc_zero(size);
     ptr = buf;
 
+    // len(4B) + magic(4B) + checksum(8B) + ctrl file
+
     ptr += 4; // length
-    mach_write_to_8(ptr, DB_CTRL_FILE_MAGIC);
-    ptr += 8;
+    mach_write_to_4(ptr, DB_CTRL_FILE_MAGIC);
+    ptr += 4;
+    ptr += 8; // checksum
+
+    // ctrl file
     mach_write_to_8(ptr, ctrl->version);
+    ptr += 8;
+    mach_write_to_8(ptr, ctrl->ver_num);
     ptr += 8;
 
     memcpy(ptr, ctrl->database_name, strlen(ctrl->database_name) + 1);
@@ -216,91 +235,120 @@ static bool32 write_ctrl_file(char *name, db_ctrl_t *ctrl)
         ptr += 4;
     }
 
-    // check sum
-    uint32 size = (uint32)(ptr - buf);
-    uint64 align_size = ut_uint64_align_up(size, 512);
-    if (size + 8 > align_size) {
-        align_size += 512;
+    // data files
+    mach_write_to_1(ptr, ctrl->data_file_count);
+    ptr += 4;
+    for (uint32 i = 0; i < ctrl->data_file_count; i++) {
+        memcpy(ptr, ctrl->data_files[i].name, strlen(ctrl->data_files[i].name) + 1);
+        ptr += strlen(ctrl->data_files[i].name) + 1;
+        mach_write_to_4(ptr, ctrl->data_files[i].node_id);
+        ptr += 4;
+        mach_write_to_4(ptr, ctrl->data_files[i].space_id);
+        ptr += 4;
+        mach_write_to_8(ptr, ctrl->data_files[i].size);
+        ptr += 8;
+        mach_write_to_8(ptr, ctrl->data_files[i].max_size);
+        ptr += 8;
+        mach_write_to_4(ptr, ctrl->data_files[i].autoextend);
+        ptr += 4;
+        mach_write_to_4(ptr, ctrl->data_files[i].status);
+        ptr += 4;
     }
-    mach_write_to_4(buf, (uint32)align_size);
 
+    // len
+    uint32 file_size = (uint32)(ptr - buf);
+    mach_write_to_4(buf, file_size);
+
+    uint64 align_size = ut_uint64_align_up(file_size, 512);
+
+    // check sum
     uint64 checksum = 0;
-    for (uint32 i = 0; i < (align_size - 8); i++) {
+    for (uint32 i = 16; i < file_size; i++) {
         checksum += buf[i];
     }
-    mach_write_to_8(buf + align_size - 8, checksum);
+    mach_write_to_8(buf + 8, checksum);
+
+    // write ctrl file
 
     bool32 ret = os_open_file(name, OS_FILE_CREATE, 0, &file);
     if (!ret) {
-        free(buf);
         LOGGER_ERROR(LOGGER, "write_ctrl_file: failed to create file, name = %s", name);
-        return FALSE;
+        goto err_exit;
     }
     ret = os_pwrite_file(file, 0, buf, (uint32)align_size);
     if (!ret) {
-        free(buf);
-        os_close_file(file);
-        return FALSE;
+        LOGGER_ERROR(LOGGER, "write_ctrl_file: failed to write file, name = %s", name);
+        goto err_exit;
     }
     ret = os_fsync_file(file);
     if (!ret) {
-        free(buf);
-        os_close_file(file);
-        return FALSE;
+        LOGGER_ERROR(LOGGER, "write_ctrl_file: failed to sync file, name = %s", name);
+        goto err_exit;
     }
-    os_close_file(file);
 
-    free(buf);
+    err = CM_SUCCESS;
 
-    return TRUE;
+err_exit:
+
+    if (file != OS_FILE_INVALID_HANDLE) {
+        os_close_file(file);
+    }
+
+    if (buf) {
+        ut_free(buf);
+    }
+
+    return err;
 }
 
-bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl)
+status_t read_ctrl_file(char *name, db_ctrl_t *ctrl)
 {
-    os_file_t file;
-    bool32    ret;
-    uchar    *buf;
-    uchar    *ptr;
-    uint32    size = 1024 * 1024;
+    status_t  err = CM_ERROR;
+    os_file_t file = OS_FILE_INVALID_HANDLE;
+    uchar     *buf = NULL, *ptr;
+    uint32    size = SIZE_M(1), read_bytes = 0;
     uint64    checksum = 0;
 
-    buf = (uchar *)malloc(size);
-    memset(buf, 0x00, size);
-    ptr = buf;
-
-    ret = os_open_file(name, OS_FILE_OPEN, 0, &file);
+    bool32 ret = os_open_file(name, OS_FILE_OPEN, 0, &file);
     if (!ret) {
-        free(buf);
         LOGGER_FATAL(LOGGER, "invalid control file, can not open ctrl file, name = %s", name);
-        return FALSE;
+        goto err_exit;
     }
-    ret = os_pread_file(file, 0, buf, 512, &size);
-    if (!ret || size <= 4 || mach_read_from_4(buf) != size) {
-        free(buf);
-        os_close_file(file);
-        LOGGER_FATAL(LOGGER, "invalid control file, size = %d", size);
-        return FALSE;
-    }
-    os_close_file(file);
 
-    // check sum
-    for (uint32 i = 0; i < (size - 4); i++) {
+    buf = (uchar *)ut_malloc_zero(size);
+
+    // len(4B) + magic(4B) + checksum(8B) + ctrl file
+    ret = os_pread_file(file, 0, buf, size, &read_bytes);
+    if (!ret || read_bytes <= 4 || mach_read_from_4(buf) > read_bytes) {
+        LOGGER_FATAL(LOGGER, "invalid control file, read size = %d ctrl file size %d",
+            read_bytes, mach_read_from_4(buf));
+        goto err_exit;
+    }
+
+    // check magic
+    if (mach_read_from_4(buf + 4) != DB_CTRL_FILE_MAGIC) {
+        //LOGGER_FATAL(LOGGER, "invalid control file, wrong magic = %lu", mach_read_from_4(ptr));
+        goto err_exit;
+    }
+
+    // check checksum
+    uint32 file_size = mach_read_from_4(buf);
+    for (uint32 i = 16; i < file_size; i++) {
         checksum += buf[i];
     }
-    if (checksum != mach_read_from_8(buf + size - 4)) {
-        free(buf);
-        LOGGER_FATAL(LOGGER, "invalid control file, wrong checksum = %lu", checksum);
-        return FALSE;
+    if (checksum != mach_read_from_8(buf + 8)) {
+        LOGGER_FATAL(LOGGER, "checksum mismatch, damaged control file");
+        goto err_exit;
     }
 
-    // magic
-    if (mach_read_from_8(buf+4) != DB_CTRL_FILE_MAGIC) {
-        free(buf);
-        LOGGER_FATAL(LOGGER, "invalid control file, wrong magic = %lu", mach_read_from_8(buf + 4));
-        return FALSE;
-    }
+    // ctrl file
+    ptr = buf + 16;
 
-    ptr = buf + 12;
+    //
+    ctrl->version = mach_read_from_8(ptr);
+    ptr += 8;
+    ctrl->ver_num = mach_read_from_8(ptr);
+    ptr += 8;
 
     memcpy(ctrl->database_name, (const char*)ptr, strlen((const char*)ptr) + 1);
     ptr += strlen((const char*)ptr) + 1;
@@ -359,6 +407,27 @@ bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl)
         ptr += 4;
     }
 
+    // data file
+    ctrl->data_file_count = mach_read_from_4(ptr);
+    ptr += 4;
+    ctrl->data_files = (db_data_file_t *)ut_malloc(sizeof(db_data_file_t) * ctrl->data_file_count);
+    for (uint32 i = 0; i < ctrl->data_file_count; i++) {
+        memcpy(ctrl->data_files[i].name, ptr, strlen((const char*)ptr) + 1);
+        ptr += strlen((const char*)ptr) + 1;
+        ctrl->data_files[i].node_id = mach_read_from_4(ptr);
+        ptr += 4;
+        ctrl->data_files[i].space_id = mach_read_from_4(ptr);
+        ptr += 4;
+        ctrl->data_files[i].size = mach_read_from_8(ptr);
+        ptr += 8;
+        ctrl->data_files[i].max_size = mach_read_from_8(ptr);
+        ptr += 8;
+        ctrl->data_files[i].autoextend = mach_read_from_4(ptr);
+        ptr += 4;
+        ctrl->data_files[i].status = mach_read_from_4(ptr);
+        ptr += 4;
+    }
+
     //
     for (uint32 i = 0; srv_db_charset_info[i].name; i++) {
         if (strcmp((const char *)ctrl->charset_name, (const char *)srv_db_charset_info[i].name) == 0) {
@@ -367,14 +436,23 @@ bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl)
         }
     }
     if (ctrl->charset_info == NULL) {
-        free(buf);
-        LOGGER_FATAL(LOGGER, "invalid control file, not found charset name");
-        return FALSE;
+        LOGGER_FATAL(LOGGER, "invalid control file, not found charset name %s", ctrl->charset_name);
+        goto err_exit;
     }
 
-    free(buf);
+    err = CM_SUCCESS;
 
-    return TRUE;
+err_exit:
+
+    if (file != OS_FILE_INVALID_HANDLE) {
+        os_close_file(file);
+    }
+
+    if (buf) {
+        ut_free(buf);
+    }
+
+    return err;
 }
 
 static void db_ctrl_set_file(db_ctrl_file_t *file, char *name, uint64 size, uint64 max_size, bool32 autoextend)
@@ -382,32 +460,31 @@ static void db_ctrl_set_file(db_ctrl_file_t *file, char *name, uint64 size, uint
     file->size = size;
     file->max_size = max_size;
     file->autoextend = autoextend;
-    file->name = (char*)malloc(strlen(name) + 1);
+    //file->name = (char*)malloc(strlen(name) + 1);
     sprintf_s(file->name, strlen(name) + 1, "%s", name);
     file->name[strlen(name)] = '\0';
 }
 
-
 bool32 db_ctrl_createdatabase(char *database_name, char *charset_name)
 {
-    memset(&srv_db_ctrl, 0x00, sizeof(srv_db_ctrl));
+    memset(&srv_ctrl_file, 0x00, sizeof(db_ctrl_t));
 
-    srv_db_ctrl.version = DB_CTRL_FILE_VERSION;
+    srv_ctrl_file.version = DB_CTRL_FILE_VERSION;
 
-    srv_db_ctrl.database_name = (char*)malloc(strlen(database_name) + 1);
-    sprintf_s(srv_db_ctrl.database_name, strlen(database_name) + 1, "%s", database_name);
-    srv_db_ctrl.database_name[strlen(database_name)] = '\0';
+    //srv_ctrl_file.database_name = (char*)malloc(strlen(database_name) + 1);
+    sprintf_s(srv_ctrl_file.database_name, strlen(database_name) + 1, "%s", database_name);
+    srv_ctrl_file.database_name[strlen(database_name)] = '\0';
 
-    srv_db_ctrl.charset_name = (char*)malloc(strlen(charset_name) + 1);
-    sprintf_s(srv_db_ctrl.charset_name, strlen(charset_name) + 1, "%s", charset_name);
-    srv_db_ctrl.charset_name[strlen(charset_name)] = '\0';
+    //srv_ctrl_file.charset_name = (char*)malloc(strlen(charset_name) + 1);
+    sprintf_s(srv_ctrl_file.charset_name, strlen(charset_name) + 1, "%s", charset_name);
+    srv_ctrl_file.charset_name[strlen(charset_name)] = '\0';
 
     return TRUE;
 }
 
 bool32 db_ctrl_add_system(char *name, uint64 size, uint64 max_size, bool32 autoextend)
 {
-    db_ctrl_file_t *file = &srv_db_ctrl.system;
+    db_ctrl_file_t *file = &srv_ctrl_file.system;
 
     db_ctrl_set_file(file, name, size, max_size, autoextend);
 
@@ -417,13 +494,13 @@ bool32 db_ctrl_add_system(char *name, uint64 size, uint64 max_size, bool32 autoe
 bool32 db_ctrl_add_redo(char *name, uint64 size, uint64 max_size, bool32 autoextend)
 {
 
-    if (srv_db_ctrl.redo_count >= DB_REDO_FILE_MAX_COUNT) {
+    if (srv_ctrl_file.redo_count >= DB_REDO_FILE_MAX_COUNT) {
         LOGGER_ERROR(LOGGER, "db_ctrl_add_redo: Error, REDO file has reached the maximum limit");
         return FALSE;
     }
 
-    db_ctrl_file_t *file = &srv_db_ctrl.redo_group[srv_db_ctrl.redo_count];
-    srv_db_ctrl.redo_count++;
+    db_ctrl_file_t *file = &srv_ctrl_file.redo_group[srv_ctrl_file.redo_count];
+    srv_ctrl_file.redo_count++;
 
     db_ctrl_set_file(file, name, size, max_size, autoextend);
 
@@ -433,13 +510,13 @@ bool32 db_ctrl_add_redo(char *name, uint64 size, uint64 max_size, bool32 autoext
 bool32 db_ctrl_add_undo(char *name, uint64 size, uint64 max_size, bool32 autoextend)
 {
 
-    if (srv_db_ctrl.undo_count >= DB_UNDO_FILE_MAX_COUNT) {
+    if (srv_ctrl_file.undo_count >= DB_UNDO_FILE_MAX_COUNT) {
         LOGGER_ERROR(LOGGER, "db_ctrl_add_undo: Error, UNDO file has reached the maximum limit");
         return FALSE;
     }
 
-    db_ctrl_file_t *file = &srv_db_ctrl.undo_group[srv_db_ctrl.undo_count];
-    srv_db_ctrl.undo_count++;
+    db_ctrl_file_t *file = &srv_ctrl_file.undo_group[srv_ctrl_file.undo_count];
+    srv_ctrl_file.undo_count++;
 
     db_ctrl_set_file(file, name, size, max_size, autoextend);
 
@@ -449,13 +526,13 @@ bool32 db_ctrl_add_undo(char *name, uint64 size, uint64 max_size, bool32 autoext
 bool32 db_ctrl_add_temp(char *name, uint64 size, uint64 max_size, bool32 autoextend)
 {
 
-    if (srv_db_ctrl.temp_count >= DB_TEMP_FILE_MAX_COUNT) {
+    if (srv_ctrl_file.temp_count >= DB_TEMP_FILE_MAX_COUNT) {
         LOGGER_ERROR(LOGGER, "db_ctrl_add_temp: Error, TEMP file has reached the maximum limit");
         return FALSE;
     }
 
-    db_ctrl_file_t *file = &srv_db_ctrl.temp_group[srv_db_ctrl.temp_count];
-    srv_db_ctrl.temp_count++;
+    db_ctrl_file_t *file = &srv_ctrl_file.temp_group[srv_ctrl_file.temp_count];
+    srv_ctrl_file.temp_count++;
 
     db_ctrl_set_file(file, name, size, max_size, autoextend);
 
@@ -463,31 +540,21 @@ bool32 db_ctrl_add_temp(char *name, uint64 size, uint64 max_size, bool32 autoext
 }
 
 
-bool32 srv_create_ctrls(char *data_home)
+bool32 srv_create_ctrls()
 {
-    bool32 ret;
-    uint32 dirname_len = (uint32)strlen(data_home);
-    char *filename_prefix = "ctrl", filename[1024];
-    uint32 filename_size = (uint32)strlen(data_home) + 1 /*PATH_SEPARATOR*/
-        + (uint32)strlen(filename_prefix) + 1 /*index*/ + 1 /*'\0'*/;
-    ut_a(filename_size < 1024);
+    char file_name[CM_FILE_PATH_BUF_SIZE];
 
     for (uint32 i = 1; i <= 3; i++) {
-        if (data_home[dirname_len - 1] != SRV_PATH_SEPARATOR) {
-            sprintf_s(filename, filename_size, "%s%c%s%d", data_home, SRV_PATH_SEPARATOR, filename_prefix, i);
-        } else {
-            sprintf_s(filename, filename_size, "%s%s%d", data_home, filename_prefix, i);
-        }
+        sprintf_s(file_name, CM_FILE_PATH_MAX_LEN, "%s%c%s%d", srv_data_home, SRV_PATH_SEPARATOR, "ctrl", i);
 
         /* Remove any old ctrl files. */
 #ifdef __WIN__
-        DeleteFile((LPCTSTR)filename);
+        DeleteFile((LPCTSTR)file_name);
 #else
-        unlink(filename);
+        unlink(file_name);
 #endif
 
-        ret = write_ctrl_file(filename, &srv_db_ctrl);
-        if (!ret) {
+        if (write_ctrl_file(file_name, &srv_ctrl_file) != CM_SUCCESS) {
             return FALSE;
         }
     }
@@ -495,87 +562,104 @@ bool32 srv_create_ctrls(char *data_home)
     return TRUE;
 }
 
-static dberr_t create_db_file(db_ctrl_file_t *ctrl_file)
+static status_t create_db_file(db_ctrl_file_t *ctrl_file)
 {
     bool32 ret;
     os_file_t file;
 
     ret = os_open_file(ctrl_file->name, OS_FILE_CREATE, OS_FILE_SYNC, &file);
     if (!ret) {
-        LOGGER_ERROR(LOGGER, "can not create file, name = %s", ctrl_file->name);
-        return(DB_ERROR);
+        char err_info[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+        LOGGER_ERROR(LOGGER, "can not create file, name = %s error = %s",
+            ctrl_file->name, err_info);
+        return CM_ERROR;
     }
 
     ret = os_file_extend(ctrl_file->name, file, ctrl_file->size);
     if (!ret) {
-        LOGGER_ERROR(LOGGER, "can not extend file %s to size %lu MB",
-             ctrl_file->name, ctrl_file->size);
-        return(DB_ERROR);
+        char err_info[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+        LOGGER_ERROR(LOGGER, "can not extend file %s to size %lu MB, error = %s",
+             ctrl_file->name, ctrl_file->size, err_info);
+        return CM_ERROR;
     }
 
     ret = os_close_file(file);
     ut_a(ret);
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
-dberr_t srv_create_redo_logs()
+static void srv_delete_file(char* name)
+{
+    bool32 ret = os_del_file(name);
+    if (!ret && os_file_get_last_error() != OS_FILE_NOT_FOUND) {
+        char err_info[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+        LOGGER_ERROR(LOGGER, "failed to delete file, name = %s error = %s",
+             name, err_info);
+    }
+}
+
+status_t srv_create_redo_logs()
 {
     db_ctrl_file_t *ctrl_file;
 
-    for (uint32 i = 0; i < srv_db_ctrl.redo_count; i++) {
-        ctrl_file = &srv_db_ctrl.redo_group[i];
-        os_del_file(ctrl_file->name);
-        dberr_t err = create_db_file(ctrl_file);
-        if (err != DB_SUCCESS) {
+    for (uint32 i = 0; i < srv_ctrl_file.redo_count; i++) {
+        ctrl_file = &srv_ctrl_file.redo_group[i];
+        srv_delete_file(ctrl_file->name);
+        status_t err = create_db_file(ctrl_file);
+        if (err != CM_SUCCESS) {
             return err;
         }
     }
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
-dberr_t srv_create_undo_log()
+status_t srv_create_undo_log()
 {
     db_ctrl_file_t *ctrl_file;
 
-    for (uint32 i = 0; i < srv_db_ctrl.undo_count; i++) {
-        ctrl_file = &srv_db_ctrl.undo_group[i];
-        os_del_file(ctrl_file->name);
-        dberr_t err = create_db_file(ctrl_file);
-        if (err != DB_SUCCESS) {
+    for (uint32 i = 0; i < srv_ctrl_file.undo_count; i++) {
+        ctrl_file = &srv_ctrl_file.undo_group[i];
+        srv_delete_file(ctrl_file->name);
+        status_t err = create_db_file(ctrl_file);
+        if (err != CM_SUCCESS) {
             return err;
         }
     }
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
-dberr_t srv_create_temp()
+status_t srv_create_or_open_temp()
 {
     db_ctrl_file_t *ctrl_file;
 
-    for (uint32 i = 0; i < srv_db_ctrl.temp_count; i++) {
-        ctrl_file = &srv_db_ctrl.temp_group[i];
-        os_del_file(ctrl_file->name);
-        dberr_t err = create_db_file(ctrl_file);
-        if (err != DB_SUCCESS) {
-            return err;
+    for (uint32 i = 0; i < srv_ctrl_file.temp_count; i++) {
+        ctrl_file = &srv_ctrl_file.temp_group[i];
+        srv_delete_file(ctrl_file->name);
+        //status_t err = create_db_file(ctrl_file);
+        bool32 ret = vm_pool_add_file(srv_temp_mem_pool, ctrl_file->name, ctrl_file->max_size);
+        if (!ret) {
+            return CM_ERROR;
         }
     }
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
-dberr_t srv_create_system()
+status_t srv_create_system()
 {
     db_ctrl_file_t *ctrl_file;
 
-    ctrl_file = &srv_db_ctrl.system;
-    os_del_file(ctrl_file->name);
+    ctrl_file = &srv_ctrl_file.system;
+    srv_delete_file(ctrl_file->name);
 
-    //dberr_t err = create_db_file(ctrl_file);
-    //if (err != DB_SUCCESS) {
+    //status_t err = create_db_file(ctrl_file);
+    //if (err != CM_SUCCESS) {
     //    return err;
     //}
     bool32 ret;
@@ -584,12 +668,12 @@ dberr_t srv_create_system()
     ret = os_open_file(ctrl_file->name, OS_FILE_CREATE, OS_FILE_SYNC, &file);
     if (!ret) {
         LOGGER_ERROR(LOGGER, "can not create file, name = %s", ctrl_file->name);
-        return(DB_ERROR);
+        return CM_ERROR;
     }
     ret = os_close_file(file);
     ut_a(ret);
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
 void* write_io_handler_thread(void *arg)
@@ -602,7 +686,7 @@ void* write_io_handler_thread(void *arg)
     context = os_aio_array_get_nth_context(srv_os_aio_async_write_array, index);
 
     while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
-        os_file_aio_wait(context, srv_write_io_timeout_seconds * 1000000);
+        fil_aio_reader_and_writer_wait(context, 1000);
     }
 
     os_thread_exit(NULL);
@@ -619,7 +703,7 @@ void* read_io_handler_thread(void *arg)
     context = os_aio_array_get_nth_context(srv_os_aio_async_read_array, index);;
 
     while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
-        os_file_aio_wait(context, srv_read_io_timeout_seconds * 1000000);
+        fil_aio_reader_and_writer_wait(context, 1000);
     }
 
     os_thread_exit(NULL);

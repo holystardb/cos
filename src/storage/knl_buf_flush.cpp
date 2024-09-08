@@ -112,7 +112,7 @@ static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_bl
     ut_ad(!block->page.in_flush_list);
     block->page.in_flush_list = TRUE;
     block->page.recovery_lsn = flushed_lsn;
-    UT_LIST_ADD_FIRST(list, buf_pool->flush_list, &block->page);
+    UT_LIST_ADD_FIRST(list_node, buf_pool->flush_list, &block->page);
 
     buf_pool->stat.flush_list_bytes += UNIV_PAGE_SIZE;
 
@@ -128,17 +128,17 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr, lsn_t fl
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
     ut_ad(block->page.buf_fix_count > 0);
     ut_ad(mtr->modifications);
-    ut_ad(log_flush_order_mutex_own());
+    ut_ad(!mtr->made_dirty || log_flush_order_mutex_own());
 
     mutex_enter(&block->mutex);
 
     ut_ad(block->page.newest_modification <= mtr->end_lsn);
     block->page.newest_modification = mtr->end_lsn;
 
-    if (!block->page.recovery_lsn) {
+    if (block->page.recovery_lsn == 0) {
         buf_flush_insert_into_flush_list(buf_pool, block, flushed_lsn);
     } else {
-        ut_ad(block->page.recovery_lsn <= mtr->start_buf_lsn);
+        ut_ad(block->page.recovery_lsn <= mtr->start_buf_lsn.val.lsn);
     }
 
     mutex_exit(&block->mutex);

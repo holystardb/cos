@@ -39,29 +39,27 @@ static int get_options(int argc, char **argv)
 
 bool32 knl_server_init(void)
 {
-    dberr_t err;
+    //srv_buf_pool_size = (g_buffer_pool_size * 1024 * 1024) / g_buffer_pool_instances;
+    //srv_buf_pool_size = srv_buf_pool_size * g_buffer_pool_instances;
+    //srv_buf_pool_instances = g_buffer_pool_instances;
 
-    srv_buf_pool_size = (g_buffer_pool_size * 1024 * 1024) / g_buffer_pool_instances;
-    srv_buf_pool_size = srv_buf_pool_size * g_buffer_pool_instances;
-    srv_buf_pool_instances = g_buffer_pool_instances;
+    //srv_data_home = g_base_directory;
+    //srv_system_file_size = 1024 * 1024;
+    //srv_system_file_max_size = 10 * 1024 * 1024;
+    //srv_system_file_auto_extend_size = 1024 * 1024;
 
-    srv_data_home = g_base_directory;
-    srv_system_file_size = 1024 * 1024;
-    srv_system_file_max_size = 10 * 1024 * 1024;
-    srv_system_file_auto_extend_size = 1024 * 1024;
+    //srv_redo_log_buffer_size = g_redo_log_buffer_size * 1024 * 1024;
+    //srv_redo_log_file_size = g_redo_log_file_size * 1024 * 1024;
+    //srv_redo_log_file_count = g_redo_log_files;
 
-    srv_redo_log_buffer_size = g_redo_log_buffer_size * 1024 * 1024;
-    srv_redo_log_file_size = g_redo_log_file_size * 1024 * 1024;
-    srv_redo_log_file_count = g_redo_log_files;
+    //srv_undo_buffer_size = g_undo_buffer_size * 1024 * 1024;
 
-    srv_undo_buffer_size = g_undo_buffer_size * 1024 * 1024;
-
-    srv_max_n_open = g_open_files_limit;
-    srv_space_max_count = 10;
-    srv_fil_node_max_count = 10;
+    //srv_max_n_open = g_open_files_limit;
+    //srv_space_max_count = 10;
+    //srv_fil_node_max_count = 10;
 
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
 int main1(int argc, const char *argv[])
@@ -79,9 +77,9 @@ int main1(int argc, const char *argv[])
     marea = marea_create(total_memory_size, is_extend);
 
 
-    knl_server_init();
+    //knl_server_init();
 
-    knl_server_start(marea);
+    //knl_server_start(marea);
 
 #if 0
     bool32 create_new_db = TRUE;

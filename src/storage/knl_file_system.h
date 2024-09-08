@@ -129,6 +129,7 @@ typedef struct st_fil_node {
 
 /** Use maximum UINT value to indicate invalid space ID. */
 #define FIL_INVALID_SPACE_ID          0xFFFFFFFF
+#define FIL_INVALID_NODE_ID           0xFFFFFFFF
 
 
 
@@ -164,18 +165,18 @@ struct st_fil_space {
     uint32       magic_n;
     mutex_t      mutex;
     bool32       io_in_progress;
-    rw_lock_t    latch;
+    rw_lock_t    rw_lock;
     HASH_NODE_T  hash;   /*!< hash chain node */
 
     atomic32_t   refcount;
 
 
     UT_LIST_BASE_NODE_T(fil_node_t) fil_nodes;
-    UT_LIST_BASE_NODE_T(fil_page_t) free_pages;
     UT_LIST_NODE_T(struct st_fil_space) list_node;
 };
 
 #define M_FIL_SPACE_MAGIC_N         89472
+#define M_FIL_SYSTEM_HASH_LOCKS     4096
 
 typedef struct st_fil_system {
     uint32              max_n_open; /* maximum allowed open files */
@@ -195,8 +196,9 @@ typedef struct st_fil_system {
     uint32              aio_context_count;
     os_aio_array_t     *aio_array;
 
-    HASH_TABLE         *spaces; /*!< The hash table of spaces in the system; they are hashed on the space id */
-    HASH_TABLE         *name_hash; /*!< hash table based on the space name */
+    rw_lock_t           rw_lock[M_FIL_SYSTEM_HASH_LOCKS];
+    HASH_TABLE         *space_id_hash; // hash table based on space id
+    HASH_TABLE         *name_hash; // hash table based on space name
 
     UT_LIST_BASE_NODE_T(fil_space_t) fil_spaces;
     UT_LIST_BASE_NODE_T(fil_node_t) fil_node_lru;
@@ -217,43 +219,43 @@ inline bool32 is_system_or_undo_tablespace(uint32     id)
 
 inline void fil_system_pin_space(fil_space_t *space)
 {
-    //ut_ad(mutex_own(&fil_system->lock));
-    space->refcount++;
+    atomic32_inc(&space->refcount);
 }
 
 inline void fil_system_unpin_space(fil_space_t *space)
 {
-    //ut_ad(mutex_own(&fil_system->lock));
-    space->refcount--;
+    ut_ad(space->refcount > 0);
+    atomic32_dec(&space->refcount);
 }
 
 //-----------------------------------------------------------------------------------------------------
 
 extern bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open,
                                     uint32 space_max_count, uint32 fil_node_max_count);
+extern inline rw_lock_t* fil_system_get_hash_lock(uint32 space_id);
+extern inline fil_space_t* fil_system_get_space_by_id(uint32 space_id);
+extern inline void fil_system_insert_space_to_hash_table(fil_space_t* space);
+
 extern fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
 extern void fil_space_destroy(uint32 space_id);
-extern fil_node_t* fil_node_create(fil_space_t *space, char *name,
+extern fil_node_t* fil_node_create(fil_space_t *space, uint32 node_id, char *name,
                                          uint32 page_max_count, uint32 page_size, bool32 is_extend);
-extern bool32 fil_node_destroy(fil_space_t *space, fil_node_t *node);
+extern bool32 fil_node_destroy(fil_space_t* space, fil_node_t* node, bool32 need_space_rwlock = TRUE);
 extern bool32 fil_node_open(fil_space_t *space, fil_node_t *node);
 extern bool32 fil_node_close(fil_space_t *space, fil_node_t *node);
-extern fil_space_t* fil_get_space_by_id(uint32 space_id);
-extern void fil_release_space(fil_space_t* space);
-rw_lock_t* fil_space_get_latch(uint32 space_id, uint32 *flags = NULL);
 
 extern bool fil_addr_is_null(fil_addr_t addr);
 
+extern inline status_t fil_io(uint32 type, bool32 sync, const page_id_t &page_id,
+    const page_size_t &page_size, uint32 byte_offset, uint32 len, void* buf, void* message);
+extern inline status_t fil_write(bool32 sync, const page_id_t &page_id,
+    const page_size_t &page_size, uint32 len, void* buf, void* message);
+extern inline status_t fil_read(bool32 sync, const page_id_t &page_id,
+    const page_size_t &page_size, uint32 len, void* buf, void* message);
+extern inline void fil_aio_reader_and_writer_wait(os_aio_context_t* context, uint32 timeout_us);
 
-extern  dberr_t fil_write(bool32 sync, const page_id_t &page_id, const page_size_t &page_size,
-                              uint32 len, void*  buf, void*  message);
-extern dberr_t fil_read(bool32 sync, const page_id_t &page_id, const page_size_t &page_size,
-                           uint32 len, void*  buf, void*  message);
-
-extern bool32 fil_space_reserve_free_extents(uint32 id, uint32 n_free_now, uint32 n_to_reserve);
-extern void fil_space_release_free_extents(uint32 id, uint32 n_reserved);
 extern bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size);
-extern uint32 fil_space_get_size(uint32 space_id);
+extern uint64 fil_space_get_size(uint32 space_id);
 
 
 //-----------------------------------------------------------------------------------------------------

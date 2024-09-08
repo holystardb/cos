@@ -3,48 +3,25 @@
 
 #include "cm_type.h"
 
-typedef struct st_source_location {
-    uint16 line;
-    uint16 column;
-} source_location_t;
-
-#define ERROR_INFO_MSG_LENGTH    1024
-
-typedef struct st_error_info_t {
-    int32 code;
-    source_location_t loc;
-    char message[ERROR_INFO_MSG_LENGTH];
-    bool8 is_ignored;
-    bool8 is_ignore_log;
-    bool8 is_full;
-    bool8 reserved;
-} error_info_t;
-
-
-enum errno_t {
-    /* user define errors */
-    ERR_MIN_USER_DEFINE_ERROR = -20999,
-    ERR_MAX_USER_DEFINE_ERROR = -20000,
-
-    
-    CM_ERROR_UNSET = 0,
-    CM_SUCCESS_LOCKED_REC = 9,    /*!< like DB_SUCCESS, but a new explicit record lock was created */
-    CM_SUCCESS = 10,
+typedef enum en_err_no {
+    ERR_UNSET = 0,
 
     /* The following are error codes */
     /* internal errors or common errors: 11 - 99 */
-    CM_ERROR = 11,
     ERR_READ_ONLY, /* Update operation attempted in a read-only transaction */    
     ERR_INTERRUPTED,
     ERR_QUE_THR_SUSPENDED,
     ERR_CORRUPTION,  /* data structure corruption noticed */
 
-    /* OS errors: 100 - 199 */
+    /* os errors: 100 - 199 */
     ERR_ALLOC_MEMORY = 100,
-    ERR_OUT_OF_MEMORY,
-    ERR_STACK_OVERFLOW,
-    ERR_IO_ERROR, /* Generic IO error */
-    ERR_SYSTEM_CALL,
+    ERR_OUT_OF_MEMORY = 101,
+    ERR_VM_NOT_OPEN = 102,
+    ERR_VM_OPEN_LIMIT_EXCEED  = 103,
+    ERR_STACK_OVERFLOW = 104,
+    ERR_IO_ERROR = 105, /* Generic IO error */
+    ERR_SYSTEM_CALL = 105,
+
 
     /* invalid configuration errors: 200 - 299 */
 
@@ -99,9 +76,9 @@ enum errno_t {
     /* SPM: 1400 - 1499 */
 
     /* storage engine: 1500 - 1699 */
-    ERR_TOO_BIG_RECORD  = 1500,
-    ERR_UNDO_RECORD_TOO_BIG,
-    ERR_VARIANT_DATA_TOO_BIG,
+    ERR_ROW_RECORD_TOO_BIG  = 1500,
+    ERR_UNDO_RECORD_TOO_BIG = 1501,
+    ERR_VARIANT_DATA_TOO_BIG = 1502,
     ERR_RECORD_NOT_FOUND,
     ERR_END_OF_INDEX,
 
@@ -124,10 +101,34 @@ enum errno_t {
     // The max error number defined in g_error_desc[]
     ERR_ERRNO_CEIL = 3999,
 
+    /* user define errors */
+    ERR_MIN_USER_DEFINE_ERROR = 5000,
+
 
     // The max error number can be used in raise exception, it not need to defined in g_error_desc[]
     ERR_CODE_CEIL = 10000,
-};
+} err_no_t;
+
+typedef struct st_source_location {
+    uint16 line;
+    uint16 column;
+} source_location_t;
+
+#define ERROR_INFO_MSG_LENGTH    1024
+
+typedef struct st_error_info_t {
+    int32 code;
+    source_location_t loc;
+    char message[ERROR_INFO_MSG_LENGTH];
+    bool8 is_ignored;
+    bool8 is_ignore_log;
+    bool8 is_full;
+    bool8 reserved;
+} error_info_t;
+
+// -----------------------------------------------------------------------------------------------
+
+extern THREAD_LOCAL error_info_t g_tls_error;
 
 #define CM_THROW_ERROR(err_no, ...)                                   \
     do {                                                              \
@@ -156,21 +157,13 @@ inline void set_error_message(const char *fmt, ...)
         set_error_message(g_error_desc[err_no], ##__VA_ARGS__);       \
     } while (0)
 
-const char* ut_strerr(dberr_t num);
-char *my_strerror(char *buf, size_t len, int nr);
+extern bool32 error_message_init(char* errmsg_file);
 
-#define EE_ERROR_FIRST          1 /*Copy first error nr.*/
+// ------------------------------------------------------------------------------------------------
 
-#define EE_ERROR_LAST           33 /* Copy last error nr */
-/* Add error numbers before EE_ERROR_LAST and change it accordingly. */
-
-extern const char *glob_error_messages[];  /* my_error_messages is here */
-
-extern const char *g_error_desc[];
-
-
-extern const char** get_global_errmsgs();
+extern const char *g_error_desc[ERR_CODE_CEIL];
 
 
 
 #endif   // _CM_ERROR_H
+

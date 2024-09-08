@@ -1,10 +1,13 @@
 #include "knl_trx_rseg.h"
+
+#include "cm_log.h"
+
 #include "knl_trx.h"
 #include "knl_buf.h"
 #include "knl_heap.h"
 
 
-const memory_pool_t* trx_rseg_mem_pool = NULL;
+
 
 static const uint32  trx_slot_count_per_page =
     (UNIV_PAGE_SIZE - FIL_PAGE_DATA - FIL_PAGE_DATA_END - TRX_RSEG_SLOT_HEADER) / sizeof(trx_slot_t);
@@ -98,10 +101,10 @@ static void trx_rseg_undo_page_init(trx_rseg_t* rseg)
     SLIST_INIT(rseg->insert_undo_cache);
     SLIST_INIT(rseg->update_undo_cache);
 
-    count_per_page = trx_rseg_mem_pool->page_size / sizeof(trx_undo_page_t);
+    count_per_page = trx_sys->mem_pool->page_size / sizeof(trx_undo_page_t);
     while (trx_undo_page_count_per_rseg > SLIST_GET_LEN(rseg->insert_undo_cache)) {
 
-        memory_page_t* page = mpool_alloc_page(trx_rseg_mem_pool);
+        memory_page_t* page = mpool_alloc_page(trx_sys->mem_pool);
         ptr = (char *)MEM_PAGE_DATA_PTR(page);
 
         for (uint32 i = 0;
@@ -127,13 +130,13 @@ static void trx_rseg_trx_init(trx_rseg_t* rseg)
     SLIST_INIT(rseg->trx_base);
 
     uint32 trx_count = TRX_SLOT_PAGE_COUNT_PER_RSEG * trx_slot_count_per_page;
-    uint32 count_per_page = trx_rseg_mem_pool->page_size / sizeof(trx_t);
+    uint32 count_per_page = trx_sys->mem_pool->page_size / sizeof(trx_t);
     rseg->trxs = (trx_t**)malloc(sizeof(void *) * trx_count);
 
     uint32 slot = 0;
     while (trx_count > slot) {
 
-        memory_page_t* page = mpool_alloc_page(trx_rseg_mem_pool);
+        memory_page_t* page = mpool_alloc_page(trx_sys->mem_pool);
         char* ptr = (char *)MEM_PAGE_DATA_PTR(page);
 
         for (uint32 i = 0; i < count_per_page && slot < trx_count; i++) {
@@ -156,7 +159,7 @@ static void trx_rseg_trx_slot_init(trx_rseg_t* rseg, mtr_t* mtr)
 {
     const page_size_t page_size(0);
 
-    rseg->trx_slots = (trx_slot_t**)malloc(sizeof(void *) * trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
+    rseg->trx_slots = (void **)malloc(sizeof(void *) * trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
 
     for (uint32 i = 0; i < TRX_SLOT_PAGE_COUNT_PER_RSEG; i++) {
         //
@@ -192,7 +195,7 @@ static void trx_rseg_trx_slot_init(trx_rseg_t* rseg, mtr_t* mtr)
         }
 
         // redo
-        mlog_write_initial_log_record(page, TRX_RSEG_PAGE_INIT, mtr);
+        mlog_write_initial_log_record(page, MLOG_TRX_RSEG_PAGE_INIT, mtr);
         mlog_catenate_uint32(mtr, rseg->id, MLOG_1BYTE);
         mlog_catenate_uint32(mtr, page_no, MLOG_4BYTES);
     }
@@ -212,10 +215,10 @@ static void trx_rseg_create(uint32 rseg_id)
 
     trx_rseg_undo_page_init(rseg);
 
-    uint32 start_page_no = FSP_FIRST_RSEG_PAGE_NO + rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG;
-    trx_rseg_trx_init(rseg, start_page_no);
+    //uint32 start_page_no = FSP_FIRST_RSEG_PAGE_NO + rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG;
+    trx_rseg_trx_init(rseg);
 
-    trx_rseg_trx_slot_init(rseg, mtr);
+    trx_rseg_trx_slot_init(rseg, &mtr);
 
     mtr_commit(&mtr);
 }
@@ -223,8 +226,9 @@ static void trx_rseg_create(uint32 rseg_id)
 // Creates and initializes the transaction system at the database creation.
 void trx_sys_create_sys_pages(void)
 {
+    LOGGER_INFO(LOGGER, "transaction rollback segment initialize");
+
     trx_undo_page_count_per_rseg = srv_undo_file_max_size / UNIV_PAGE_SIZE / trx_sys->rseg_count;
-    trx_rseg_mem_pool = mpool_create(srv_memory_sga, 0, 0, MEM_POOL_PAGE_UNLIMITED, UNIV_PAGE_SIZE);
 
     trx_sysf_create();
 
@@ -245,7 +249,7 @@ static inline bool32 trx_rset_check_trx_slot(trx_t* trx)
     const page_size_t page_size(0);
     page_id_t page_id(TRX_SYS_SPACE, TRX_GET_RSEG_TRX_SLOT_PAGE_NO(trx->trx_slot_id));
     trx_rseg_t* rseg = TRX_GET_RSEG(trx->trx_slot_id.rseg_id);
-    trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
+    trx_slot_t* slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
 
     mtr_start(&mtr);
 
@@ -273,7 +277,7 @@ static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg, mtr_t* mtr)
     mutex_exit(&rseg->trx_mutex);
 
     if (LIKELY(trx)) {
-        trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
+        trx_slot_t* slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
 
         ut_ad(trx_rset_check_trx_slot(trx));
 
@@ -286,8 +290,8 @@ static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg, mtr_t* mtr)
         trx->trx_slot_id.xnum = slot->xnum;
 
         // redo log
-        mlog_write_initial_log_record((byte *)slot, TRX_RSEG_SLOT_BEGIN, mtr);
-        mlog_catenate_uint64(mtr, trx->trx_slot_id);
+        mlog_write_initial_log_record((byte *)slot, MLOG_TRX_RSEG_SLOT_BEGIN, mtr);
+        mlog_catenate_uint64(mtr, trx->trx_slot_id.id);
 
         buf_block_mark_dirty(TRX_GET_RSEG_TRX_SLOT_BLOCK(trx->trx_slot_id), mtr);
     }
@@ -297,7 +301,7 @@ static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg, mtr_t* mtr)
 
 inline trx_t* trx_rseg_assign_and_alloc_trx(mtr_t* mtr)
 {
-    trx_t* trx;
+    trx_t* trx = NULL;
     trx_rseg_t* rseg;
     static uint32  latest_rseg = 0;
     uint32 index = latest_rseg++;
@@ -349,7 +353,7 @@ inline uint64 trx_get_next_scn()
 
 inline void trx_rseg_set_end(trx_t* trx, mtr_t* mtr)
 {
-    trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
+    trx_slot_t* slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
     uint64 scn = trx_get_next_scn();
 
     ut_ad(trx_rset_check_trx_slot(trx));
@@ -358,8 +362,8 @@ inline void trx_rseg_set_end(trx_t* trx, mtr_t* mtr)
     slot->status = XACT_END;
 
     // redo log
-    mlog_write_initial_log_record((byte *)slot, TRX_RSEG_SLOT_END, mtr);
-    mlog_catenate_uint64(mtr, trx->trx_slot_id);
+    mlog_write_initial_log_record((byte *)slot, MLOG_TRX_RSEG_SLOT_END, mtr);
+    mlog_catenate_uint64(mtr, trx->trx_slot_id.id);
     mlog_catenate_uint64(mtr, scn);
 
     buf_block_mark_dirty(TRX_GET_RSEG_TRX_SLOT_BLOCK(trx->trx_slot_id), mtr);
@@ -377,13 +381,13 @@ inline void trx_rseg_release_trx(trx_t* trx)
     mutex_exit(&rseg->trx_mutex);
 }
 
-inline void trx_get_status_by_itl(itl_t* itl, trx_status_t* trx_status)
+inline void trx_get_status_by_itl(trx_slot_id_t trx_slot_id, trx_status_t* trx_status)
 {
-    trx_rseg_t* rseg = TRX_GET_RSEG(itl->trx_slot_id.rseg_id);
-    trx_slot_t* slot = TRX_GET_RSEG_TRX_SLOT(itl->trx_slot_id);
-    trx_t* trx = TRX_GET_RSEG_TRX(itl->trx_slot_id);
+    trx_rseg_t* rseg = TRX_GET_RSEG(trx_slot_id.rseg_id);
+    trx_slot_t* slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx_slot_id);
+    trx_t* trx = TRX_GET_RSEG_TRX(trx_slot_id);
 
-    if (slot->xnum == itl->xnum) {
+    if (slot->xnum == trx_slot_id.xnum) {
         trx_status->is_overwrite_scn = FALSE;
         if (slot->status == XACT_XA_PREPARE || slot->status == XACT_XA_ROLLBACK) {
             trx_status->scn = slot->scn;

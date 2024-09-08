@@ -5,14 +5,14 @@
 #include "cm_file.h"
 
 const char* g_log_level_desc[] = {
-    "UNKOWN",
-    "FATAL",
-    "ERROR",
-    "WARN",
-    "NOTICE",
-    "INFO",
-    "DEBUG",
-    "TRACE"
+    "[UNKOWN]",
+    "[FATAL] ",
+    "[ERROR] ",
+    "[WARN]  ",
+    "[NOTICE]",
+    "[INFO]  ",
+    "[DEBUG] ",
+    "[TRACE] "
 };
 
 #define LOG_BUF_SIZE               512
@@ -160,7 +160,7 @@ retry:
 
     current_clock(&clock);
     write_pos = snprintf(write_buffer, 512,
-        "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%08lu] %s\n",
+        "%d-%02d-%02d %02d:%02d:%02d.%03d %s [%08lu] %s\n",
         clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second,
         clock.milliseconds, g_log_level_desc[log_level], os_thread_get_curr_id(), errbuf);
     write_buffer[write_pos] = '\0';

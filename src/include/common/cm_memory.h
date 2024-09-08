@@ -5,6 +5,8 @@
 #include "cm_list.h"
 #include "cm_mutex.h"
 #include "cm_util.h"
+#include "securec.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,11 +21,11 @@ extern "C" {
 typedef struct st_memory_page {
     UT_LIST_NODE_T(struct st_memory_page) list_node;
     void*  context;
-    uint64 owner_list_id;
-    uint64 reserved[4];
+    uint32 owner_list_id;
+    uint32 reserved;
 } memory_page_t;
 
-#define MEM_AREA_PAGE_MAX_SIZE             (32*1024*1024)
+#define MEM_AREA_PAGE_MAX_SIZE             SIZE_M(32)
 #define MEM_AREA_PAGE_ARRAY_SIZE           16
 
 typedef struct st_memory_pool memory_pool_t;
@@ -47,13 +49,12 @@ typedef struct st_memory_area {
 typedef struct st_memory_context memory_context_t;
 typedef struct st_memory_stack_context memory_stack_context_t;
 
-#define MPOOL_FREE_PAGE_LIST_COUNT    16
-
 typedef struct st_memory_free_pages {
     atomic32_t    count;
     UT_LIST_BASE_NODE_T(memory_page_t) pages;
 } memory_free_pages_t;
 
+#define MPOOL_FREE_PAGE_LIST_COUNT      64
 struct st_memory_pool {
     UT_LIST_NODE_T(struct st_memory_pool) list_node;
     memory_area_t   *area;
@@ -67,7 +68,6 @@ struct st_memory_pool {
     uint32           max_page_count;
     atomic32_t       page_alloc_count;
 
-    uint32           next_alloc_free_page_list_id;
     memory_free_pages_t free_pages[MPOOL_FREE_PAGE_LIST_COUNT];
 
     // for context
@@ -80,10 +80,11 @@ struct st_memory_pool {
 
 #define MEM_POOL_PAGE_UNLIMITED        0xFFFFFFFF
 
-#define MEM_BLOCK_FREE_LIST_SIZE       16
+#define MEM_BLOCK_FREE_LIST_SIZE       12
 #define MEM_BLOCK_MIN_SIZE             64
-#define MEM_BLOCK_MAX_SIZE             8192
+#define MEM_BLOCK_MAX_SIZE             SIZE_K(128)
 
+// total 32 Bytes
 typedef struct st_mem_block {
     uint32              size : 31;
     uint32              is_free : 1;
@@ -124,21 +125,21 @@ extern void marea_destroy(memory_area_t* area);
 extern memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size);
 extern void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size);
 
-extern memory_pool_t* mpool_create(memory_area_t *area,
+extern inline memory_pool_t* mpool_create(memory_area_t *area,
     uint32 initial_page_count, uint32 local_page_count, uint32 max_page_count, uint32 page_size);
-extern void mpool_destroy(memory_pool_t *pool);
-extern memory_page_t* mpool_alloc_page(memory_pool_t *pool);
-extern void mpool_free_page(memory_pool_t *pool, memory_page_t *page);
+extern inline void mpool_destroy(memory_pool_t *pool);
+extern inline memory_page_t* mpool_alloc_page(memory_pool_t *pool);
+extern inline void mpool_free_page(memory_pool_t *pool, memory_page_t *page);
 
 
 //------------------------------------------------------------------------------
 
-extern memory_context_t* mcontext_create(memory_pool_t *pool);
-extern void mcontext_destroy(memory_context_t *context);
-extern bool32 mcontext_clean(memory_context_t *context);
-extern void* mcontext_alloc(memory_context_t *context, uint32 size, const char* file, int line);
-extern void* mcontext_realloc(void *ptr, uint32 size, const char* file, int line);
-extern void mcontext_free(void *ptr, memory_context_t *context = NULL);
+extern inline memory_context_t* mcontext_create(memory_pool_t* pool);
+extern inline void mcontext_destroy(memory_context_t* context);
+extern inline bool32 mcontext_clean(memory_context_t* context);
+extern inline void* mcontext_alloc(memory_context_t* context, uint32 size, const char* file, int line);
+extern inline void* mcontext_realloc(void* ptr, uint32 size, const char* file, int line);
+extern inline void mcontext_free(void* ptr, memory_context_t* context = NULL);
 
 #define mem_alloc(mem_ctx, size)  mcontext_alloc(mem_ctx, size, __FILE__, __LINE__)
 #define mem_realloc(ptr, size)    mcontext_realloc(ptr, size, __FILE__, __LINE__)
@@ -147,23 +148,23 @@ extern void mcontext_free(void *ptr, memory_context_t *context = NULL);
 
 //------------------------------------------------------------------------------
 
-extern memory_stack_context_t* mcontext_stack_create(memory_pool_t *pool);
-extern void mcontext_stack_destroy(memory_stack_context_t *context);
-extern bool32 mcontext_stack_clean(memory_stack_context_t *context);
+extern inline memory_stack_context_t* mcontext_stack_create(memory_pool_t* pool);
+extern inline void mcontext_stack_destroy(memory_stack_context_t* context);
+extern inline bool32 mcontext_stack_clean(memory_stack_context_t* context);
 
-extern void* mcontext_stack_push(memory_stack_context_t *context, uint32 size);
-extern void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size);
-extern void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr);
+extern inline void* mcontext_stack_push(memory_stack_context_t* context, uint32 size);
+extern inline void mcontext_stack_pop(memory_stack_context_t* context, void* ptr, uint32 size);
+extern inline void mcontext_stack_pop2(memory_stack_context_t* context, void* ptr);
 
 
 //------------------------------------------------------------------------------
 
-extern void *os_mem_alloc_large(uint64 *n);
-extern void os_mem_free_large(void *ptr, uint64 size);
+extern void *os_mem_alloc_large(uint64* n);
+extern void os_mem_free_large(void* ptr, uint64 size);
 
 /* Advices the OS that this chunk should (not) be dumped to a core file. */
-extern bool32 madvise_dump(char *mem_ptr, uint64 mem_size);
-extern bool32 madvise_dont_dump(char *mem_ptr, uint64 mem_size);
+extern bool32 madvise_dump(char* mem_ptr, uint64 mem_size);
+extern bool32 madvise_dont_dump(char* mem_ptr, uint64 mem_size);
 
 
 
@@ -246,7 +247,7 @@ public:
 
 /*-------------------------------------------------------------------*/
 
-extern THREAD_LOCAL memory_context_t  *current_memory_context;
+extern THREAD_LOCAL memory_context_t* current_memory_context;
 
 inline memory_context_t* memory_context_switch_to(memory_context_t *mctx)
 {

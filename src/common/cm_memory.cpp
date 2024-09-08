@@ -18,7 +18,7 @@ uint32 MemoryBufHeaderSize = ut_align8(sizeof(mem_buf_t));
 
 memory_area_t* marea_create(uint64 mem_size, bool32 is_extend)
 {
-    memory_area_t *area = (memory_area_t *)malloc(sizeof(memory_area_t));
+    memory_area_t *area = (memory_area_t *)ut_malloc_zero(sizeof(memory_area_t));
     if (area == NULL) {
         return NULL;
     }
@@ -39,7 +39,7 @@ memory_area_t* marea_create(uint64 mem_size, bool32 is_extend)
     if (area->size > 0) {
         area->buf = (char *)os_mem_alloc_large(&area->size);
         if (area->buf == NULL) {
-            free(area);
+            ut_free(area);
             area = NULL;
         }
     }
@@ -102,7 +102,7 @@ memory_page_t* marea_alloc_page(memory_area_t *area, uint32 page_size)
     }
 
     if (page == NULL && area->is_extend) {
-        page = (memory_page_t *)malloc(page_size + MemoryPageHeaderSize);
+        page = (memory_page_t *)ut_malloc(page_size + MemoryPageHeaderSize);
     }
 
     return page;
@@ -119,13 +119,13 @@ void marea_free_page(memory_area_t *area, memory_page_t *page, uint32 page_size)
     mutex_exit(&area->free_pages_mutex[n]);
 }
 
-memory_pool_t* mpool_create(memory_area_t *area, uint32 initial_page_count,
+inline memory_pool_t* mpool_create(memory_area_t *area, uint32 initial_page_count,
     uint32 local_page_count, uint32 max_page_count, uint32 page_size)
 {
     memory_page_t *page;
     memory_pool_t *pool = NULL;
 
-    if (page_size == 0 || page_size % 1024 != 0 || page_size > MEM_AREA_PAGE_MAX_SIZE ||
+    if (page_size == 0 || page_size % SIZE_K(1) != 0 || page_size > MEM_AREA_PAGE_MAX_SIZE ||
         initial_page_count > max_page_count || initial_page_count > local_page_count ||
         local_page_count > max_page_count) {
         return NULL;
@@ -159,6 +159,8 @@ retry:
     mutex_exit(&area->free_pools_mutex);
 
     //
+    memset(pool, 0x00, sizeof(memory_pool_t));
+
     mutex_create(&pool->mutex);
     mutex_create(&pool->context_mutex);
     mutex_create(&pool->stack_context_mutex);
@@ -168,7 +170,6 @@ retry:
     pool->page_alloc_count = 0;
     pool->page_size = page_size;
     pool->area = area;
-    pool->next_alloc_free_page_list_id = 0;
 
     UT_LIST_INIT(pool->free_contexts);
     UT_LIST_INIT(pool->context_used_pages);
@@ -190,14 +191,14 @@ retry:
             UT_LIST_ADD_LAST(list_node, pool->free_pages[owner_list_id].pages, page);
             mutex_exit(&pool->free_pages_mutex[owner_list_id]);
 
-            atomic32_dec(&pool->page_alloc_count);
+            atomic32_inc(&pool->page_alloc_count);
         }
     }
 
     return pool;
 }
 
-void mpool_destroy(memory_pool_t *pool)
+inline void mpool_destroy(memory_pool_t *pool)
 {
     memory_page_t *page;
 
@@ -233,15 +234,16 @@ void mpool_destroy(memory_pool_t *pool)
     mutex_exit(&pool->area->free_pools_mutex);
 }
 
-static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
+static inline memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
 {
     memory_page_t *page;
     bool32         need_alloc = FALSE;
     uint32         owner_list_id;
     uint32         owner_list_count = UINT_MAX32;
+    uint32         count;
 
     for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
-        index = (i + index) % MPOOL_FREE_PAGE_LIST_COUNT;
+        index = (index + i) % MPOOL_FREE_PAGE_LIST_COUNT;
 
         mutex_enter(&pool->free_pages_mutex[index], NULL);
         page = UT_LIST_GET_FIRST(pool->free_pages[index].pages);
@@ -250,9 +252,9 @@ static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
             mutex_exit(&pool->free_pages_mutex[index]);
             break;
         }
+        count = pool->free_pages[index].count;
         mutex_exit(&pool->free_pages_mutex[index]);
 
-        uint32 count = pool->free_pages[index].count;
         if (owner_list_count > count) {
             owner_list_count = count;
             owner_list_id = i;
@@ -277,13 +279,13 @@ static memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 index)
     return NULL;
 }
 
-memory_page_t* mpool_alloc_page(memory_pool_t *pool)
+inline memory_page_t* mpool_alloc_page(memory_pool_t *pool)
 {
-    uint32 list_id = pool->next_alloc_free_page_list_id++;
-    return mpool_alloc_page_low(pool, list_id);
+    uint64 owner_list_id = ut_rnd_gen_uint64();
+    return mpool_alloc_page_low(pool, owner_list_id);
 }
 
-void mpool_free_page(memory_pool_t *pool, memory_page_t *page)
+inline void mpool_free_page(memory_pool_t *pool, memory_page_t *page)
 {
     uint32 owner_list_id = page->owner_list_id;
     ut_a(owner_list_id < MPOOL_FREE_PAGE_LIST_COUNT);
@@ -304,7 +306,7 @@ void mpool_free_page(memory_pool_t *pool, memory_page_t *page)
     mutex_exit(&pool->free_pages_mutex[owner_list_id]);
 }
 
-static void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
+static inline void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
 {
     memory_context_t *ctx = NULL;
     uint32 num = pool->page_size / MemoryContextHeaderSize;
@@ -318,7 +320,7 @@ static void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
     }
 }
 
-static memory_context_t* mpool_alloc_mcontext(memory_pool_t *pool)
+static inline memory_context_t* mpool_alloc_mcontext(memory_pool_t *pool)
 {
     memory_page_t *page;
     memory_context_t *ctx;
@@ -344,14 +346,14 @@ static memory_context_t* mpool_alloc_mcontext(memory_pool_t *pool)
     return ctx;
 }
 
-static void mpool_free_mcontext(memory_context_t *ctx)
+static inline void mpool_free_mcontext(memory_context_t *ctx)
 {
     mutex_enter(&ctx->pool->context_mutex, NULL);
     UT_LIST_ADD_LAST(list_node, ctx->pool->free_contexts, ctx);
     mutex_exit(&ctx->pool->context_mutex);
 }
 
-static void mpool_fill_stack_mcontext(memory_pool_t *pool, memory_page_t *page)
+static inline void mpool_fill_stack_mcontext(memory_pool_t *pool, memory_page_t *page)
 {
     memory_stack_context_t *ctx = NULL;
     uint32 num = pool->page_size / MemoryStackContextHeaderSize;
@@ -365,7 +367,7 @@ static void mpool_fill_stack_mcontext(memory_pool_t *pool, memory_page_t *page)
     }
 }
 
-static memory_stack_context_t* mpool_alloc_stack_mcontext(memory_pool_t *pool)
+static inline memory_stack_context_t* mpool_alloc_stack_mcontext(memory_pool_t *pool)
 {
     memory_page_t *page;
     memory_stack_context_t *ctx;
@@ -391,7 +393,7 @@ static memory_stack_context_t* mpool_alloc_stack_mcontext(memory_pool_t *pool)
     return ctx;
 }
 
-static void mpool_free_stack_mcontext(memory_stack_context_t *ctx)
+static inline void mpool_free_stack_mcontext(memory_stack_context_t *ctx)
 {
     mutex_enter(&ctx->pool->stack_context_mutex, NULL);
     UT_LIST_ADD_LAST(list_node, ctx->pool->free_stack_contexts, ctx);
@@ -403,7 +405,7 @@ static void mpool_free_stack_mcontext(memory_stack_context_t *ctx)
  *                             stack context                                  *
  *****************************************************************************/
 
-memory_stack_context_t* mcontext_stack_create(memory_pool_t *pool)
+inline memory_stack_context_t* mcontext_stack_create(memory_pool_t *pool)
 {
     memory_stack_context_t *context = mpool_alloc_stack_mcontext(pool);
     if (context != NULL) {
@@ -414,13 +416,13 @@ memory_stack_context_t* mcontext_stack_create(memory_pool_t *pool)
     return context;
 }
 
-void mcontext_stack_destroy(memory_stack_context_t *context)
+inline void mcontext_stack_destroy(memory_stack_context_t *context)
 {
     mcontext_stack_clean(context);
     mpool_free_stack_mcontext(context);
 }
 
-static bool32 mcontext_stack_page_extend(memory_stack_context_t *context)
+static inline bool32 mcontext_stack_page_extend(memory_stack_context_t *context)
 {
     memory_page_t *page;
 
@@ -440,7 +442,7 @@ static bool32 mcontext_stack_page_extend(memory_stack_context_t *context)
     return TRUE;
 }
 
-void* mcontext_stack_push(memory_stack_context_t *context, uint32 size)
+inline void* mcontext_stack_push(memory_stack_context_t *context, uint32 size)
 {
     void *ptr = NULL;
     memory_page_t *page;
@@ -474,7 +476,7 @@ void* mcontext_stack_push(memory_stack_context_t *context, uint32 size)
     return ptr;
 }
 
-void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
+inline void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
 {
     bool32 is_need_free = FALSE;
     memory_page_t *page;
@@ -500,7 +502,7 @@ void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
     }
 }
 
-void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
+inline void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
 {
     memory_page_t *page, *tmp;
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
@@ -534,12 +536,12 @@ void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
     page = UT_LIST_GET_FIRST(used_buf_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_buf_pages, page);
-        mpool_free_page(context->pool, page;
+        mpool_free_page(context->pool, page);
         page = UT_LIST_GET_FIRST(used_buf_pages);
     }
 }
 
-bool32 mcontext_stack_clean(memory_stack_context_t *context)
+inline bool32 mcontext_stack_clean(memory_stack_context_t *context)
 {
     memory_page_t *page;
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
@@ -554,7 +556,7 @@ bool32 mcontext_stack_clean(memory_stack_context_t *context)
     page = UT_LIST_GET_FIRST(used_buf_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_buf_pages, page);
-        mpool_free_page(context->pool, page;
+        mpool_free_page(context->pool, page);
         page = UT_LIST_GET_FIRST(used_buf_pages);
     }
 
@@ -567,7 +569,7 @@ bool32 mcontext_stack_clean(memory_stack_context_t *context)
  *****************************************************************************/
 
 
-memory_context_t* mcontext_create(memory_pool_t *pool)
+inline memory_context_t* mcontext_create(memory_pool_t *pool)
 {
     memory_context_t *context = mpool_alloc_mcontext(pool);
     if (context != NULL) {
@@ -581,13 +583,13 @@ memory_context_t* mcontext_create(memory_pool_t *pool)
     return context;
 }
 
-void mcontext_destroy(memory_context_t *context)
+inline void mcontext_destroy(memory_context_t *context)
 {
     mcontext_clean(context);
     mpool_free_mcontext(context);
 }
 
-bool32 mcontext_clean(memory_context_t *context)
+inline bool32 mcontext_clean(memory_context_t *context)
 {
     memory_page_t *page;
     UT_LIST_BASE_NODE_T(memory_page_t) used_block_pages;
@@ -605,14 +607,14 @@ bool32 mcontext_clean(memory_context_t *context)
     page = UT_LIST_GET_FIRST(used_block_pages);
     while (page) {
         UT_LIST_REMOVE(list_node, used_block_pages, page);
-        mpool_free_page(context->pool, page;
+        mpool_free_page(context->pool, page);
         page = UT_LIST_GET_FIRST(used_block_pages);
     }
 
     return TRUE;
 }
 
-static uint32 mcontext_get_free_blocks_index(uint32 align_size)
+static inline uint32 mcontext_get_free_blocks_index(uint32 align_size)
 {
     uint32 n;
 
@@ -625,12 +627,12 @@ static uint32 mcontext_get_free_blocks_index(uint32 align_size)
     return n;
 }
 
-static uint32 mcontext_get_size_by_blocks_index(uint32 n)
+static inline uint32 mcontext_get_size_by_blocks_index(uint32 n)
 {
     return ut_2_exp(n + 6);
 }
 
-static bool32 mcontext_block_fill_free_list(memory_context_t *context, uint32 n)
+static inline bool32 mcontext_block_fill_free_list(memory_context_t *context, uint32 n)
 {
     mem_block_t* block;
     mem_block_t* block2;
@@ -661,7 +663,7 @@ static bool32 mcontext_block_fill_free_list(memory_context_t *context, uint32 n)
     return TRUE;
 }
 
-static bool32 mcontext_block_alloc_page(memory_context_t *context)
+static inline bool32 mcontext_block_alloc_page(memory_context_t *context)
 {
     memory_page_t *page = mpool_alloc_page_low(context->pool, (uint64)context);
     if (!page) {
@@ -695,7 +697,7 @@ static bool32 mcontext_block_alloc_page(memory_context_t *context)
     return TRUE;
 }
 
-static mem_block_t* mcontext_block_get_buddy(memory_context_t *context, mem_block_t* block)
+static inline mem_block_t* mcontext_block_get_buddy(memory_context_t *context, mem_block_t* block)
 {
     char *data_ptr = MEM_PAGE_DATA_PTR(block->page);
     mem_block_t *buddy;
@@ -716,7 +718,7 @@ static mem_block_t* mcontext_block_get_buddy(memory_context_t *context, mem_bloc
     return buddy;
 }
 
-void* mcontext_alloc(memory_context_t *context, uint32 size, const char* file, int line)
+inline void* mcontext_alloc(memory_context_t* context, uint32 size, const char* file, int line)
 {
     uint32 n;
     mem_block_t *block = NULL;
@@ -750,7 +752,7 @@ retry:
     return block ? (char *)block + MemoryBlockHeaderSize : NULL;
 }
 
-void* mcontext_realloc(void *ptr, uint32 size, const char* file, int line)
+inline void* mcontext_realloc(void* ptr, uint32 size, const char* file, int line)
 {
     if (ptr == NULL) {
         return NULL;
@@ -774,7 +776,7 @@ void* mcontext_realloc(void *ptr, uint32 size, const char* file, int line)
     return new_ptr;
 }
 
-void mcontext_free(void *ptr, memory_context_t *context)
+inline void mcontext_free(void* ptr, memory_context_t* context)
 {
     mem_block_t *block = (mem_block_t *)((char *)ptr - MemoryBlockHeaderSize);
     memory_context_t *mctx = (memory_context_t *)block->page->context;
@@ -815,7 +817,7 @@ void mcontext_free(void *ptr, memory_context_t *context)
  *                             large memory                                   *
  *****************************************************************************/
 
-void *os_mem_alloc_large(uint64 *n)
+void* os_mem_alloc_large(uint64* n)
 {
     void *ptr;
     uint64 size;
@@ -847,7 +849,7 @@ void *os_mem_alloc_large(uint64 *n)
     return (ptr);
 }
 
-void os_mem_free_large(void *ptr, uint64 size)
+void os_mem_free_large(void* ptr, uint64 size)
 {
 #ifdef __WIN__
     /* When RELEASE memory, the size parameter must be 0. Do not use MEM_RELEASE with MEM_DECOMMIT. */
@@ -861,7 +863,7 @@ void os_mem_free_large(void *ptr, uint64 size)
 #endif
 }
 
-bool32 madvise_dont_dump(char *mem_ptr, uint64 mem_size)
+bool32 madvise_dont_dump(char* mem_ptr, uint64 mem_size)
 {
 #ifdef __WIN__
 
@@ -874,7 +876,7 @@ bool32 madvise_dont_dump(char *mem_ptr, uint64 mem_size)
     return TRUE;
 }
 
-bool32 madvise_dump(char *mem_ptr, uint64 mem_size)
+bool32 madvise_dump(char* mem_ptr, uint64 mem_size)
 {
 #ifdef __WIN__
     

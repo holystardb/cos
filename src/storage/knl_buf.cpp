@@ -15,8 +15,8 @@ buf_pool_t *buf_pool_ptr;
 static void buf_block_init_low(buf_block_t *block);
 
 // Inits a page to the buffer buf_pool
-static void buf_page_init(    buf_pool_t* buf_pool,  const page_id_t &page_id,
-    const page_size_t &page_size, buf_block_t *block);
+static void buf_page_init(buf_pool_t* buf_pool, const page_id_t& page_id,
+    const page_size_t& page_size, buf_block_t* block);
 
 
 
@@ -66,11 +66,11 @@ bool32 buf_page_in_file(const buf_page_t *bpage) /*!< in: pointer to control blo
     return (FALSE);
 }
 
-enum buf_io_fix buf_page_get_io_fix_unlocked(const buf_page_t *bpage)
+buf_io_fix_t buf_page_get_io_fix_unlocked(const buf_page_t *bpage)
 {
     ut_ad(bpage != NULL);
 
-    enum buf_io_fix io_fix = bpage->io_fix;
+    buf_io_fix_t io_fix = bpage->io_fix;
 
 #ifdef UNIV_DEBUG
     switch (io_fix) {
@@ -81,9 +81,9 @@ enum buf_io_fix buf_page_get_io_fix_unlocked(const buf_page_t *bpage)
       return (io_fix);
     }
     ut_error;
-#else  /* UNIV_DEBUG */
+#endif  /* UNIV_DEBUG */
+
     return (io_fix);
-#endif /* UNIV_DEBUG */
 }
 
 /** Allocates a buf_page_t descriptor. This function must succeed.
@@ -179,7 +179,7 @@ bool32 buf_pool_watch_is_sentinel(const buf_pool_t *buf_pool, const buf_page_t *
 // Calculates a folded value of a file page address to use in the page hash table
 uint32 buf_page_address_fold(const page_id_t *page_id)
 {
-    return (page_id->space() << 20) + page_id->space() + page_id->page_no();
+    return (page_id->space_id() << 20) + page_id->space_id() + page_id->page_no();
 }
 
 
@@ -196,9 +196,9 @@ uint32 buf_page_address_fold(const page_id_t *page_id)
   return pointer to the block or NULL 
 */
 static buf_page_t* buf_page_init_for_read(
-    dberr_t    *err,    /*!< out: DB_SUCCESS or DB_TABLESPACE_DELETED */
+    status_t*   err,    /*!< out: CM_SUCCESS or DB_TABLESPACE_DELETED */
     uint32      mode,   /*!< in: BUF_READ_IBUF_PAGES_ONLY, ... */
-    const page_id_t &page_id)/*!< in: page number */
+    const page_id_t& page_id)/*!< in: page number */
 {
     buf_block_t  *block;
     buf_page_t   *bpage = NULL;
@@ -212,7 +212,7 @@ static buf_page_t* buf_page_init_for_read(
 
     ut_ad(buf_pool);
 
-    *err = DB_SUCCESS;
+    *err = CM_SUCCESS;
 
     block = buf_LRU_get_free_block(buf_pool);
     ut_ad(block);
@@ -275,7 +275,7 @@ static buf_page_t* buf_page_init_for_read(
     return bpage;
 }
 
-static bool32 buf_page_io_complete(buf_page_t *bpage, enum buf_io_fix io_type, bool32 evict)
+inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool32 evict)
 {
     mutex_t *block_mutex;
     buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
@@ -368,7 +368,7 @@ which case it is never read into the pool, or if the tablespace does
 not exist or is being dropped
 @return 1 if read request is issued. 0 if it is not */
 static bool32 buf_read_page_low(
-	dberr_t *err,	/*!< out: DB_SUCCESS or DB_TABLESPACE_DELETED if we are
+	status_t* err,	/*!< out: CM_SUCCESS or DB_TABLESPACE_DELETED if we are
 			trying to read from a non-existent tablespace, or a
 			tablespace which is just now being dropped */
 	bool32   sync,	/*!< in: true if synchronous aio is desired */
@@ -378,15 +378,16 @@ static bool32 buf_read_page_low(
     const page_id_t &page_id,
     const page_size_t &page_size)
 {
-    buf_page_t   *bpage;
-    fil_space_t  *space;
-    fil_node_t   *node;
-    uint32        block_offset;
+    buf_page_t*    bpage;
+    fil_space_t*   space;
+    fil_node_t*    node;
+    os_aio_slot_t* aio_slot = NULL;
+    uint32         block_offset;
 
     if (buf_dblwr_page_inside(page_id)) {
         LOGGER_WARN(LOGGER,
             "Warning: trying to read doublewrite buffer page %lu : %lu\n",
-            page_id.space(), page_id.page_no());
+            page_id.space_id(), page_id.page_no());
         return FALSE;
     }
 
@@ -403,9 +404,9 @@ static bool32 buf_read_page_low(
     ut_a(buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE);
 
     *err = fil_read(sync, page_id, page_size, page_size.physical(),
-        (void *)((buf_block_t*)bpage)->frame, NULL);
-    if (*err != DB_SUCCESS) {
-        if (*err == DB_TABLESPACE_DELETED) {
+        (void *)((buf_block_t*)bpage)->frame, bpage);
+    if (*err != CM_SUCCESS) {
+        if (*err == ERR_TABLESPACE_DELETED) {
             buf_read_page_handle_error(bpage);
             return FALSE;
         }
@@ -430,7 +431,7 @@ released by the i/o-handler thread.
 bool32 buf_read_page(const page_id_t &page_id, const page_size_t &page_size)
 {
     bool32    ret;
-    dberr_t   err;
+    status_t  err;
     /** read only pages belonging to the insert buffer tree */
     constexpr uint32 BUF_READ_IBUF_PAGES_ONLY = 131;
     /** read any page */
@@ -439,11 +440,11 @@ bool32 buf_read_page(const page_id_t &page_id, const page_size_t &page_size)
     /* We do the i/o in the synchronous aio mode to save thread switches: hence TRUE */
     ret = buf_read_page_low(&err, true, BUF_READ_ANY_PAGE, page_id, page_size);
     srv_stats.buf_pool_reads.add(1);
-    if (err == DB_TABLESPACE_DELETED) {
+    if (err == ERR_TABLESPACE_DELETED) {
         LOGGER_ERROR(LOGGER,
             "Error: trying to access tablespace %lu page no. %lu,\n"
             "but the tablespace does not exist or is just being dropped.\n",
-            page_id.space(), page_id.page_no());
+            page_id.space_id(), page_id.page_no());
     }
 
     return ret;
@@ -528,9 +529,9 @@ static void buf_page_make_young_if_needed(buf_page_t *bpage)
     }
 }
 
-static bool32 buf_block_wait_complete_io(buf_block_t *block, enum buf_io_fix io_fix)
+static bool32 buf_block_wait_complete_io(buf_block_t *block, buf_io_fix_t io_fix)
 {
-    enum buf_io_fix tmp_io_fix;
+    buf_io_fix_t tmp_io_fix;
     mutex_t *block_mutex = buf_page_get_mutex(&block->page);
 
     for (;;) {
@@ -552,7 +553,7 @@ static bool32 buf_block_wait_complete_io(buf_block_t *block, enum buf_io_fix io_
 }
 
 buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
-    uint32 rw_latch, Page_fetch mode, mtr_t *mtr)
+    rw_lock_type_t rw_latch, Page_fetch mode, mtr_t *mtr)
 {
     buf_block_t  *block;
     uint64        access_time;
@@ -589,7 +590,7 @@ retry:
                 " %lu into the buffer pool\n"
                 "The most probable cause of this error may be that the"
                 " table has been corrupted. Aborting...\n",
-                page_id.space(), page_id.page_no());
+                page_id.space_id(), page_id.page_no());
             ut_error;
         }
 
@@ -654,10 +655,11 @@ void buf_page_init_low(buf_page_t *bpage) /*!< in: block to init */
     ut_d(bpage->file_page_was_freed = FALSE);
 }
 
+
 // Inits a page to the buffer buf_pool.
 // The block pointer must be private to the calling thread at the start of this function.
-static void buf_page_init(buf_pool_t *buf_pool, const page_id_t &page_id,
-                          const page_size_t &page_size, buf_block_t *block)
+static void buf_page_init(buf_pool_t* buf_pool, const page_id_t& page_id,
+                          const page_size_t& page_size, buf_block_t* block)
 {
     buf_page_t *hash_page;
 
@@ -686,7 +688,7 @@ static void buf_page_init(buf_pool_t *buf_pool, const page_id_t &page_id,
     } else {
         LOGGER_ERROR(LOGGER,
             "Page (space %lu, page %lu) already found in the hash table: %p, %p",
-            page_id.space(), page_id.page_no(), (const void*)hash_page, (const void*)block);
+            page_id.space_id(), page_id.page_no(), (const void*)hash_page, (const void*)block);
         ut_ad(0);
     }
 
@@ -729,7 +731,7 @@ buf_block_t *buf_page_create(const page_id_t &page_id, const page_size_t &page_s
 
     /* If we get here, the page was not in buf_pool: init it there */
 
-    DBUG_PRINT("create page %lu : %lu", page_id.space(), page_id.page_no());
+    DBUG_PRINT("create page %lu : %lu", page_id.space_id(), page_id.page_no());
 
     block = free_block;
 
@@ -931,8 +933,11 @@ inline void buf_page_unfix(buf_page_t *bpage)
 // Increments the bufferfix count
 inline uint32 buf_block_fix(buf_block_t *block, mtr_t* mtr)
 {
+    //mtr_memo_slot_t* memo_slot;
+
     uint32 fix = buf_page_fix(&block->page);
     mtr_memo_push(mtr, block, MTR_MEMO_BUF_FIX);
+
     return fix;
 }
 
@@ -958,10 +963,10 @@ inline void buf_block_unlock(buf_block_t *block, rw_lock_type_t lock_type, mtr_t
     ut_ad(lock_type == RW_S_LATCH || lock_type == RW_X_LATCH);
 
     if (lock_type == RW_S_LATCH) {
-        rw_lock_s_unlock(&(block->rw_lock));
+        //rw_lock_s_unlock(&(block->rw_lock));
         mtr_memo_release(mtr, block, MTR_MEMO_PAGE_S_FIX);
     } else if (lock_type == RW_X_LATCH) {
-        rw_lock_x_unlock(&(block->rw_lock));
+        //rw_lock_x_unlock(&(block->rw_lock));
         mtr_memo_release(mtr, block, MTR_MEMO_PAGE_X_FIX);
     }
 }
@@ -1019,6 +1024,8 @@ buf_block_t* buf_block_align_instance(buf_pool_t* buf_pool, /*!< in: buffer in w
 
         return(block);
     }
+
+    return NULL;
 }
 
 
@@ -1155,8 +1162,8 @@ static bool32 buf_pool_fill_block(buf_pool_t *buf_pool, uint64 mem_size)
     return TRUE;
 }
 
-static void buf_pool_create_instance(buf_pool_t *buf_pool,
-    uint64 buf_pool_size, uint32 instance_no, dberr_t *err)
+static void buf_pool_create_instance(buf_pool_t* buf_pool,
+    uint64 buf_pool_size, uint32 instance_no, status_t* err)
 {
     uint32 i;
 
@@ -1172,7 +1179,7 @@ static void buf_pool_create_instance(buf_pool_t *buf_pool,
     buf_pool->withdraw_target = 0;
 
     if (!buf_pool_fill_block(buf_pool, buf_pool_size)) {
-        *err = DB_ERROR;
+        *err = CM_ERROR;
         return;
     }
 
@@ -1220,7 +1227,7 @@ static void buf_pool_create_instance(buf_pool_t *buf_pool,
     memset(&buf_pool->stat, 0x00, sizeof(buf_pool->stat));
 
 
-    *err = DB_SUCCESS;
+    *err = CM_SUCCESS;
 }
 
 static void buf_pool_free_instance(buf_pool_t *buf_pool)
@@ -1280,7 +1287,7 @@ static void buf_pool_free()
     buf_pool_ptr = nullptr;
 }
 
-dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
+status_t buf_pool_init(uint64 total_size, uint32 n_instances)
 {
     uint32 i;
     const uint64 size = total_size / n_instances;
@@ -1295,7 +1302,7 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
     /* Magic number 8 is from empirical testing on a 4 socket x 10 Cores x 2 HT host.
        128G / 16 instances takes about 4 secs, compared to 10 secs without this optimisation.. */
     uint32 n_cores = 8;
-    dberr_t errs[8], err = DB_SUCCESS;
+    status_t errs[8], err = CM_SUCCESS;
     os_thread_t threads[8];
 
     for (uint32 i = 0; i < n_instances; /* no op */) {
@@ -1309,12 +1316,12 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
             threads[id - i] = thread_start(buf_pool_create_instance, &buf_pool_ptr[id], size, id, &errs[id - i]);
         }
         for (uint32 id = i; id < n; ++id) {
-            if (!os_thread_join(threads[id - i]) || errs[id] != DB_SUCCESS) {
-                err = DB_ERROR;
+            if (!os_thread_join(threads[id - i]) || errs[id] != CM_SUCCESS) {
+                err = CM_ERROR;
             }
         }
 
-        if (err != DB_SUCCESS) {
+        if (err != CM_SUCCESS) {
             for (uint32 id = 0; id < n; ++id) {
                 buf_pool_free_instance(&buf_pool_ptr[id]);
             }
@@ -1328,14 +1335,14 @@ dberr_t buf_pool_init(uint64 total_size, uint32 n_instances)
 
     //buf_LRU_old_ratio_update(100 * 3 / 8, FALSE);
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
 buf_pool_t *buf_pool_get(const page_id_t &page_id)
 {
     /* 2log of BUF_READ_AHEAD_AREA (64) */
     page_no_t ignored_page_no = page_id.page_no() >> 6;
-    page_id_t id(page_id.space(), ignored_page_no);
+    page_id_t id(page_id.space_id(), ignored_page_no);
 
     uint32 i = id.fold() % srv_buf_pool_instances;
 

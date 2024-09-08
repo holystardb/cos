@@ -8,12 +8,9 @@
 #include "knl_log.h"
 #include "knl_fsp.h"
 #include "knl_dblwrite.h"
+#include "knl_buf_flush.h"
 
-
-#define MTR_MEM_POOL_COUNT    32
-memory_pool_t    *mtr_mem_pools[MTR_MEM_POOL_COUNT];
-
-static atomic32_t  n_mtr_mem_pools_index = 0;
+static memory_pool_t    *mtr_memory_pool = NULL;
 
 
 void* mtr_queue_next_node(void *current);
@@ -33,24 +30,12 @@ inline void** mtr_queue_next_node_address(void *current)
 }
 
 
-inline bool32 mtr_init(memory_area_t *area)
+inline void mtr_init(memory_pool_t* pool)
 {
-    uint32 page_size = DYN_ARRAY_DATA_SIZE * 32; // 16KB
-    uint32 initial_page_count = 0;
-    uint32 local_page_count = 1024 * 1024 / page_size;  // 1MB
-    uint32 max_page_count = MEM_POOL_PAGE_UNLIMITED;  // unlimited
-
-    for (uint32 i = 0; i < MTR_MEM_POOL_COUNT; i++) {
-        mtr_mem_pools[i] = mpool_create(area, initial_page_count, local_page_count, max_page_count, page_size);
-        if (mtr_mem_pools[i] == NULL) {
-            return FALSE;
-        }
-    }
-
-    return TRUE;
+    mtr_memory_pool = pool;
 }
 
-static inline dyn_array_t* dyn_array_create(dyn_array_t *arr, uint64 mem_pool)
+static inline dyn_array_t* dyn_array_create(dyn_array_t* arr, memory_pool_t* mem_pool)
 {
     arr->pool = mem_pool;
 
@@ -112,12 +97,12 @@ static inline byte* dyn_block_get_data(dyn_block_t *block)
 }
 
 //Gets the number of used bytes in a dyn array block.
-inline uint32 dyn_block_get_used(const dyn_block_t *block)
+inline uint32 dyn_block_get_used(const dyn_block_t* block)
 {
     return ((block->used) & ~DYN_BLOCK_FULL_FLAG);
 }
 
-inline void dyn_block_set_used(const dyn_block_t *block, uint32 used)
+inline void dyn_block_set_used(dyn_block_t* block, uint32 used)
 {
     ut_a(used <= DYN_ARRAY_DATA_SIZE);
     if (block->used & DYN_BLOCK_FULL_FLAG) {
@@ -127,7 +112,7 @@ inline void dyn_block_set_used(const dyn_block_t *block, uint32 used)
     }
 }
 
-inline dyn_block_t* dyn_array_add_block(dyn_array_t *arr)
+inline dyn_block_t* dyn_array_add_block(dyn_array_t* arr)
 {
     dyn_block_t *block;
 
@@ -173,13 +158,13 @@ inline dyn_block_t* dyn_array_add_block(dyn_array_t *arr)
 
     // init
     block->used = 0;
-    UT_LIST_ADD_LAST(list_node, arr->used_blocks, block);
     UT_LIST_REMOVE(list_node, arr->free_blocks, block);
+    UT_LIST_ADD_LAST(list_node, arr->used_blocks, block);
 
     return block;
 }
 
-inline void dyn_array_release_block(dyn_array_t *arr, dyn_block_t *block)
+inline void dyn_array_release_block(dyn_array_t* arr, dyn_block_t* block)
 {
     UT_LIST_REMOVE(list_node, arr->used_blocks, block);
     UT_LIST_ADD_LAST(list_node, arr->free_blocks, block);
@@ -190,7 +175,7 @@ inline void dyn_array_release_block(dyn_array_t *arr, dyn_block_t *block)
     }
 }
 
-inline byte* dyn_array_open(dyn_array_t *arr, uint32 size)
+inline byte* dyn_array_open(dyn_array_t* arr, uint32 size)
 {
     dyn_block_t *block;
 
@@ -214,7 +199,7 @@ inline byte* dyn_array_open(dyn_array_t *arr, uint32 size)
     return block->data + block->used;
 }
 
-inline void dyn_array_close(dyn_array_t *arr, byte *ptr)
+inline void dyn_array_close(dyn_array_t* arr, byte* ptr)
 {
     dyn_block_t *block;
 
@@ -231,7 +216,7 @@ inline void dyn_array_close(dyn_array_t *arr, byte *ptr)
     ut_d(arr->buf_end = 0);
 }
 
-inline void* dyn_array_push(dyn_array_t *arr, uint32 size)
+inline void* dyn_array_push(dyn_array_t* arr, uint32 size)
 {
     dyn_block_t *block;
     uint32 used;
@@ -256,7 +241,7 @@ inline void* dyn_array_push(dyn_array_t *arr, uint32 size)
     return block->data + used;
 }
 
-inline void dyn_push_string(dyn_array_t *arr, byte *str, uint32 len)
+inline void dyn_push_string(dyn_array_t* arr, byte* str, uint32 len)
 {
     byte *ptr;
     uint32 n_copied;
@@ -275,7 +260,7 @@ inline void dyn_push_string(dyn_array_t *arr, byte *str, uint32 len)
     }
 }
 
-inline void* dyn_array_get_element(dyn_array_t *arr, uint32 pos)
+inline void* dyn_array_get_element(dyn_array_t* arr, uint32 pos)
 {
     dyn_block_t *block;
     uint32 used;
@@ -301,7 +286,7 @@ inline void* dyn_array_get_element(dyn_array_t *arr, uint32 pos)
     return block->data + pos;
 }
 
-inline uint32 dyn_array_get_data_size(dyn_array_t *arr)
+inline uint32 dyn_array_get_data_size(dyn_array_t* arr)
 {
     dyn_block_t *block;
     uint32 sum = 0;
@@ -320,9 +305,7 @@ inline uint32 dyn_array_get_data_size(dyn_array_t *arr)
 }
 
 // Checks if memo contains the given item.
-inline bool32 mtr_memo_contains(mtr_t *mtr,
-    const void *object, /*!< in: object to search */
-    uint32 type) /*!< in: type of object */
+inline bool32 mtr_memo_contains(mtr_t* mtr, const void* object, uint32 type)
 {
     mtr_memo_slot_t *slot;
     dyn_array_t *memo;
@@ -345,15 +328,14 @@ inline bool32 mtr_memo_contains(mtr_t *mtr,
     return(FALSE);
 }
 
-inline bool32 mtr_memo_contains_page(mtr_t* mtr, /*!< in: mtr */
-    const byte* ptr, /*!< in: pointer to buffer frame */
+inline bool32 mtr_memo_contains_page(mtr_t* mtr, const byte* ptr, /*!< in: pointer to buffer frame */
     uint32 type) /*!< in: type of object */
 {
     return(mtr_memo_contains(mtr, buf_block_align(ptr), type));
 }
 
 // Releases the item in the slot given. */
-static inline void mtr_memo_slot_release(mtr_t *mtr, mtr_memo_slot_t *slot)
+static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
 {
     void *object = slot->object;
     slot->object = NULL;
@@ -374,7 +356,7 @@ static inline void mtr_memo_slot_release(mtr_t *mtr, mtr_memo_slot_t *slot)
         case MTR_MEMO_X_LOCK:
             rw_lock_x_unlock((rw_lock_t*)object);
             break;
-#ifdef UNIV_DEBUG
+#ifdef UNIV_DEBUG1
         default:
             ut_ad(slot->type == MTR_MEMO_MODIFY);
             ut_ad(mtr_memo_contains(mtr, object, MTR_MEMO_PAGE_X_FIX));
@@ -384,7 +366,7 @@ static inline void mtr_memo_slot_release(mtr_t *mtr, mtr_memo_slot_t *slot)
 
 // Checks if a mini-transaction is dirtying a clean page.
 // return TRUE if the mtr is dirtying a clean page.
-static inline bool32 mtr_block_dirtied(const buf_block_t *block)
+static inline bool32 mtr_block_dirtied(const buf_block_t* block)
 {
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
     ut_ad(block->page.buf_fix_count > 0);
@@ -488,7 +470,7 @@ inline bool32 mtr_memo_release(mtr_t* mtr, void* object, uint32 type)
     ut_ad(mtr->magic_n == MTR_MAGIC_N);
     ut_ad(mtr->state == MTR_ACTIVE);
 
-    for (const dyn_block_t* block = dyn_array_get_last_block(&mtr->memo);
+    for (dyn_block_t* block = dyn_array_get_last_block(&mtr->memo);
          block;
          block = dyn_array_get_prev_block(&mtr->memo, block)) {
 
@@ -581,7 +563,7 @@ static inline void mtr_add_dirtied_pages_to_flush_list(mtr_t *mtr)
         offset -= sizeof(mtr_memo_slot_t);
         slot = (mtr_memo_slot_t*)dyn_array_get_element(memo, offset);
 
-        block = (buf_block_t*)slot->object
+        block = (buf_block_t*)slot->object;
         if (block != NULL && (slot->type == MTR_MEMO_PAGE_X_FIX || block->is_resident())) {
             buf_flush_note_modification(block, mtr, flushed_lsn);
         }
@@ -694,7 +676,7 @@ inline byte* mlog_write_initial_log_record_fast(
 
     mtr->n_log_recs++;
 
-#ifdef UNIV_DEBUG
+#ifdef UNIV_DEBUG1
     /* We now assume that all x-latched pages have been modified! */
     if (!mtr_memo_contains(mtr, block, MTR_MEMO_MODIFY)) {
         mtr_memo_push(mtr, block, MTR_MEMO_MODIFY);
@@ -1006,15 +988,8 @@ inline uint32 mtr_read_uint32(
 
 inline mtr_t* mtr_start(mtr_t *mtr)
 {
-    uint64 mem_pool_index;
-    memory_pool_t* mem_pool;
-
-    //mem_pool_index = atomic32_inc(&n_mtr_mem_pools_index);
-    mem_pool_index = (uint64)mtr;
-    mem_pool = mtr_mem_pools[mem_pool_index / MTR_MEM_POOL_COUNT];
-
-    dyn_array_create(&(mtr->memo), mem_pool);
-    dyn_array_create(&(mtr->log), mem_pool);
+    dyn_array_create(&(mtr->memo), mtr_memory_pool);
+    dyn_array_create(&(mtr->log), mtr_memory_pool);
 
     mtr->log_mode = MTR_LOG_ALL;
     mtr->modifications = FALSE;

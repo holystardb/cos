@@ -28,15 +28,33 @@
 
 int main(int argc, const char *argv[])
 {
+    char base_dir[1024];
+    attribute_t* attr;
+
+    // 1. base dir
+    strncpy_s(base_dir, 1024, "D:\\MyWork\\cos", strlen("D:\\MyWork\\cos"));
+
+    // 2. 
     os_file_init(); // only for windows platform
 
+    // 3. log
     char *log_path = "D:\\MyWork\\cos\\data\\";
-    LOGGER.log_init(LOG_INFO, log_path, "initdb");
+    LOGGER.log_init(LOG_DEBUG, log_path, "initdb");
 
+    // 4. err message
+    if (!error_message_init("D:\\MyWork\\cos\\share\\english\\errmsg.txt")) {
+        LOGGER_ERROR(LOGGER, "Failed to init error messages, Service exited");
+        return 1;
+    }
+
+    // 5. guc
+    char *config_file = "D:\\MyWork\\cos\\etc\\server.ini";
+    attr = initialize_guc_options(config_file);
+
+    
     srv_buf_pool_size = 100 * 1024 * 1024; // 100MB
     srv_buf_pool_instances = 1;
-
-    srv_data_home = "D:\\MyWork\\cos\\data";
+        
 
     srv_system_file_size = 4 * 1024 * 1024;
     srv_system_file_max_size = 100 * 1024 * 1024;
@@ -85,7 +103,7 @@ int main(int argc, const char *argv[])
         srv_temp_file_size, srv_temp_file_max_size, TRUE);
 
 
-    knl_server_init_db(marea);
+    server_open_or_create_database(base_dir, &g_attribute);
 
 #if 0
     bool32 create_new_db = TRUE;

@@ -72,6 +72,7 @@ typedef byte fseg_inode_t;
 
 #define FSEG_INODE_PAGE_NODE    FSEG_PAGE_DATA /* the list node for linking segment inode pages */
 #define FSEG_ARR_OFFSET         (FSEG_PAGE_DATA + FLST_NODE_SIZE)
+
 /*-------------------------------------*/
 #define FSEG_ID                 0   /* 8 bytes of segment id: if this is ut_dulint_zero,
                                        it means that the header is unused */
@@ -207,6 +208,23 @@ typedef byte fseg_header_t;
 #define FSP_DOUBLE_WRITE_PAGE_COUNT 64 // 1MB
 
 
+
+
+extern inline uint32 xdes_get_offset(const xdes_t* descr);
+extern inline void xdes_set_bit(
+    xdes_t  *descr,  /*!< in: descriptor */
+    uint32   bit,    /*!< in: XDES_FREE_BIT or XDES_CLEAN_BIT */
+    uint32   offset, /*!< in: page offset within extent: 0 ... FSP_EXTENT_SIZE - 1 */
+    bool32   val,    /*!< in: bit value */
+    mtr_t   *mtr);   /*!< in/out: mini-transaction */
+
+
+
+
+
+
+
+
 // Check if the space_id is for a system-tablespace (shared + temp).
 //inline bool32 is_system_tablespace(uint32 id)
 //{
@@ -221,7 +239,7 @@ typedef byte fseg_header_t;
 
 
 // Check if tablespace is dd tablespace.
-inline bool32 fsp_is_dd_tablespace(space_id_t space_id)
+extern inline bool32 fsp_is_dd_tablespace(space_id_t space_id)
 {
     //return (space_id == dict_sys_t::s_space_id);
     return FALSE;
@@ -233,7 +251,7 @@ inline bool32 fsp_is_dd_tablespace(space_id_t space_id)
    undo_space_num values start at 1.  The current limit is 127.
    The translation from an undo_space_num is: undo space_id = log_first_space_id - undo_space_num
 */
-inline bool32 fsp_is_undo_tablespace(space_id_t space_id)
+extern inline bool32 fsp_is_undo_tablespace(space_id_t space_id)
 {
   /* Starting with v8, undo space_ids have a unique range. */
   //if (space_id >= UNDO_SPACE_MIN_ID && space_id <= UNDO_SPACE_MAX_ID) {
@@ -250,21 +268,21 @@ inline bool32 fsp_is_undo_tablespace(space_id_t space_id)
 }
 
 // Check if tablespace is global temporary.
-inline bool32 fsp_is_global_temporary(space_id_t space_id)
+extern inline bool32 fsp_is_global_temporary(space_id_t space_id)
 {
     //return (space_id == srv_tmp_space.space_id());
     return false;
 }
 
 // Check if the tablespace is session temporary.
-inline bool32 fsp_is_session_temporary(space_id_t space_id)
+extern inline bool32 fsp_is_session_temporary(space_id_t space_id)
 {
     //return (space_id > TEMP_SPACE_MIN_ID && space_id <= TEMP_SPACE_MAX_ID);
     return FALSE;
 }
 
 // Check if tablespace is system temporary.
-inline bool32 fsp_is_system_temporary(space_id_t space_id)
+extern inline bool32 fsp_is_system_temporary(space_id_t space_id)
 {
     return (fsp_is_global_temporary(space_id) || fsp_is_session_temporary(space_id));
 }
@@ -272,9 +290,12 @@ inline bool32 fsp_is_system_temporary(space_id_t space_id)
 
 //-----------------------------------------------------------------------------------------------------
 
-extern byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
+extern byte* fut_get_ptr(space_id_t space, const page_size_t &page_size,
                   fil_addr_t addr, rw_lock_type_t rw_latch, mtr_t *mtr,
                   buf_block_t **ptr_block);
+
+extern buf_block_t* fsp_page_create(uint32 space_id, uint32 page_no, mtr_t* mtr, mtr_t* init_mtr);
+
 
 extern bool32 fsp_is_system_temporary(space_id_t space_id);
 extern fsp_header_t* fsp_get_space_header(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);
@@ -306,9 +327,8 @@ extern void fseg_free_page(uint32 space_id, fseg_inode_t* inode, uint32 page_no,
 extern xdes_t* fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, mtr_t* mtr);
 
 // Allocates free extents from table space
-extern bool32 fseg_reserve_free_extents(uint32 space_id, fseg_inode_t* inode, uint32 count, mtr_t* mtr);
+extern xdes_t* fseg_reserve_free_extents(uint32 space_id, fseg_inode_t* inode, uint32 count, mtr_t* mtr);
 
-extern inline uint32 fseg_get_reserved_pages(fseg_inode_t* inode, uint32* used, mtr_t* mtr);
 
 #ifdef __cplusplus
 }

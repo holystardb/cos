@@ -6,7 +6,7 @@ extern "C" {
 
 #define MAX_LINE_LENGTH    1024
 
-int read_line(FILE *fp, char *bp)
+static int read_line(FILE *fp, char *bp)
 {
     char c = '\0';
     int i = 0;
@@ -41,6 +41,15 @@ int read_line(FILE *fp, char *bp)
     return(1);
 }
 
+static bool32 char_is_space_or_tab(char ch)
+{
+    if (ch == 0x09 /*tab*/ || ch == 0x20 /*space*/) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 /************************************************************************
 * Function:     Get_private_profile_int()
 * Arguments:    <char *> section - the name of the section to search for
@@ -64,68 +73,53 @@ int get_private_profile_int(const char *section, const char *entry, int def, cha
     bool32 b_IsNegative = FALSE;
 
     err = fopen_s(&fp, file_name, "r");
-    if (err != 0)
-    {
+    if (err != 0) {
         return(0);
     }
     sprintf_s(t_section, MAX_LINE_LENGTH, "[%s]", section); /* Format the section name */
     /*  Move through file 1 line at a time until a section is matched or EOF */
-    do
-    {
-        if (!read_line(fp, buff))
-        {
+    do {
+        if (!read_line(fp, buff)) {
             fclose(fp);
             return(def);
         }
-    }while (strcmp(buff, t_section));
+    } while (strcmp(buff, t_section));
     /* Now that the section has been found, find the entry.
      * Stop searching upon leaving the section's area. */
-    do
-    {
-        if (!read_line(fp, buff) || buff[0] == '[') //130516 Willy modify '\0' to '[' for parser ini bug.
-        {
+    do {
+        if (!read_line(fp, buff) || buff[0] == '[') { //130516 Willy modify '\0' to '[' for parser ini bug.
             fclose(fp);
             return(def);
         }
-    }while (strncmp(buff, entry, len));
+    } while (strncmp(buff, entry, len));
     
     ep = strrchr(buff, '=');   /* Parse out the equal sign */
     ep++;
-    if (!strlen(ep))           /* No setting? */
-    {
+    if (!strlen(ep)) { /* No setting? */
         return(def);
     }
-    while (ep[0] == ' ' && strlen(ep) > 0)
-    {
+    while (char_is_space_or_tab(ep[0]) && strlen(ep) > 0) {
         ep++;
     }
     /* Copy only numbers fail on characters */
     //To support negative number convert
-    if (ep[0] == '-')
-    {
+    if (ep[0] == '-') {
         b_IsNegative = TRUE;
-        for (i = 1; isdigit(ep[i]); i++)
-        {
+        for (i = 1; isdigit(ep[i]); i++) {
             value[i - 1] = ep[i];
         }
         value[--i] = '\0';
-    }
-    else
-    {
-        for (i = 0; isdigit(ep[i]); i++)
-        {
+    } else {
+        for (i = 0; isdigit(ep[i]); i++) {
             value[i] = ep[i];
         }
         value[i] = '\0';
     }
     fclose(fp);                /* Clean up and return the value */
     //To support negative number convert
-    if (b_IsNegative)
-    {
+    if (b_IsNegative) {
         return (0 - atoi(value));
-    }
-    else  
-    {
+    } else {
         return(atoi(value));
     }
 }
@@ -142,44 +136,36 @@ unsigned long long get_private_profile_longlong(const char *section, const char 
     int i;
 
     err = fopen_s(&fp, file_name, "r");
-    if (err != 0)
-    {
+    if (err != 0) {
         return(0);
     }
     sprintf_s(t_section, MAX_LINE_LENGTH, "[%s]", section); /* Format the section name */
     /*  Move through file 1 line at a time until a section is matched or EOF */
-    do
-    {
-        if (!read_line(fp, buff))
-        {
+    do {
+        if (!read_line(fp, buff)) {
             fclose(fp);
             return(def);
         }
-    }while (strcmp(buff, t_section));
+    } while (strcmp(buff, t_section));
     /* Now that the section has been found, find the entry.
      * Stop searching upon leaving the section's area. */
-    do
-    {
-        if (!read_line(fp, buff) || buff[0] == '[') //130516 Willy modify '\0' to '[' for parser ini bug.
-        {
+    do {
+        if (!read_line(fp, buff) || buff[0] == '[') { //130516 Willy modify '\0' to '[' for parser ini bug.
             fclose(fp);
             return(def);
         }
-    }while (strncmp(buff, entry, len));
+    } while (strncmp(buff, entry, len));
     
     ep = strrchr(buff, '=');   /* Parse out the equal sign */
     ep++;
-    if (!strlen(ep))           /* No setting? */
-    {
+    if (!strlen(ep)) {         /* No setting? */
         return(def);
     }
-    while (ep[0] == ' ' && strlen(ep) > 0)
-    {
+    while (char_is_space_or_tab(ep[0]) && strlen(ep) > 0) {
         ep++;
     }
     /* Copy only numbers fail on characters */
-    for (i = 0; isdigit(ep[i]); i++)
-    {
+    for (i = 0; isdigit(ep[i]); i++) {
         value[i] = ep[i];
     }
     value[i] = '\0';
@@ -207,52 +193,43 @@ int get_private_profile_string(const char *section, const char *entry, const cha
     size_t len = strlen(entry), i;
 
     err = fopen_s(&fp, file_name, "r");
-    if (err != 0)
-    {
+    if (err != 0) {
         return(0);
     }
     sprintf_s(t_section, MAX_LINE_LENGTH, "[%s]", section);  /* Format the section name */
     /*  Move through file 1 line at a time until a section is matched or EOF */
-    do
-    {
-        if (!read_line(fp, buff))
-        {
+    do {
+        if (!read_line(fp, buff)) {
             strncpy_s(buffer, buffer_len, def, buffer_len);
             return (int)strlen(buffer);
         }
-    }while (strcmp(buff, t_section));
+    } while (strcmp(buff, t_section));
     /* Now that the section has been found, find the entry.
      * Stop searching upon leaving the section's area. */
-    do
-    {
-        if (!read_line(fp, buff) || buff[0] == '[') //130516 Willy modify '\0' to '[' for parser ini bug.
-        {
+    do {
+        if (!read_line(fp, buff) || buff[0] == '[') { //130516 Willy modify '\0' to '[' for parser ini bug.
             fclose(fp);
             strncpy_s(buffer, buffer_len, def, buffer_len);
             return (int)strlen(buffer);
         }
-    }while (strncmp(buff, entry, len));
+    } while (strncmp(buff, entry, len));
 
     ep = strrchr(buff, '=');   /* Parse out the equal sign */
-    do
-    {
+    do {
         ep++;
-    }while(!strncmp(ep, " ", 1));   //Remove the blank space
+    } while(!strncmp(ep, " ", 1));   //Remove the blank space
 
     /* Copy up to buffer_len chars to buffer */
     len = (int)strlen(ep);
-    for (i = 0; i < len; i++)
-    {
-        if (ep[i] == '#')
-        {
+    for (i = 0; i < len; i++) {
+        if (ep[i] == '#') {
             ep[i] = '\0';
             len = i;
             break;
         }
     }
     if (len > 0) {
-        for (i = len - 1; i >= 0; i--)
-        {
+        for (i = len - 1; i >= 0; i--) {
             if (ep[i] != ' ') {
                 break;
             }
@@ -306,11 +283,9 @@ int write_private_profile_string(const char *section, const char *entry, char *b
     sprintf_s(t_section, MAX_LINE_LENGTH, "[%s]", section); /* Format the section name */
 
     err = fopen_s(&rfp, file_name, "r");
-    if (err == 0)  /* If the .ini file doesn't exist */
-    {
+    if (err == 0) { /* If the .ini file doesn't exist */
         err = fopen_s(&wfp, file_name, "w");
-        if (err != 0) /*  then make one */
-        {
+        if (err != 0) { /*  then make one */
             return(0);
         }
         fprintf(wfp, "%s\n", t_section);
@@ -320,18 +295,15 @@ int write_private_profile_string(const char *section, const char *entry, char *b
     }
 
     err = fopen_s(&wfp, tmp_name, "w");
-    if (err != 0)
-    {
+    if (err != 0) {
         fclose(rfp);
         return(0);
     }
 
     /* Move through the file one line at a time until a section is
      * matched or until EOF. Copy to temp file as it is read. */
-    do
-    {
-        if (!read_line(rfp, buff))
-        {
+    do {
+        if (!read_line(rfp, buff)) {
             /* Failed to find section, so add one to the end */
             fprintf(wfp, "\n%s\n", t_section);
             fprintf(wfp, "%s=%s\n", entry, buffer);
@@ -343,15 +315,13 @@ int write_private_profile_string(const char *section, const char *entry, char *b
             return(1);
         }
         fprintf(wfp, "%s\n", buff);
-    }while (strcmp(buff, t_section));
+    } while (strcmp(buff, t_section));
 
     /* Now that the section has been found, find the entry. Stop searching
      * upon leaving the section's area. Copy the file as it is read
      * and create an entry if one is not found.  */
-    while (1)
-    {
-        if (!read_line(rfp, buff))
-        {
+    while (1) {
+        if (!read_line(rfp, buff)) {
             /* EOF without an entry so make one */
             fprintf(wfp, "%s=%s\n", entry, buffer);
             /* Clean up and rename */
@@ -362,27 +332,21 @@ int write_private_profile_string(const char *section, const char *entry, char *b
             return(1);
 
         }
-        if (!strncmp(buff, entry, len) || buff[0] == '\0')
-        {
+        if (!strncmp(buff, entry, len) || buff[0] == '\0') {
             break;
         }
         fprintf(wfp, "%s\n", buff);
     }
 
-    if (buff[0] == '\0')
-    {
+    if (buff[0] == '\0') {
         fprintf(wfp, "%s=%s\n", entry, buffer);
-        do
-        {
+        do {
             fprintf(wfp, "%s\n", buff);
         }
         while (read_line(rfp, buff));
-    }
-    else
-    {
+    } else {
         fprintf(wfp, "%s=%s\n", entry, buffer);
-        while (read_line(rfp, buff))
-        {
+        while (read_line(rfp, buff)) {
             fprintf(wfp, "%s\n", buff);
         }
     }
@@ -438,8 +402,7 @@ config_lines* read_lines_from_config_file(char *config_file)
         }
 
         ep = buff;
-        while (ep[0] == ' ' && strlen(ep) > 0)
-        {
+        while (char_is_space_or_tab(ep[0]) && strlen(ep) > 0) {
             ep++;
         }
 
@@ -470,7 +433,7 @@ bool32 parse_key_value_from_config_line(char *line, char **section, char **key, 
         return false;
     }
 
-    while (line[0] == ' ' && strlen(line) > 0) {
+    while (char_is_space_or_tab(line[0]) && strlen(line) > 0) {
         line++;
     }
 
@@ -494,7 +457,7 @@ bool32 parse_key_value_from_config_line(char *line, char **section, char **key, 
             end = line + strlen(line);
         }
         end--;
-        while (end[0] == ' ' && end > tmp_key) {
+        while (char_is_space_or_tab(end[0]) && end > tmp_key) {
             end[0] = '\0';
             end--;
         }
@@ -503,14 +466,14 @@ bool32 parse_key_value_from_config_line(char *line, char **section, char **key, 
     }
 
     end--;
-    while (end[0] == ' ' && end > tmp_key) {
+    while (char_is_space_or_tab(end[0]) && end > tmp_key) {
         end[0] = '\0';
         end--;
     }
 
     tmp_value[0] = '\0';
     tmp_value++;
-    while (tmp_value[0] == ' ' && strlen(tmp_value) > 0) {
+    while (char_is_space_or_tab(tmp_value[0]) && strlen(tmp_value) > 0) {
         tmp_value++;
     }
 
@@ -518,7 +481,7 @@ bool32 parse_key_value_from_config_line(char *line, char **section, char **key, 
     while ((end[0] != '#' && end[0] != ' ') && strlen(end) > 0) {
         end++;
     }
-    if (end - tmp_value < strlen(tmp_value)) {
+    if ((size_t)(end - tmp_value) < strlen(tmp_value)) {
         end[0] = '\0';
     }
 

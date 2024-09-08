@@ -40,7 +40,7 @@ public:
     /** Copy the values from a given page_id_t object.
     @param[in]    src page id object whose values to fetch */
     inline void copy_from(const page_id_t &src) {
-        m_space = src.space();
+        m_space = src.space_id();
         m_page_no = src.page_no();
         m_fold = src.fold();
     }
@@ -56,7 +56,7 @@ public:
 
     /** Reset the page number only.
     @param[in]    page_no page number */
-    inline void set_page_no(page_no_t page_no) {
+    void set_page_no(page_no_t page_no) {
         m_page_no = page_no;
         m_fold = UINT32_UNDEFINED;
     }
@@ -65,7 +65,7 @@ public:
     @param[in]    a   page_id_t object to compare
     @return true if equal */
     inline bool equals_to(const page_id_t &a) const {
-        return (a.space() == m_space && a.page_no() == m_page_no);
+        return (a.space_id() == m_space && a.page_no() == m_page_no);
     }
 
 private:

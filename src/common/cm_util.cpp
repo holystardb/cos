@@ -2,6 +2,12 @@
 #include "cm_dbug.h"
 
 
+
+duint64 ut_duint64_zero = {0, 0};
+duint64 ut_duint64_max = {0xFFFFFFFF, 0xFFFFFFFF};
+
+
+
 /***********************************************************************************************
 *                                      math or compare                                         *
 ***********************************************************************************************/
@@ -452,7 +458,7 @@ inline void mach_write_to_7(unsigned char* b, uint64 n)
 
 inline uint64 mach_read_from_7(const unsigned char* b)
 {
-    return (ut_ull_create(mach_read_from_3(b), mach_read_from_4(b + 3)));
+    return ((uint64)mach_read_from_3(b)) << 32 | mach_read_from_4(b + 3);
 }
 
 inline void mach_write_to_6(unsigned char* b, uint64 n)
@@ -463,7 +469,7 @@ inline void mach_write_to_6(unsigned char* b, uint64 n)
 
 inline uint64 mach_read_from_6(const unsigned char* b)
 {
-    return (ut_ull_create(mach_read_from_2(b), mach_read_from_4(b + 2)));
+    return ((uint64)mach_read_from_2(b)) << 32 | mach_read_from_4(b + 2);
 }
 
 inline uint32 mach_ull_write_compressed(unsigned char* b, uint64 n)
@@ -709,12 +715,87 @@ inline void mach_swap_byte_order(
         }
 }
 
-inline uint64 ut_ull_create(
-	uint32	high,	/*!< in: high-order 32 bits */
-	uint32	low)	/*!< in: low-order 32 bits */
+inline duint64 ut_ull_create(
+    uint32 high, // in: high-order 32 bits
+    uint32 low)  // in: low-order 32 bits
 {
-	return(((uint64) high) << 32 | low);
+    duint64 res;
+
+    ut_ad(high <= 0xFFFFFFFF);
+    ut_ad(low <= 0xFFFFFFFF);
+
+    res.high = high;
+    res.low  = low;
+
+    return res;
 }
 
+// out: -1 if a < b, 0 if a == b, 1 if a > b
+inline int ut_duint64_cmp(duint64 a, duint64 b)
+{
+    if (a.high > b.high) {
+        return(1);
+    } else if (a.high < b.high) {
+        return(-1);
+    } else if (a.low > b.low) {
+        return(1);
+    } else if (a.low < b.low) {
+        return(-1);
+    } else {
+        return(0);
+    }
+}
 
+// Calculates the max of two dulints
+// out: max(a, b)
+inline duint64 ut_duint64_get_max(duint64 a, duint64 b)
+{
+    if (ut_duint64_cmp(a, b) > 0) {
+        return(a);
+    }
+    return(b);
+}
+
+// Calculates the min of two dulints
+// out: min(a, b)
+inline duint64 ut_duint64_get_min(duint64 a, duint64 b)
+{
+    if (ut_duint64_cmp(a, b) > 0) {
+        return(b);
+    }
+
+    return(a);
+}
+
+// Adds a uint32 to a duint64
+// out: sum a + b
+inline duint64 ut_duint64_add(duint64 a, uint32 b)
+{
+    if (0xFFFFFFFF - b >= a.low) {
+        a.low += b;
+        return(a);
+    }
+
+    a.low = a.low - (0xFFFFFFFF - b) - 1;
+    a.high++;
+
+    return(a);
+}
+
+// Subtracts a uint32 from a duint64
+// out: a - b
+inline duint64 ut_duint64_subtract(duint64 a, uint32 b)
+{
+    if (a.low >= b) {
+        a.low -= b;
+        return(a);
+    }
+
+    b -= a.low + 1;
+    a.low = 0xFFFFFFFF - b;
+    ut_ad(a.high > 0);
+    a.high--;
+
+    return(a);
+}
 

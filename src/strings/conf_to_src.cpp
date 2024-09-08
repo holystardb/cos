@@ -33,7 +33,7 @@
 #define ROW16_LEN   8
 #define MAX_BUF     64*1024
 
-static CHARSET_INFO all_charsets[512];
+static CHARSET_INFO all_charsets[MY_ALL_CHARSETS_SIZE];
 
 
 void

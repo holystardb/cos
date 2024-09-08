@@ -1,4 +1,10 @@
 #include "knl_heap_fsm.h"
+#include "cm_log.h"
+#include "knl_buf.h"
+#include "knl_flst.h"
+#include "knl_page.h"
+#include "knl_fsp.h"
+#include "knl_heap.h"
 
 #define FSM_CATEGORIES       127
 
@@ -20,7 +26,7 @@
 #define fsm_get_node_page_no(fsm_nodes, node_no)            \
     mach_read_from_4(fsm_nodes + FSM_NODES_PAGES + node_no * FSM_NODE_PAGE_NO_SIZE)
 
-#define fsm_get_nodes(page)    (FSM_NODES + page)
+#define fsm_get_nodes(page)    (page + FSM_NODES)
 
 
 /* Macros to navigate the tree within a page. Root has index zero. */
@@ -56,7 +62,7 @@ static bool32 fsm_set_avail(buf_block_t* block, int32 slot, uint8 value, bool32*
 {
     uint8 old_value;
     int32 node_no = FSM_NON_LEAF_NODES_PER_PAGE + slot;
-    heap_fsm_nodes_t fsm_nodes = fsm_get_nodes(buf_block_get_frame(block));
+    heap_fsm_nodes_t* fsm_nodes = fsm_get_nodes(buf_block_get_frame(block));
 
     ut_ad(slot < FSM_LEAF_NODES_PER_PAGE);
 
@@ -107,9 +113,9 @@ static bool32 fsm_set_avail(buf_block_t* block, int32 slot, uint8 value, bool32*
 
 // Returns the value of given slot on page.
 // Since this is just a read-only access of a single byte, the page doesn't need to be locked.
-static inline uint8 fsm_get_avail(page_t page, int32 slot)
+static inline uint8 fsm_get_avail(page_t* page, int32 slot)
 {
-    heap_fsm_nodes_t fsm_nodes = fsm_get_nodes(page);
+    heap_fsm_nodes_t* fsm_nodes = fsm_get_nodes(page);
 
     ut_ad(slot < FSM_LEAF_NODES_PER_PAGE);
 
@@ -118,9 +124,9 @@ static inline uint8 fsm_get_avail(page_t page, int32 slot)
 
 // Returns the value at the root of a page.
 // Since this is just a read-only access of a single byte, the page doesn't need to be locked.
-static inline uint8 fsm_get_max_avail(page_t page)
+static inline uint8 fsm_get_max_avail(page_t* page)
 {
-    heap_fsm_nodes_t fsm_nodes = fsm_get_nodes(page);
+    heap_fsm_nodes_t* fsm_nodes = fsm_get_nodes(page);
 
     return fsm_get_node_value(fsm_nodes, 0);
 }
@@ -207,11 +213,11 @@ static int32 fsm_search_avail(buf_block_t* block, uint8 min_value)
 
 // Sets the available space to zero for all slots numbered >= nslots.
 // Returns true if the page was modified.
-bool32 fsm_truncate_avail(page_t page, int32 nslots)
+bool32 fsm_truncate_avail(page_t* page, int32 nslots)
 {
     mtr_t mtr;
     bool32 changed = FALSE;
-    heap_fsm_nodes_t fsm_nodes = fsm_get_nodes(page);
+    heap_fsm_nodes_t* fsm_nodes = fsm_get_nodes(page);
 
     ut_ad(nslots >= 0 && nslots < FSM_LEAF_NODES_PER_PAGE);
 
@@ -237,9 +243,9 @@ bool32 fsm_truncate_avail(page_t page, int32 nslots)
 
 // Reconstructs the upper levels of a page.
 // Returns true if the page was modified.
-bool32 fsm_rebuild_page(page_t page, mtr_t* mtr)
+bool32 fsm_rebuild_page(page_t* page, mtr_t* mtr)
 {
-    heap_fsm_nodes_t fsm_nodes = fsm_get_nodes(page);
+    heap_fsm_nodes_t* fsm_nodes = fsm_get_nodes(page);
     bool32 changed = FALSE;
     int32 node_no;
 
@@ -273,7 +279,7 @@ static inline page_no_t fsm_get_child(buf_block_t* block, int32 slot)
     ut_ad(slot >= 0);
 
     heap_fsm_nodes_t* nodes = fsm_get_nodes(buf_block_get_frame(block));
-    return mach_read_from_4(nodes + FSM_NODES_PAGES + slot * FSM_NODE_PAGE_NO_SIZE)
+    return mach_read_from_4(nodes + FSM_NODES_PAGES + slot * FSM_NODE_PAGE_NO_SIZE);
 }
 
 // Return the heap block number corresponding to given location in the FSM.
@@ -282,7 +288,7 @@ static inline page_no_t fsm_get_heap_page_no(buf_block_t* block, int32 slot)
     ut_ad(slot >= 0);
 
     heap_fsm_nodes_t* nodes = fsm_get_nodes(buf_block_get_frame(block));
-    return mach_read_from_4(nodes + FSM_NODES_PAGES + slot * FSM_NODE_PAGE_NO_SIZE)
+    return mach_read_from_4(nodes + FSM_NODES_PAGES + slot * FSM_NODE_PAGE_NO_SIZE);
 }
 
 inline uint8 fsm_get_needed_to_category(dict_table_t* table, uint32 size)
@@ -332,7 +338,7 @@ inline uint8 fsm_space_avail_to_category(dict_table_t* table, uint32 avail)
 // Set value in given FSM page and slot
 void fsm_recursive_set_catagory(dict_table_t* table, fsm_search_path_t& search_path, uint8 value, mtr_t* mtr)
 {
-    const page_id_t page_id(table->space_id, search_path.nodes[0].page_no);
+    page_id_t page_id(table->space_id, search_path.nodes[0].page_no);
     const page_size_t page_size(0);
 
     for (uint32 i  = 0; i < FSM_PATH_LEVEL_COUNT; i++) {
@@ -343,7 +349,7 @@ void fsm_recursive_set_catagory(dict_table_t* table, fsm_search_path_t& search_p
         //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
         bool32 is_modify_root = FALSE;
-        if (!fsm_set_avail(block, search_path.nodes[i].page_slot, value, &is_modify_root, mtr)) {
+        if (!fsm_set_avail(block, search_path.nodes[i].page_slot_in_upper_level, value, &is_modify_root, mtr)) {
             break;
         }
         if (!is_modify_root) {
@@ -395,7 +401,7 @@ static bool32 fsm_extend_table_segment(dict_table_t* table)
     uint32 used = mach_read_from_4(fsm_header + FSM_HEAP_PAGE_COUNT);
     uint32 page_count;
     if (used < FSP_EXTENT_SIZE) {
-        page_count = 8
+        page_count = 8;
     } else if (used < FSP_EXTENT_SIZE * 128) {
         page_count = FSP_EXTENT_SIZE;
     } else if (used < FSP_EXTENT_SIZE * 1024) {
@@ -409,7 +415,7 @@ static bool32 fsm_extend_table_segment(dict_table_t* table)
     mtr_commit(&mtr);
 
     if (!ret) {
-        LOG_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER,
             "failed to extend segment of table, space id %u table name %s extend page count %u",
             table->space_id, table->name, page_count);
     }
@@ -426,7 +432,7 @@ static bool32 fsm_extend_table_segment(dict_table_t* table)
 page_no_t fsm_search_free_page(dict_table_t* table, uint8 min_category, fsm_search_path_t& search_path)
 {
     int restarts = 0;
-    const page_id_t page_id(table->space_id, table->entry_page_no);
+    page_id_t page_id(table->space_id, table->entry_page_no);
     const page_size_t page_size(0);
     mtr_t mtr;
     page_no_t page_no;
@@ -444,11 +450,11 @@ page_no_t fsm_search_free_page(dict_table_t* table, uint8 min_category, fsm_sear
         ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
         //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
-        buf_block_lock(block, RW_S_LATCH);
+        buf_block_lock(block, RW_S_LATCH, &mtr);
 
         // Search within the page
         int32 slot = fsm_search_avail(block, min_category);
-        search_path.nodes[level].page_slot = slot;
+        search_path.nodes[level].page_slot_in_upper_level = slot;
 
         if (slot != FSM_INVALID_SLOT) {
             // Descend the tree, or return the found block if we're at the bottom.
@@ -460,7 +466,7 @@ page_no_t fsm_search_free_page(dict_table_t* table, uint8 min_category, fsm_sear
             level--;
             search_path.nodes[level].page_no = fsm_get_child(block, slot);
 
-            buf_block_unlock(block, RW_S_LATCH);
+            buf_block_unlock(block, RW_S_LATCH, &mtr);
         } else if (level == FSM_PATH_MAX_LEVEL) {
             // At the root, there's no page with enough free space in the FSM.
             mtr_commit(&mtr);
@@ -511,7 +517,7 @@ static buf_block_t* fsm_get_right_page(uint32 space_id, page_t* page, mtr_t* mtr
 }
 
 
-static page_t* fsm_get_map_page_with_x_latch(uint32 space_id, uint32 page_no, mtr_t* mtr)
+static buf_block_t* fsm_get_map_page_with_x_latch(uint32 space_id, uint32 page_no, mtr_t* mtr)
 {
     const page_id_t page_id(space_id, page_no);
     const page_size_t page_size(0);
@@ -520,10 +526,10 @@ static page_t* fsm_get_map_page_with_x_latch(uint32 space_id, uint32 page_no, mt
     ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
     //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
-    return buf_block_get_frame(block);
+    return block;
 }
 
-static buf_block_t* fsm_get_last_map_page(fsm_search_path_t& search_path, mtr_t* mtr)
+static buf_block_t* fsm_get_last_leaf_map_page(fsm_search_path_t& search_path, mtr_t* mtr)
 {
     const page_size_t page_size(0);
     buf_block_t* block = NULL;
@@ -542,7 +548,7 @@ static buf_block_t* fsm_get_last_map_page(fsm_search_path_t& search_path, mtr_t*
 
         uint32 right_page_no = mach_read_from_4(page + FIL_PAGE_NEXT);
         if (right_page_no != FIL_NULL) {
-            mtr_memo_release(mtr, block, FSM_IS_LEAF_PAGE(level) ? RW_X_LATCH : RW_S_LATCH);
+            buf_block_unlock(block, FSM_IS_LEAF_PAGE(level) ? RW_X_LATCH : RW_S_LATCH, mtr);
             search_path.nodes[level].page_no = right_page_no;
             continue;
         }
@@ -551,14 +557,16 @@ static buf_block_t* fsm_get_last_map_page(fsm_search_path_t& search_path, mtr_t*
             break;
         }
 
-        heap_fsm_nodes_t* nodes = FSM_NODES + page;
+        heap_fsm_nodes_t* fsm_nodes = FSM_NODES + page;
 
         level--;
-        search_path.nodes[level].page_slot = mach_read_from_4(nodes + FSM_NODES_PAGE_COUNT);
+        search_path.nodes[level].page_slot_in_upper_level = mach_read_from_4(fsm_nodes + FSM_NODES_PAGE_COUNT);
+        ut_ad(search_path.nodes[level].page_slot_in_upper_level > 0);
         search_path.nodes[level].page_no =
-            mach_read_from_4(page + FSM_NODES_PAGES + search_path.nodes[level].page_slot * FSM_NODE_PAGE_NO_SIZE);
+            mach_read_from_4(fsm_nodes + FSM_NODES_PAGES + (search_path.nodes[level].page_slot_in_upper_level - 1) * FSM_NODE_PAGE_NO_SIZE);
 
-        mtr_memo_release(mtr, block, RW_S_LATCH);
+        // non-leaf page, it must be S-LATCH
+        buf_block_unlock(block, RW_S_LATCH, mtr);
     }
 
     return block;
@@ -622,10 +630,37 @@ static void fsm_add_free_heap_page_to_fseg(    page_t*     root_map_page, uint32
     mlog_write_uint32(fsm_header + FSM_HEAP_PAGE_COUNT, page_count + 1, MLOG_4BYTES, mtr);
 }
 
-static inline void fsm_append_last_map_page(buf_block_t* block, buf_block_t* new_block,, mtr_t* mtr)
+static inline void fsm_append_last_map_page(buf_block_t* block, buf_block_t* new_block, mtr_t* mtr)
 {
     mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_NEXT, new_block->get_page_no(), MLOG_4BYTES, mtr);
     mlog_write_uint32(buf_block_get_frame(new_block) + FIL_PAGE_PREV, block->get_page_no(), MLOG_4BYTES, mtr);
+}
+
+static inline void fsm_page_init(buf_block_t* block, mtr_t* mtr)
+{
+    page_t* page = buf_block_get_frame(block);
+
+    // 1.
+
+    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_HEAP_FSM, MLOG_2BYTES, mtr);
+
+    // 2.
+
+    heap_fsm_header_t* header = FSM_HEADER + page;
+
+    //mlog_write_uint32(header + FSM_LEVEL0_FIRST_PAGE, leaf_map_block->get_page_no(), MLOG_4BYTES, &mtr);
+    //mlog_write_uint32(header + FSM_LEVEL1_FIRST_PAGE, non_leaf_map_block->get_page_no(), MLOG_4BYTES, &mtr);
+    //mlog_write_uint32(header + FSM_LEVEL2_FIRST_PAGE, root_map_block->get_page_no(), MLOG_4BYTES, &mtr);
+    mlog_write_uint32(header + FSM_HEAP_FIRST_PAGE, FIL_NULL, MLOG_4BYTES, mtr);
+    mlog_write_uint32(header + FSM_HEAP_LAST_PAGE, FIL_NULL, MLOG_4BYTES, mtr);
+    mlog_write_uint32(header + FSM_HEAP_PAGE_COUNT, 0, MLOG_4BYTES, mtr);
+
+    flst_init(header + FSM_FSEG_FREE, mtr);
+    flst_init(header + FSM_FSEG_NOT_FULL, mtr);
+    flst_init(header + FSM_FSEG_FULL, mtr);
+    for (uint32 i = 0; i < FSP_EXTENT_SIZE; i++) {
+        mlog_write_uint32(header + FSM_FSEG_FRAG_ARR, FIL_NULL, MLOG_4BYTES, mtr);
+    }
 }
 
 static inline uint32 fsm_get_nodes_page_count(buf_block_t* block)
@@ -637,15 +672,17 @@ static inline uint32 fsm_get_nodes_page_count(buf_block_t* block)
     return mach_read_from_4(page + FSM_NODES + FSM_NODES_PAGE_COUNT);
 }
 
+// 
 bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, mtr_t* mtr)
 {
     fsm_search_path_t search_path;
     search_path.space_id = space_id;
     search_path.nodes[FSM_PATH_MAX_LEVEL].page_no = root_page_no;
 
-    buf_block_t* block0 = fsm_get_last_map_page(search_path, mtr);
+    // get leaf map page
+    buf_block_t* block0 = fsm_get_last_leaf_map_page(search_path, mtr);
     uint32 page0_count = fsm_get_nodes_page_count(block0);
-    ut_a(page0_count <= FSP_EXTENT_SIZE || !(page0_count % FSP_EXTENT_SIZE));
+    ut_a(page0_count == FSP_EXTENT_SIZE || (page0_count % FSP_EXTENT_SIZE) == 0);
 
     if (page0_count >= FSM_LEAF_NODES_PER_PAGE) {
 
@@ -692,10 +729,11 @@ bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, 
     fsm_add_free_heap_pages_to_map(block0, xdes, mtr);
 
     //
-    fsm_rebuild_page(buf_block_get_frame(block0), &mtr);
+    fsm_rebuild_page(buf_block_get_frame(block0), mtr);
     for (int32 i = 1 ; i < FSM_PATH_LEVEL_COUNT; i++) {
-        page_t* page = fsm_get_map_page_with_x_latch(space_id, search_path.nodes[i].page_no, mtr);
-        mlog_write_uint32(page + FSM_NODES + FSM_NODES_ARRAY_LEAF + search_path.nodes[i-1].page_slot,
+        buf_block_t* block = fsm_get_map_page_with_x_latch(space_id, search_path.nodes[i].page_no, mtr);
+        page_t* page = buf_block_get_frame(block);
+        mlog_write_uint32(page + FSM_NODES + FSM_NODES_ARRAY_LEAF + search_path.nodes[i-1].page_slot_in_upper_level,
                           FSM_HEAP_MAX_CATALOG, MLOG_4BYTES, mtr);
         fsm_rebuild_page(page, mtr);
 
@@ -707,48 +745,49 @@ bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, 
     return TRUE;
 }
 
+// Only for first 64 pages
 void fsm_add_free_page(uint32 space_id, uint32 root_page_no, uint32 free_page_no, mtr_t* mtr)
 {
     fsm_search_path_t search_path;
-    buf_block_t* block;
+    buf_block_t* block[FSM_PATH_LEVEL_COUNT];
     page_t* page;
 
     search_path.space_id = space_id;
     search_path.nodes[FSM_PATH_MAX_LEVEL].page_no = root_page_no;
 
-    block = fsm_get_last_map_page(search_path, mtr);
-    page = buf_block_get_frame(block);
+    // get leaf map page block and lock
+    block[0] = fsm_get_last_leaf_map_page(search_path, mtr);
+    page = buf_block_get_frame(block[0]);
 
-    // check: only a map page of level0
-    ut_a(mach_read_from_4(page + FIL_PAGE_PREV) == FIL_NULL);
-    ut_a(mach_read_from_4(page + FIL_PAGE_NEXT) == FIL_NULL);
-
-    uint32 page_count = fsm_get_nodes_page_count(block);
+    // check: only for frag page
+    uint32 page_count = fsm_get_nodes_page_count(block[0]);
     ut_a(page_count < FSP_EXTENT_SIZE);
 
-    fsm_add_free_page_to_map(block, free_page_no, mtr);
+    // rebuild map page
+    fsm_add_free_page_to_map(block[0], free_page_no, mtr);
+    fsm_rebuild_page(page, mtr);
 
-    fsm_rebuild_page(page, &mtr);
-    for (int32 i = 1 ; i < FSM_PATH_LEVEL_COUNT; i++) {
-        page = fsm_get_map_page_with_x_latch(space_id, search_path.nodes[i].page_no, mtr);
-        mlog_write_uint32(page + FSM_NODES + FSM_NODES_ARRAY_LEAF + search_path.nodes[i-1].page_slot,
+    // rebuild non map page and root map page
+    for (int32 i = 1; i < FSM_PATH_LEVEL_COUNT; i++) {
+        block[i] = fsm_get_map_page_with_x_latch(space_id, search_path.nodes[i].page_no, mtr);
+        page = buf_block_get_frame(block[i]);
+        mlog_write_uint32(page + FSM_NODES + FSM_NODES_ARRAY_LEAF + search_path.nodes[i-1].page_slot_in_upper_level,
                           FSM_HEAP_MAX_CATALOG, MLOG_4BYTES, mtr);
         fsm_rebuild_page(page, mtr);
-
-        if (i == FSM_PATH_MAX_LEVEL) {
-            fsm_add_free_heap_page_to_fseg(page, free_page_no, mtr);
-        }
     }
-}
 
-static inline void fsm_page_init(buf_block_t* block, mtr_t* mtr)
-{
-    page_t* page = buf_block_get_frame(block);
-    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_HEAP_FSM, MLOG_2BYTES, mtr);
+    // add page to segement of root map page
+    page = buf_block_get_frame(block[FSM_PATH_MAX_LEVEL]);
+    fsm_add_free_heap_page_to_fseg(page, free_page_no, mtr);
+
+    // release lock
+    buf_block_unlock(block[FSM_PATH_MAX_LEVEL], RW_X_LATCH, mtr);
+    buf_block_unlock(block[1], RW_X_LATCH, mtr);
+    buf_block_unlock(block[0], RW_X_LATCH, mtr);
 }
 
 // Create the root node for a new index tree.
-uint32 fsm_create(uint32     space_id)
+uint32 fsm_create(uint32 space_id)
 {
     mtr_t mtr;
 
@@ -757,58 +796,41 @@ uint32 fsm_create(uint32     space_id)
     // 1. alloc pages
 
     const page_size_t page_size(0);
-    buf_block_t* block0 = fsp_alloc_free_page(space_id, page_size, mtr);
-    buf_block_t* block1 = fsp_alloc_free_page(space_id, page_size, mtr);
-    buf_block_t* block2 = fsp_alloc_free_page(space_id, page_size, mtr);
-    if (block0 == NULL || block1 == NULL || block2 == NULL) {
+    buf_block_t* leaf_map_block = fsp_alloc_free_page(space_id, page_size, &mtr);
+    buf_block_t* non_leaf_map_block = fsp_alloc_free_page(space_id, page_size, &mtr);
+    buf_block_t* root_map_block = fsp_alloc_free_page(space_id, page_size, &mtr);
+    if (leaf_map_block == NULL || non_leaf_map_block == NULL || root_map_block == NULL) {
         goto err_exit;
     }
 
-    // 2. 
+    // 2. fsm page init
 
-    fsm_page_init(block0);
-    fsm_page_init(block1);
-    fsm_page_init(block2);
+    fsm_page_init(leaf_map_block, &mtr);
+    fsm_page_init(non_leaf_map_block, &mtr);
+    fsm_page_init(root_map_block, &mtr);
 
-    fsm_add_page_to_owner_block(block1, block0->get_page_no(), mtr);
-    fsm_add_page_to_owner_block(block2, block1->get_page_no(), mtr);
+    // 3. create map tree
 
-    // 3. root map page: level = 2
-
-    page_t* page = buf_block_get_frame(block2);
-    heap_fsm_header_t* header = FSM_HEADER + page;
-
-    mlog_write_uint32(header + FSM_LEVEL0_FIRST_PAGE, block0->get_page_no(), MLOG_4BYTES, mtr);
-    mlog_write_uint32(header + FSM_LEVEL1_FIRST_PAGE, block1->get_page_no(), MLOG_4BYTES, mtr);
-    mlog_write_uint32(header + FSM_LEVEL2_FIRST_PAGE, block2->get_page_no(), MLOG_4BYTES, mtr);
-    mlog_write_uint32(header + FSM_HEAP_FIRST_PAGE, FIL_NULL, MLOG_4BYTES, mtr);
-    mlog_write_uint32(header + FSM_HEAP_LAST_PAGE, FIL_NULL, MLOG_4BYTES, mtr);
-    mlog_write_uint32(header + FSM_HEAP_PAGE_COUNT, 0, MLOG_4BYTES, mtr);
-
-    flst_init(header + FSM_FSEG_FREE, mtr);
-    flst_init(header + FSM_FSEG_NOT_FULL, mtr);
-    flst_init(header + FSM_FSEG_FULL, mtr);
-    for (uint32 i = 0; i < FSP_EXTENT_SIZE; i++) {
-        mlog_write_uint32(header + FSM_FSEG_FRAG_ARR, FIL_NULL, MLOG_4BYTES, mtr);
-    }
-
+    fsm_add_free_page_to_map(non_leaf_map_block, leaf_map_block->get_page_no(), &mtr);
+    fsm_add_free_page_to_map(root_map_block, non_leaf_map_block->get_page_no(), &mtr);
+    
     mtr_commit(&mtr);
 
-    return block2->get_page_no();
+    return root_map_block->get_page_no();
 
 err_exit:
 
-    if (block0) {
-        const page_id_t page_id(space_id, block0->get_page_no());
-        fsp_free_page(page_id, page_size, mtr);
+    if (leaf_map_block) {
+        const page_id_t page_id(space_id, leaf_map_block->get_page_no());
+        fsp_free_page(page_id, page_size, &mtr);
     }
-    if (block1) {
-        const page_id_t page_id(space_id, block1->get_page_no());
-        fsp_free_page(page_id, page_size, mtr);
+    if (non_leaf_map_block) {
+        const page_id_t page_id(space_id, non_leaf_map_block->get_page_no());
+        fsp_free_page(page_id, page_size, &mtr);
     }
-    if (block2) {
-        const page_id_t page_id(space_id, block2->get_page_no());
-        fsp_free_page(page_id, page_size, mtr);
+    if (root_map_block) {
+        const page_id_t page_id(space_id, root_map_block->get_page_no());
+        fsp_free_page(page_id, page_size, &mtr);
     }
 
     mtr_commit(&mtr);
@@ -816,10 +838,10 @@ err_exit:
     return FIL_NULL;
 }
 
-
+// Only for first 64 pages, expand 8 pages at a time,
+// Protected by table->heap_io_in_progress.
 static bool32 fsm_extend_heap_pages(dict_table_t* table, mtr_t* mtr)
 {
-    bool32 ret = TRUE;
     const page_size_t page_size(0);
     const uint32 alloc_page_count = 8;
     buf_block_t* block[alloc_page_count] = {NULL};
@@ -827,7 +849,6 @@ static bool32 fsm_extend_heap_pages(dict_table_t* table, mtr_t* mtr)
     for (uint32 i = 0; i < alloc_page_count; i++) {
         block[i] = fsp_alloc_free_page(table->space_id, page_size, mtr);
         if (block[i] == NULL) {
-            ret = FALSE;
             goto err_exit;
         }
     }
@@ -837,57 +858,63 @@ static bool32 fsm_extend_heap_pages(dict_table_t* table, mtr_t* mtr)
         fsm_add_free_page(table->space_id, table->entry_page_no, block[i]->get_page_no(), mtr);
     }
 
+    return TRUE;
+
 err_exit:
 
-    if (!ret) {
-        for (uint32 i = 0; i < alloc_page_count; i++) {
+    for (uint32 i = 0; i < alloc_page_count; i++) {
+        if (block[i]) {
             const page_id_t page_id(table->space_id, block[i]->get_page_no());
             fsp_free_page(page_id, page_size, mtr);
         }
     }
 
-    return ret;
+    return FALSE;
 }
 
+// segment expanded by a maximum of 64MB at a time
 static bool32 fsm_extend_heap_extents(dict_table_t* table, uint32 extent_count, mtr_t* mtr)
 {
-    bool32 ret = TRUE;
     const page_size_t page_size(0);
     const uint32 alloc_extent_count = 64;
     xdes_t* descr[alloc_extent_count] = {NULL};
 
     extent_count = extent_count > alloc_extent_count ? alloc_extent_count : extent_count;
 
+    // get free extents
     for (uint32 i = 0; i < extent_count; i++) {
         descr[i] = fsp_alloc_free_extent(table->space_id, page_size, mtr);
         if (descr[i] == NULL) {
-            ret = FALSE;
             goto err_exit;
         }
     }
 
     for (uint32 i = 0; i < extent_count; i++) {
+        // create pages
         for (uint32 j = 0; j < FSP_EXTENT_SIZE; j++) {
             uint32 page_no = xdes_get_offset(descr[i]) + j;
             buf_block_t* block = fsp_page_create(table->space_id, page_no, mtr, mtr);
             heap_page_init(block, table, mtr);
         }
 
+        // add pages to map page
         fsm_add_free_extents(table->space_id, table->entry_page_no, descr[i], mtr);
     }
 
+    return TRUE;
+
 err_exit:
 
-    if (!ret) {
-        for (uint32 i = 0; i < extent_count; i++) {
+    for (uint32 i = 0; i < extent_count; i++) {
+        if (descr[i]) {
             fsp_free_extent(table->space_id, descr[i], mtr);
         }
     }
 
-    return ret;
+    return FALSE;
 }
 
-
+// Protected by table->heap_io_in_progress
 bool32 fsm_alloc_heap_page(dict_table_t* table, uint32 page_count, mtr_t* mtr)
 {
     if (page_count < FSP_EXTENT_SIZE) {

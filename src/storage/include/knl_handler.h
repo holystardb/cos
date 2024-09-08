@@ -3,6 +3,7 @@
 
 #include "cm_type.h"
 #include "cm_memory.h"
+#include "cm_attribute.h"
 
 enum ha_rkey_function {
   HA_READ_KEY_EXACT,			/* Find first record else error */
@@ -73,6 +74,7 @@ public:
 
 extern bool32 knl_server_init(void);
 extern bool32 knl_server_start(memory_area_t* marea);
-extern bool32 knl_server_init_db(memory_area_t* marea);
+
+extern status_t server_open_or_create_database(char* base_dir, attribute_t* attr);
 
 #endif  /* _KNL_HANDLER_H */

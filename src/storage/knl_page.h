@@ -9,7 +9,7 @@
 
 //typedef byte        page_t;
 
-#define INVALID_PAGE_NO    0xFFFFFFFF
+
 
 
 typedef byte        page_header_t;

@@ -5,25 +5,34 @@
 #include "cm_list.h"
 #include "cm_mutex.h"
 
+#ifndef __WIN__
+#include "libaio.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Options for file_create */
+// Options for file_create
 #define OS_FILE_OPEN                        1
 #define OS_FILE_CREATE                      2
 #define OS_FILE_OVERWRITE                   3
+#define OS_FILE_TRUNCATE_EXISTING           4
+#define OS_FILE_OPEN_ALWAYS                 5
 
-/* Options for file_create */
+// Options for file_create
 #define OS_FILE_AIO                         1
 #define OS_FILE_SYNC                        2
 
-/* Error codes from os_file_get_last_error */
+
+#define OS_FILE_IO_INPROCESS                (-1)
 #define OS_FILE_IO_COMPLETION               0
+
+// Error codes from os_file_get_last_error
 #define OS_FILE_NOT_FOUND                   1
 #define OS_FILE_DISK_FULL                   2
 #define OS_FILE_ALREADY_EXISTS              3
-#define OS_FILE_AIO_RESOURCES_RESERVED      4  /* wait for OS aio resources to become available again */
+#define OS_FILE_AIO_RESOURCES_RESERVED      4  // wait for OS aio resources to become available again
 #define OS_FILE_ERROR_NOT_SPECIFIED         5
 #define OS_FILE_ACCESS_DENIED               6
 #define OS_FILE_PATH_NOT_FOUND              7
@@ -54,9 +63,9 @@ extern bool32 os_fsync_file(os_file_t file);
 extern bool32 os_fdatasync_file(os_file_t file);
 extern bool32 os_chmod_file(os_file_t file, uint32 perm);
 extern bool32 os_truncate_file(os_file_t file, uint64 offset);
-extern uint32 os_file_get_last_error();
+extern int32 os_file_get_last_error();
 extern void os_file_get_last_error_desc(char *desc, uint32 size);
-extern void os_file_get_error_desc_by_err(uint32 err, char *desc, uint32 size);
+extern inline void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size);
 extern bool32 os_file_handle_error(const char *name, const char* operation, bool32 should_exit);
 extern bool32 os_file_get_size(os_file_t file, uint64 *size);
 extern bool32 os_file_extend(char *file_name, os_file_t file, uint64 extend_size);
@@ -71,43 +80,44 @@ extern int32 get_file_size(char  *file_name, long long *file_byte_size);
 
 //-----------------------------------------------------------------------------------
 
-#ifndef __WIN__
-#include "libaio.h"
-#endif
+
 
 // windows MAXIMUM_WAIT_OBJECTS does not allow more than 64
 #define OS_AIO_N_PENDING_IOS_PER_THREAD     64
 
+#define AIO_SLOT_IS_IO_INPROCESS(slot)      (slot->ret == OS_FILE_IO_INPROCESS)
+#define AIO_SLOT_IS_IO_COMPLETION(slot)     (slot->ret == OS_FILE_IO_COMPLETION)
+
 typedef struct st_os_aio_array os_aio_array_t;
+typedef struct st_os_aio_context os_aio_context_t;
+
 
 /** The asynchronous i/o array slot structure */
 typedef struct st_os_aio_slot {
     UT_LIST_NODE_T(struct st_os_aio_slot) list_node;
-    uint32      len;        /* length of the block to read or write */
-    os_file_t   file;       /* file where to read or write */
-
-#ifdef UNIV_DEBUG
-    bool32      is_used;    /* TRUE if this slot is used */
-    time_t      used_time;  /*!< time when used */
-    byte*       buf;        /* buffer used in i/o */
-    uint32      type;       /* OS_FILE_READ or OS_FILE_WRITE */
-    uint64      offset;     /* file offset in bytes */
-    const char* name;       /* file name or path */
-    void*       message1;
-    void*       message2;
-#endif
+    os_aio_context_t* context;
+    uint32          len;        /* length of the block to read or write */
+    os_file_t       file;       /* file where to read or write */
+    bool32          is_used;    /* TRUE if this slot is used */
+    byte*           buf;        /* buffer used in i/o */
+    time_t          used_time;  /*!< time when used */
+    uint32          type;       /* OS_FILE_READ or OS_FILE_WRITE */
+    uint64          offset;     /* file offset in bytes */
+    const char*     name;       /* file name or path */
+    void*           message1;
+    void*           message2;
 
 #ifdef __WIN__
-    HANDLE      handle;     /* handle object we need in the OVERLAPPED struct */
-    OVERLAPPED  control;    /* Windows control block for the aio request */
+    HANDLE          handle;     /* handle object we need in the OVERLAPPED struct */
+    OVERLAPPED      control;    /* Windows control block for the aio request */
 #else
-    struct iocb control;    /* Linux control block for aio */
-    int         n_bytes;    /* bytes written/read. */
+    struct iocb     control;    /* Linux control block for aio */
+    uint32          n_bytes;    /* bytes written/read. */
 #endif /* __WIN__ */
-    int         ret;        /* AIO return code */
+    int32           ret;        /* AIO return code */
 }os_aio_slot_t;
 
-typedef struct st_os_aio_context {
+struct st_os_aio_context {
     os_aio_array_t    *array;
 #ifdef __WIN__
     HANDLE*            handles;
@@ -124,8 +134,8 @@ typedef struct st_os_aio_context {
     mutex_t            mutex;  /* the mutex protecting the aio context */
     UT_LIST_BASE_NODE_T(os_aio_slot_t) free_slots;
 
-    UT_LIST_NODE_T(struct st_os_aio_context) list_node; // for array
-} os_aio_context_t;
+    UT_LIST_NODE_T(os_aio_context_t) list_node; // for array
+};
 
 /** The asynchronous i/o array structure */
 typedef struct st_os_aio_array {
@@ -141,11 +151,13 @@ typedef struct st_os_aio_array {
 extern os_aio_array_t* os_aio_array_create(uint32 io_pending_count_per_context, uint32 io_context_count);
 extern void os_aio_array_free(os_aio_array_t* array);
 
-extern os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array);
-extern void os_aio_array_free_context(os_aio_context_t* context);
-extern os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index);
+extern inline os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array);
+extern inline void os_aio_array_free_context(os_aio_context_t* context);
+extern inline os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index);
 
-extern bool32 os_file_aio_submit(
+extern inline void os_aio_context_free_slot(os_aio_slot_t* slot);
+
+extern inline os_aio_slot_t* os_file_aio_submit(
     os_aio_context_t* context,
     uint32            type,      /* in: OS_FILE_READ or OS_FILE_WRITE */
     const char*       name,      /* in: name of the file or path as a null-terminated string */
@@ -156,12 +168,14 @@ extern bool32 os_file_aio_submit(
     void*             message1,  /* in: message to be passed along with the aio operation */
     void*             message2); /* in: message to be passed along with the aio operation */
 
+extern inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us);
+
 //Waits for an aio operation to complete.
-extern int os_file_aio_wait(os_aio_context_t* context,
-                                  uint32 timeout_us = OS_WAIT_INFINITE_TIME);
-extern int os_file_aio_wait_all(os_aio_context_t* context,
-                                        uint32 slot_count,
-                                        uint32 timeout_us = OS_WAIT_INFINITE_TIME);
+extern inline int32 os_file_aio_context_wait(os_aio_context_t* context,
+                                                       os_aio_slot_t** slot,
+                                                       uint32 timeout_us = OS_WAIT_INFINITE_TIME);
+extern int os_file_aio_wait_all(os_aio_context_t* aio_ctx,
+    uint32 slot_count, uint32 timeout_us = OS_WAIT_INFINITE_TIME);
 
 #ifndef __WIN__
 extern void* os_aio_open_dl();

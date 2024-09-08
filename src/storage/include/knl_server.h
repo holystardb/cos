@@ -7,13 +7,20 @@
 #include "m_ctype.h"
 #include "cm_file.h"
 #include "cm_memory.h"
-
+#include "cm_virtual_mem.h"
 
 /** Maximum number of srv_n_log_files, or innodb_log_files_in_group */
 #define SRV_N_LOG_FILES_MAX 100
 
 
 const unsigned int UNIV_PAGE_SIZE = 16384; /* 16KB */
+
+#define SPACE_MAX_ID        0xFFFFF
+#define INVALID_PAGE_NO     0xFFFFFFFF
+
+#define ROW_MAX_COLUMN_COUNT     (uint32)1000
+#define ROW_RECORD_MAX_SIZE      (uint32)8000
+
 
 typedef uint32              space_id_t;
 typedef uint32              page_no_t;
@@ -47,7 +54,7 @@ typedef uint32              command_id_t;
 
 /*------------------------- global config ------------------------ */
 
-extern char *srv_data_home;
+
 extern uint64 srv_system_file_size;
 extern uint64 srv_system_file_max_size;
 extern uint64 srv_system_file_auto_extend_size;
@@ -106,29 +113,50 @@ extern os_aio_array_t* srv_os_aio_sync_array;
 #define DB_REDO_FILE_MAX_COUNT    16
 #define DB_UNDO_FILE_MAX_COUNT    16
 #define DB_TEMP_FILE_MAX_COUNT    16
+#define DB_DATA_FILE_MAX_COUNT    102400
 
 
 
 typedef struct st_db_ctrl_file {
-    char    *name;
+    char     name[256];
     uint64   size;
     uint64   max_size;
     bool32   autoextend;
 } db_ctrl_file_t;
 
-typedef struct st_db_ctrl {
-    uint64         version;
-    char          *database_name;
-    char          *charset_name;
-    CHARSET_INFO  *charset_info;
-    uint8          redo_count;
-    uint8          undo_count;
-    uint8          temp_count;
-    db_ctrl_file_t redo_group[DB_REDO_FILE_MAX_COUNT];
-    db_ctrl_file_t undo_group[DB_UNDO_FILE_MAX_COUNT];
-    db_ctrl_file_t temp_group[DB_TEMP_FILE_MAX_COUNT];
-    db_ctrl_file_t system;
+typedef struct st_db_data_file {
+    char      name[256];
+    uint32    node_id;
+    uint32    space_id;
+    uint64    size;
+    uint64    max_size;
+    bool32    autoextend;
+    uint32    status;
+} db_data_file_t;
 
+typedef struct st_db_space {
+    char      name[64];
+    uint32    space_id;
+    uint32    purpose;
+} db_space_t;
+
+typedef struct st_db_ctrl {
+    uint64          version;
+    uint64          ver_num;
+    char            database_name[64];
+    char            charset_name[64];
+    CHARSET_INFO*   charset_info;
+    uint8           redo_count;
+    uint8           undo_count;
+    uint8           temp_count;
+    uint32          space_count;
+    uint32          data_file_count;
+    db_ctrl_file_t  system;
+    db_ctrl_file_t  redo_group[DB_REDO_FILE_MAX_COUNT];
+    db_ctrl_file_t  undo_group[DB_UNDO_FILE_MAX_COUNT];
+    db_ctrl_file_t  temp_group[DB_TEMP_FILE_MAX_COUNT];
+    db_space_t*     spaces;
+    db_data_file_t* data_files;
 } db_ctrl_t;
 
 typedef struct st_db_charset_info {
@@ -269,27 +297,15 @@ typedef struct st_thread
 } thread_t;
 
 
-typedef struct st_session
-{
-    uint32     id;
-
-    uint64     cid; // command id
-    uint64     query_scn;
-} session_t;
-
-
-
-
-
-dberr_t srv_start(bool32 create_new_db);
+status_t srv_start(bool32 create_new_db);
 
 
 //------------------------------------------------------------------
-extern bool32 srv_create_ctrls(char *data_home);
-extern dberr_t srv_create_redo_logs();
-extern dberr_t srv_create_undo_log();
-extern dberr_t srv_create_temp();
-extern dberr_t srv_create_system();
+extern bool32 srv_create_ctrls();
+extern status_t srv_create_redo_logs();
+extern status_t srv_create_undo_log();
+extern status_t srv_create_or_open_temp();
+extern status_t srv_create_system();
 
 
 extern bool32 db_ctrl_createdatabase(char *database_name, char *charset_name);
@@ -299,7 +315,7 @@ extern bool32 db_ctrl_add_undo(char *name, uint64 size, uint64 max_size, bool32 
 extern bool32 db_ctrl_add_temp(char *name, uint64 size, uint64 max_size, bool32 autoextend);
 
 
-extern bool32 read_ctrl_file(char *name, db_ctrl_t *ctrl);
+extern status_t read_ctrl_file(char *name, db_ctrl_t *ctrl);
 
 extern void* write_io_handler_thread(void *arg);
 extern void* read_io_handler_thread(void *arg);
@@ -313,8 +329,11 @@ extern srv_stats_t  srv_stats;
 extern bool32 recv_no_log_write;
 
 extern bool32 srv_read_only_mode;
+extern bool32 srv_archive_recovery;
 
-extern db_ctrl_t srv_db_ctrl;
+extern db_ctrl_t        srv_ctrl_file;
+extern char             srv_data_home[1024];
+extern const uint32     srv_data_home_len;
 
 /** At a shutdown this value climbs from SRV_SHUTDOWN_NONE to
 SRV_SHUTDOWN_CLEANUP and then to SRV_SHUTDOWN_LAST_PHASE, and so on */
@@ -322,5 +341,14 @@ extern shutdown_state_enum_t srv_shutdown_state;
 
 extern memory_area_t*  srv_memory_sga;
 
+extern vm_pool_t*      srv_temp_mem_pool;
+extern memory_pool_t*  srv_common_mpool;
+extern memory_pool_t*  srv_plan_mem_pool;
+extern memory_pool_t*  srv_mtr_memory_pool;
+extern memory_pool_t*  srv_dictionary_mem_pool;
+
+#define MY_ALL_CHARSETS_SIZE 2048
+
+extern CHARSET_INFO all_charsets[MY_ALL_CHARSETS_SIZE];
 
 #endif  /* _KNL_SERVER_H */

@@ -1,9 +1,13 @@
 #include "knl_dict.h"
+#include "cm_memory.h"
+#include "cm_log.h"
+#include "cm_list.h"
 #include "knl_buf.h"
 #include "knl_btree.h"
 #include "knl_fsp.h"
-#include "knl_type.h"
-#include "cm_memory.h"
+#include "knl_heap.h"
+#include "knl_trx.h"
+
 
 dict_sys_t*     dict_sys = NULL;
 
@@ -55,7 +59,7 @@ static bool32 dict_hdr_create(mtr_t* mtr)
     // Create the B-tree roots for the clustered indexes of the basic system tables
     //uint32 root_page_no = btr_create(DICT_CLUSTERED | DICT_UNIQUE, DICT_HDR_SPACE,
     //    page_size, DICT_TABLES_ID, dict_ind_redundant, NULL, mtr);
-    uint32 root_page_no = heap_create_entry(space_id, "sys_tables");
+    uint32 root_page_no = heap_create_entry(SRV_SYSTEM_SPACE_ID);
     if (root_page_no == FIL_NULL) {
         return(FALSE);
     }
@@ -88,38 +92,35 @@ static bool32 dict_hdr_create(mtr_t* mtr)
     return(TRUE);
 }
 
-static void dict_init()
+static void dict_init(memory_pool_t* mem_pool, uint32 table_hash_array_size)
 {
     dict_sys = (dict_sys_t*)malloc(sizeof(dict_sys_t));
 
     mutex_create(&dict_sys->mutex);
 
-    dict_sys->table_hash = HASH_TABLE_CREATE(10000);
-    dict_sys->table_id_hash = HASH_TABLE_CREATE(10000);
+    dict_sys->table_hash = HASH_TABLE_CREATE(table_hash_array_size);
+    dict_sys->table_id_hash = HASH_TABLE_CREATE(table_hash_array_size);
+    dict_sys->mem_pool = mem_pool;
 
-    uint32 initial_page_count = 0;
-    uint32 local_page_count = 1024;
-    uint32 max_page_count = 1024;
-    uint32 page_size = 1024 * 16;
-    dict_sys->mem_pool = mpool_create(srv_memory_sga,
-        initial_page_count, local_page_count, max_page_count, page_size);
+    UT_LIST_INIT(dict_sys->table_LRU);
+    UT_LIST_INIT(dict_sys->table_non_LRU);
 }
 
 
 // Initializes the data dictionary memory structures when the database is started.
 // This function is also called when the data dictionary is created.
-dberr_t dict_boot(void)
+status_t dict_boot(memory_pool_t* mem_pool, uint32 table_hash_array_size)
 {
     dict_table_t*   table;
     dict_index_t*   index;
     dict_hdr_t*     dict_hdr;
     mtr_t           mtr;
-    dberr_t         error;
+    status_t        error;
 
     mtr_start(&mtr);
 
     // Create the hash tables etc.
-    dict_init();
+    dict_init(mem_pool, table_hash_array_size);
 
     mutex_enter(&(dict_sys->mutex));
 
@@ -134,18 +135,18 @@ dberr_t dict_boot(void)
     dict_mem_table_add_col(table, "NAME", DATA_BINARY, 0, 0);
     dict_mem_table_add_col(table, "ID", DATA_BINARY, 0, 0);
     // ROW_FORMAT = (N_COLS >> 31) ? COMPACT : REDUNDANT
-    dict_mem_table_add_col(table, "N_COLS", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "N_COLS", DATA_INTEGER, 0, 4);
     // The low order bit of TYPE is always set to 1.  If the format
     // is UNIV_FORMAT_B or higher, this field matches table->flags.
-    dict_mem_table_add_col(table, "TYPE", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "TYPE", DATA_INTEGER, 0, 4);
     dict_mem_table_add_col(table, "MIX_ID", DATA_BINARY, 0, 0);
     // MIX_LEN may contain additional table flags when
     // ROW_FORMAT!=REDUNDANT.  Currently, these flags include
     // DICT_TF2_TEMPORARY. 
-    dict_mem_table_add_col(table, "MIX_LEN", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "MIX_LEN", DATA_INTEGER, 0, 4);
     dict_mem_table_add_col(table, "CLUSTER_NAME", DATA_BINARY, 0, 0);
-    dict_mem_table_add_col(table, "SPACE", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "ENTRY", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "SPACE", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "ENTRY", DATA_INTEGER, 0, 4);
 
     table->id = DICT_TABLES_ID;
 
@@ -156,10 +157,10 @@ dberr_t dict_boot(void)
     dict_mem_index_add_field(index, "NAME", 0);
     index->id = DICT_TABLES_ID;
 
-    error = dict_index_add_to_cache(table, index,
-        mtr_read_ulint(dict_hdr + DICT_HDR_TABLES, MLOG_4BYTES, &mtr),
-        FALSE);
-    ut_a(error == DB_SUCCESS);
+    //error = dict_index_add_to_cache(table, index,
+    //    mtr_read_uint32(dict_hdr + DICT_HDR_TABLES, MLOG_4BYTES, &mtr),
+    //    FALSE);
+    //ut_a(error == CM_SUCCESS);
 
 
     //
@@ -170,12 +171,12 @@ dberr_t dict_boot(void)
     // 3. SYS_COLUMNS
     table = dict_mem_table_create("SYS_COLUMNS", DICT_HDR_SPACE, 7, 0, 0);
     dict_mem_table_add_col(table, "TABLE_ID", DATA_BINARY, 0, 0);
-    dict_mem_table_add_col(table, "POS", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "POS", DATA_INTEGER, 0, 4);
     dict_mem_table_add_col(table, "NAME", DATA_BINARY, 0, 0);
-    dict_mem_table_add_col(table, "MTYPE", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "PRTYPE", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "LEN", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "PREC", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "MTYPE", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "PRTYPE", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "LEN", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "PREC", DATA_INTEGER, 0, 4);
 
     table->id = DICT_COLUMNS_ID;
 
@@ -192,10 +193,10 @@ dberr_t dict_boot(void)
     dict_mem_table_add_col(table, "TABLE_ID", DATA_BINARY, 0, 0);
     dict_mem_table_add_col(table, "ID", DATA_BINARY, 0, 0);
     dict_mem_table_add_col(table, "NAME", DATA_BINARY, 0, 0);
-    dict_mem_table_add_col(table, "N_FIELDS", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "TYPE", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "SPACE", DATA_INT, 0, 4);
-    dict_mem_table_add_col(table, "PAGE_NO", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "N_FIELDS", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "TYPE", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "SPACE", DATA_INTEGER, 0, 4);
+    dict_mem_table_add_col(table, "PAGE_NO", DATA_INTEGER, 0, 4);
 
     table->id = DICT_INDEXES_ID;
 
@@ -210,7 +211,7 @@ dberr_t dict_boot(void)
     // 5. SYS_FIELDS
     table = dict_mem_table_create("SYS_FIELDS", DICT_HDR_SPACE, 3, 0, 0);
     dict_mem_table_add_col(table, "INDEX_ID", DATA_BINARY, 0, 0);
-    dict_mem_table_add_col(table, "POS", DATA_INT, 0, 4);
+    dict_mem_table_add_col(table, "POS", DATA_INTEGER, 0, 4);
     dict_mem_table_add_col(table, "COL_NAME", DATA_BINARY, 0, 0);
 
     table->id = DICT_FIELDS_ID;
@@ -232,74 +233,203 @@ dberr_t dict_boot(void)
     //dict_load_sys_table(dict_sys->sys_indexes);
     //dict_load_sys_table(dict_sys->sys_fields);
 
-    return DB_SUCCESS;
+    return CM_SUCCESS;
 }
 
 // Creates and initializes the data dictionary at the server bootstrap.
-dberr_t dict_create(void)
+status_t dict_create(memory_pool_t* mem_pool, uint32 table_hash_array_size)
 {
     mtr_t mtr;
+
+    LOGGER_INFO(LOGGER, "create dictionary");
 
     mtr_start(&mtr);
     dict_hdr_create(&mtr);
     mtr_commit(&mtr);
 
-    dberr_t err = dict_boot();
+    status_t err = dict_boot(mem_pool, table_hash_array_size);
 
     return(err);
+}
+
+void dict_cache_lru_remove_tables()
+{
+
+}
+
+memory_context_t* dict_cache_alloc_mem_context()
+{
+    memory_context_t* mem_ctx;
+    const uint32      max_loop_count = 10;
+    uint32            loop = 0;
+
+retry:
+
+    mem_ctx = mcontext_create(dict_sys->mem_pool);
+    if (mem_ctx == NULL && loop < max_loop_count) {
+        dict_cache_lru_remove_tables();
+        loop++;
+        goto retry;
+    }
+
+    return mem_ctx;
+}
+
+void* dict_cache_alloc_memory(memory_context_t* mem_ctx, uint32 size)
+{
+    void*        mem_ptr;
+    const uint32 max_loop_count = 10;
+    uint32       loop = 0;
+
+    ut_ad(mem_ctx);
+    ut_ad(size > 0);
+
+retry:
+
+    mem_ptr = mem_alloc(mem_ctx, size);
+    if (mem_ptr == NULL && loop < max_loop_count) {
+        dict_cache_lru_remove_tables();
+        loop++;
+        goto retry;
+    }
+
+    return mem_ptr;
+}
+
+void dict_cache_free_memory(void* ptr)
+{
+    mem_free(ptr);
+}
+
+void dict_mem_table_destroy(dict_table_t* table)
+{
+    if (table->to_be_dropped) {
+
+    }
+
+    mutex_enter(&table->mutex);
+    if (table->ref_count != 0) {
+        mutex_exit(&table->mutex);
+        return;
+    }
+    mutex_exit(&table->mutex);
+
+    mutex_destroy(&table->mutex);
+    mcontext_destroy(table->mem_ctx);
 }
 
 dict_table_t* dict_mem_table_create(
     const char* name,
     uint32      space_id,
-    uint32      n_cols,
+    uint32      column_count,
     uint32      flags,
     uint32      flags2)
 {
-    dict_table_t*       table;
-    memory_context_t*   mem_ctx;
+    dict_table_t*     table;
+    memory_context_t* mem_ctx;
+    uint32            loop = 0;
+    
+    mem_ctx = dict_cache_alloc_mem_context();
+    if (mem_ctx == NULL) {
+        return NULL;
+    }
+    table = (dict_table_t *)dict_cache_alloc_memory(mem_ctx, sizeof(dict_table_t));
+    if (table == NULL) {
+        goto err_exit;
+    }
+    memset((char *)table, 0x00, sizeof(dict_table_t));
 
-    mem_ctx = mcontext_create(dict_sys->mem_pool);
-
-    table = (dict_table_t *)mem_alloc(mem_ctx, sizeof(dict_table_t));
     table->mem_ctx = mem_ctx;
-
-    table->flags = (unsigned int) flags;
-    table->flags2 = (unsigned int) flags2;
-    table->name = (char *)mem_alloc(mem_ctx, strlen(name) + 1);
+    table->ref_count = 0;
+    table->space_id = (unsigned int)space_id;
+    table->column_count = column_count;
+    mutex_create(&table->mutex);
+    UT_LIST_INIT(table->indexes);
+    
+    //table->flags = (unsigned int) flags;
+    //table->flags2 = (unsigned int) flags2;
+    table->name = (char *)dict_cache_alloc_memory(table->mem_ctx, strlen(name) + 1);
+    if (table->name == NULL) {
+        goto err_exit;
+    }
     memcpy(table->name, name, strlen(name) + 1);
-    table->space_id = (unsigned int) space_id;
-    table->n_cols = (unsigned int) (n_cols + DATA_N_SYS_COLS);
-    table->cols = (dict_col_t*)mem_alloc(mem_ctx, (n_cols + DATA_N_SYS_COLS)  * sizeof(dict_col_t));
 
-    ut_d(table->magic_n = DICT_TABLE_MAGIC_N);
+    table->cols = (dict_col_t*)dict_cache_alloc_memory(table->mem_ctx, column_count * sizeof(dict_col_t));
+    if (table->cols == NULL) {
+        goto err_exit;
+    }
 
     return table;
+
+err_exit:
+
+    mcontext_destroy(mem_ctx);
+
+    return NULL;
 }
 
 void dict_mem_table_add_col(
-    dict_table_t*   table,  /*!< in: table */
-    const char*     name,   /*!< in: column name, or NULL */
-    uint32          mtype,  /*!< in: main datatype */
-    uint32          prtype, /*!< in: precise type */
-    uint32          len)    /*!< in: precision */
+    dict_table_t*   table,
+    const char*     name,
+    data_type_t     mtype,  // in: main datatype
+    uint32          precision, // in: precise type
+    uint32          scale_or_len)
 {
     dict_col_t* col;
-    uint32      i;
+    uint32      col_pos;
 
-    ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
+    //ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
 
-    i = table->n_def++;
+    col_pos = table->col_count;
+    table->col_count++;
 
-    col = dict_table_get_nth_col(table, i);
-    col->name = (char *)mem_alloc(table->mem_ctx, strlen(name) + 1);
-    memcpy(col->name, name, strlen(name) + 1);
-    col->ind = i;
-    col->ord_part = 0;
-    col->max_prefix = 0;
+    col = dict_table_get_nth_col(table, col_pos);
+    col->ind = col_pos;
     col->mtype = mtype;
-    col->prtype = prtype;
-    col->len = len;
+
+    switch (mtype) {
+    case DATA_VARCHAR:
+    case DATA_STRING:
+    case DATA_CHAR:
+    case DATA_BINARY:
+    case DATA_VARBINARY:
+    case DATA_RAW:
+    case DATA_CLOB:
+    case DATA_BLOB1:
+        col->len = scale_or_len;
+        break;
+    case DATA_NUMBER:
+    case DATA_DECIMAL:
+        col->precision = precision;
+        col->scale = scale_or_len;
+        break;
+
+    case DATA_INTEGER:
+    case DATA_BIGINT:
+    case DATA_SMALLINT:
+    case DATA_TINYINT:
+    case DATA_BOOLEAN:
+        break;
+
+    case DATA_FLOAT:
+    case DATA_DOUBLE:
+    case DATA_REAL:
+        break;
+
+    case DATA_TIMESTAMP:
+    case DATA_TIMESTAMP_TZ:
+    case DATA_TIMESTAMP_LTZ:
+    case DATA_DATE:
+    case DATA_DATETIME:
+    case DATA_TIME:
+    case DATA_INTERVAL:
+    case DATA_INTERVAL_YM:
+    case DATA_INTERVAL_DS:
+        break;
+
+    default:
+        break;
+    }
 }
 
 
@@ -307,8 +437,8 @@ void dict_mem_table_add_col(
 static void dict_table_add_system_columns(dict_table_t* table)
 {
     ut_ad(table);
-    ut_ad(table->n_def == table->n_cols - DATA_N_SYS_COLS);
-    ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
+    //ut_ad(table->n_def == table->n_cols - DATA_N_SYS_COLS);
+    //ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
     ut_ad(!table->cached);
 
     /* NOTE: the system columns MUST be added in the following order
@@ -317,12 +447,12 @@ static void dict_table_add_system_columns(dict_table_t* table)
     The clustered index will not always physically contain all
     system columns. */
 
-    dict_mem_table_add_col(table, "DB_ROW_ID", DATA_SYS,
-       DATA_ROW_ID | DATA_NOT_NULL, DATA_ROW_ID_LEN);
-    dict_mem_table_add_col(table, "DB_TRX_ID", DATA_SYS,
-       DATA_TRX_ID | DATA_NOT_NULL, DATA_TRX_ID_LEN);
-    dict_mem_table_add_col(table, "DB_ROLL_PTR", DATA_SYS,
-       DATA_ROLL_PTR | DATA_NOT_NULL, DATA_ROLL_PTR_LEN);
+    //dict_mem_table_add_col(table, "DB_ROW_ID", DATA_SYS,
+    //   DATA_ROW_ID | DATA_NOT_NULL, DATA_ROW_ID_LEN);
+    //dict_mem_table_add_col(table, "DB_TRX_ID", DATA_SYS,
+    //   DATA_TRX_ID | DATA_NOT_NULL, DATA_TRX_ID_LEN);
+    //dict_mem_table_add_col(table, "DB_ROLL_PTR", DATA_SYS,
+    //   DATA_ROLL_PTR | DATA_NOT_NULL, DATA_ROLL_PTR_LEN);
 }
 
 
@@ -343,7 +473,7 @@ void dict_table_add_to_cache(
     fold = ut_fold_binary((const byte*)table->name, strlen(table->name));
     id_fold = ut_fold_uint64(table->id);
 
-    /* Look for a table with the same name: error if such exists */
+    // Look for a table with the same name: error if such exists
     {
         dict_table_t*   table2;
         HASH_SEARCH(name_hash, dict_sys->table_hash, fold,
@@ -352,7 +482,7 @@ void dict_table_add_to_cache(
         ut_a(table2 == NULL);
     }
 
-    /* Look for a table with the same id: error if such exists */
+    // Look for a table with the same id: error if such exists
     {
         dict_table_t*   table2;
         HASH_SEARCH(id_hash, dict_sys->table_id_hash, id_fold,
@@ -403,11 +533,23 @@ dict_index_t* dict_mem_index_create(
 {
     dict_index_t*   index;
 
-    index = (dict_index_t *)mem_alloc(table->mem_ctx, sizeof(dict_index_t));
+    index = (dict_index_t *)dict_cache_alloc_memory(table->mem_ctx, sizeof(dict_index_t));
+    if (index == NULL) {
+        return NULL;
+    }
+    memset((char*)index, 0x00, sizeof(dict_index_t));
 
-    index->name = (const char*)mem_alloc(table->mem_ctx, strlen(index_name) + 1);
+    index->name = (const char*)dict_cache_alloc_memory(table->mem_ctx, strlen(index_name) + 1);
+    if (index->name == NULL) {
+        goto err_exit;
+    }
     memcpy((void*)index->name, index_name, strlen(index_name) + 1);
-    index->fields = (dict_field_t*) mem_alloc(table->mem_ctx, 1 + n_fields * sizeof(dict_field_t));
+
+    index->fields = (dict_field_t*)dict_cache_alloc_memory(table->mem_ctx, 1 + n_fields * sizeof(dict_field_t));
+    if (index->fields == NULL) {
+        goto err_exit;
+    }
+
     index->type = type;
     index->space = space_id;
     index->page = FIL_NULL;
@@ -416,5 +558,17 @@ dict_index_t* dict_mem_index_create(
     UT_LIST_ADD_LAST(indexes, table->indexes, index);
 
     return index;
+
+err_exit:
+
+    if (index->fields) {
+        dict_cache_free_memory((void*)index->fields);
+    }
+    if (index->name) {
+        dict_cache_free_memory((void*)index->name);
+    }
+    dict_cache_free_memory((void*)index);
+
+    return NULL;
 }
 

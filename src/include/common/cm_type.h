@@ -21,14 +21,14 @@
 #include <windows.h>    
 #include <tlhelp32.h>
 #include <stddef.h>
-#else
+#else  // __WIN__
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#endif
+#endif  // __WIN__
 
 
 #ifdef __cplusplus
@@ -274,6 +274,19 @@ typedef int                                 os_file_t;
 #define OS_FILE_INVALID_HANDLE              -1
 #endif
 
+
+/***********************************************************************************************
+*                                      define                                                  *
+***********************************************************************************************/
+
+#define CM_FILE_NAME_BUF_SIZE               256
+#define CM_FILE_NAME_MAX_LEN                255
+#define CM_FILE_PATH_BUF_SIZE               1024
+#define CM_FILE_PATH_MAX_LEN                1023
+
+#define CM_ERR_MSG_MAX_LEN                  1023
+
+
 typedef enum
 {
     LOG_UNKOWN   = 0,
@@ -300,6 +313,8 @@ typedef enum shutdown_state_enum {
                             all file spaces and close all files */
     SHUTDOWN_EXIT_THREADS/*!< Exit all threads */
 } shutdown_state_enum_t;
+
+
 
 /***********************************************************************************************
 *                                      callback function                                       *
@@ -364,7 +379,7 @@ typedef enum st_status {
     do {                                               \
         int32 __code__ = (func);                       \
         if (UNLIKELY(__code__ != EOK)) {               \
-            CM_THROW_ERROR(ERR_SYSTEM_CALL, __code__); \
+            CM_SET_ERROR(ERR_SYSTEM_CALL, __code__);   \
             return CM_ERROR;                           \
         }                                              \
     } while (0)
@@ -375,7 +390,7 @@ typedef enum st_status {
     do {                                               \
         int32 __code__ = (func);                       \
         if (UNLIKELY(__code__ != EOK)) {               \
-            CM_THROW_ERROR(ERR_SYSTEM_CALL, __code__); \
+            CM_SET_ERROR(ERR_SYSTEM_CALL, __code__);   \
             return;                                    \
         }                                              \
     } while (0)
@@ -385,7 +400,7 @@ typedef enum st_status {
     do {                                               \
         int32 __code__ = (func);                       \
         if (UNLIKELY(__code__ == -1)) {                \
-            CM_THROW_ERROR(ERR_SYSTEM_CALL, __code__); \
+            CM_SET_ERROR(ERR_SYSTEM_CALL, __code__);   \
             return CM_ERROR;                           \
         }                                              \
     } while (0)
@@ -398,24 +413,22 @@ typedef enum st_status {
 #ifndef UNIV_DEBUG
 #define UNIV_DEBUG              /* ut_ad, ut_d */
 #endif
+
 #ifndef UNIV_MEMORY_DEBUG
 #define UNIV_MEMORY_DEBUG       /* detect memory leaks etc */
 #endif
+
 #ifndef UNIV_MEMROY_VALGRIND
 //#define UNIV_MEMROY_VALGRIND    /* Enable extra Valgrind instrumentation */
 #endif
+
 #ifndef UNIV_DEBUG_OUTPUT
 #define UNIV_DEBUG_OUTPUT       /* DBUG_* */
 #endif
+
 #ifndef UNIV_MUTEX_DEBUG
 #define UNIV_MUTEX_DEBUG        /* mutex and latch */
 #endif
-
-
-#endif
-
-
-
 
 
 #ifdef __cplusplus

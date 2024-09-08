@@ -6,8 +6,9 @@
 #include "knl_mtr.h"
 #include "knl_server.h"
 #include "knl_fsp.h"
-#include "knl_trx_rseg.h"
+#include "knl_trx_types.h"
 #include "knl_trx_undo.h"
+#include "knl_session.h"
 
 /** Space id of the transaction system page (the system tablespace) */
 static const uint32 TRX_SYS_SPACE = 0;
@@ -19,13 +20,10 @@ static const uint32 TRX_SYS_SPACE = 0;
 #define TRX_SYS                     FSEG_PAGE_DATA
 #define TRX_SYS_INODE               (FSEG_PAGE_DATA + 8)
 
-
-
 /** Transaction system header */
 #define TRX_SYS_TRX_ID_STORE        0
 #define TRX_SYS_FSEG_HEADER         8
 #define TRX_SYS_RSEGS               (8 + FSEG_HEADER_SIZE)
-
 
 /** Page number of the transaction system page */
 #define TRX_SYS_PAGE_NO             FSP_TRX_SYS_PAGE_NO
@@ -35,50 +33,27 @@ static const uint32 TRX_SYS_SPACE = 0;
 /** The offset of the doublewrite buffer header on the trx system header page */
 #define TRX_SYS_DOUBLEWRITE		(UNIV_PAGE_SIZE - 200)
 /*-------------------------------------------------------------*/
-#define TRX_SYS_DOUBLEWRITE_FSEG	0	/*!< fseg header of the fseg
-containing the doublewrite
-buffer */
+#define TRX_SYS_DOUBLEWRITE_FSEG	0	/*!< fseg header of the fseg containing the doublewrite buffer */
 #define TRX_SYS_DOUBLEWRITE_MAGIC	FSEG_HEADER_SIZE
-/*!< 4-byte magic number which
-shows if we already have
-created the doublewrite
-buffer */
+/*!< 4-byte magic number which shows if we already have created the doublewrite buffer */
 #define TRX_SYS_DOUBLEWRITE_BLOCK1	(4 + FSEG_HEADER_SIZE)
-/*!< page number of the
-first page in the first
-sequence of 64
-(= FSP_EXTENT_SIZE) consecutive
-pages in the doublewrite
-buffer */
+/*!< page number of the first page in the first sequence of 64 (= FSP_EXTENT_SIZE) consecutive pages in the doublewrite buffer */
 #define TRX_SYS_DOUBLEWRITE_BLOCK2	(8 + FSEG_HEADER_SIZE)
-/*!< page number of the
-first page in the second
-sequence of 64 consecutive
-pages in the doublewrite
-buffer */
+/*!< page number of the first page in the second sequence of 64 consecutive pages in the doublewrite buffer */
 #define TRX_SYS_DOUBLEWRITE_REPEAT	12	/*!< we repeat
 TRX_SYS_DOUBLEWRITE_MAGIC,
 TRX_SYS_DOUBLEWRITE_BLOCK1,
 TRX_SYS_DOUBLEWRITE_BLOCK2
-so that if the trx sys
-header is half-written
-to disk, we still may
-be able to recover the
-information */
+so that if the trx sys header is half-written to disk, we still may be able to recover the information */
 /** If this is not yet set to TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED_N,
 we must reset the doublewrite buffer, because starting from 4.1.x the
-space id of a data page is stored into
-FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID. */
+space id of a data page is stored into FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID. */
 #define TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED (24 + FSEG_HEADER_SIZE)
 
 
 /*-------------------------------------------------------------*/
 /* Size of a rollback segment specification slot */
 #define TRX_SYS_RSEG_SLOT_SIZE	8
-
-
-
-
 
 /** Transaction execution states when trx->state == TRX_STATE_ACTIVE */
 enum trx_que_t {
@@ -106,23 +81,8 @@ typedef struct st_trx_savept {
 // seconds: '2019-01-01 00:00:00'UTC since Epoch ('1970-01-01 00:00:00'UTC)
 #define TRX_GTS_BASE_TIME    1546300800
 
-#define TRX_RSEG_MAX_COUNT                96  // 96 * 4 pages = 6MB
-#define TRX_RSEG_MIN_COUNT                4   // 4  * 4 pages = 256KB
-#define TRX_RSEG_DEFAULT_COUNT            32  // 32 * 4 pages = 2MB, 
-#define TRX_RSEG_UNDO_PAGE_MAX_COUNT      16384 // 256GB
 
 
-
-// The transaction system central memory data structure
-typedef struct st_trx_sys {
-    mutex_t       mutex;
-    uint64        max_trx_id;
-    uint32        rseg_count;
-    trx_rseg_t    rseg_array[TRX_RSEG_MAX_COUNT];
-
-    time_t        init_time;
-    atomic64_t    scn;
-} trx_sys_t;
 
 
 
@@ -162,16 +122,17 @@ typedef struct st_xa_id {
 
 //-----------------------------------------------------------------
 
-
-extern void trx_sys_create(uint32 rseg_count);
+extern void trx_sys_init_at_db_start();
+extern void trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count);
 
 extern inline trx_t* trx_begin(mtr_t* mtr);
 extern inline void trx_commit(trx_t* trx, mtr_t* mtr);
 extern inline void trx_rollback(trx_t* trx, trx_savept_t* savept, mtr_t* mtr);
 
-extern inline void trx_start_if_not_started(que_sess_t* sess);
+extern inline void trx_start_if_not_started(que_sess_t* sess, mtr_t* mtr);
 
 //-----------------------------------------------------------------
+
 
 extern trx_sys_t*     trx_sys;
 

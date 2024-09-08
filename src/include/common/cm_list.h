@@ -117,17 +117,17 @@ struct {\
 
 // ---------------------------------------------------------------------------------------
 
-#define SLIST_BASE_NODE_T(TYPE)        \
-    struct {                           \
-        uint32 count;                  \
-        TYPE *first;                   \
-        TYPE *last;                    \
-    }                                  \
+#define SLIST_BASE_NODE_T(TYPE)\
+struct {\
+    uint32 count;\
+    TYPE *first;\
+    TYPE *last;\
+}\
 
-#define SLIST_NODE_T(TYPE)             \
-    struct {                           \
-        TYPE *next;                    \
-    }                                  \
+#define SLIST_NODE_T(TYPE)         \
+    struct {                       \
+        TYPE *next;                \
+    }                              \
 
 #define SLIST_INIT(BASE)         \
     {                            \

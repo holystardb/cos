@@ -2,6 +2,13 @@
 #define _KNL_HEAP_H
 
 #include "cm_type.h"
+#include "knl_data.h"
+#include "knl_trx_types.h"
+#include "knl_dict.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
 
 
 #define FLEXIBLE_ARRAY_MEMBER   /* empty */
@@ -122,12 +129,12 @@ typedef byte    heap_page_header_t;
 #define HEAP_PAGE_GET_HEADER(page)   (heap_page_header_t *)(HEAP_HEADER_OFFSET + page)
 #define HEAP_HEADER_GET_PAGE(header) (page_t *)((char *)header - HEAP_HEADER_OFFSET)
 
-#define HEAP_GET_ROW(page, dir)      (row_head_t *)((char *)(page) + (dir)->offset)
+#define HEAP_GET_ROW(page, dir)      (row_header_t *)((char *)(page) + (dir)->offset)
 #define HEAP_ROW_DATA_OFFSET(row) \
     (cm_row_init_size((row)->is_csf, ROW_COLUMN_COUNT(row)) + ((row)->is_migr ? sizeof(row_id_t) : 0))
 
 #define HEAP_ROW_ID_LENGTH           10
-#define HEAP_MIN_ROW_SIZE            (sizeof(row_head_t) + HEAP_ROW_ID_LENGTH)
+#define HEAP_MIN_ROW_SIZE            (sizeof(row_header_t) + HEAP_ROW_ID_LENGTH)
 
 
 // A line pointer on a buffer page
@@ -147,12 +154,12 @@ typedef struct st_heap_insert_assist {
     uint8  dir;
     uint8  need_redo;
     uint8  need_undo;
-    char   data[FLEXIBLE_ARRAY_MEMBER];
+    //char   data[FLEXIBLE_ARRAY_MEMBER];
 } heap_insert_assist_t;
 
 
 typedef struct st_insert_node {
-    uint32         type;  // INS_VALUES, INS_SEARCHED, or INS_DIRECT
+    uint32         type;   // INS_VALUES, INS_SEARCHED, or INS_DIRECT
     dict_table_t*  table;  // table where to insert
 
     dtuple_t*      heap_row;    // row to insert
@@ -167,10 +174,9 @@ typedef struct st_insert_node {
 
 /* Update vector structure */
 struct upd_t{
-	ulint		info_bits;	/*!< new value of info bits to record;
-					default is 0 */
+	uint32		info_bits;	/*!< new value of info bits to record; default is 0 */
 	uint32          n_fields;  // number of update fields
-	upd_field_t*    fields;    // array of update fields
+	//upd_field_t*    fields;    // array of update fields
 };
 
 
@@ -179,34 +185,50 @@ struct upd_t{
 
 #pragma pack(4)
 
+typedef struct st_heap_header {
+    uint64         lsn;
+    uint64         scn;
+    uint16         lower;
+    uint16         upper;
+    uint16         free_size;
+    uint16         first_free_dir;
+    uint16         dir_count;
+    uint16         row_count;
+    uint8          itl_count;
+} heap_header_t;
+
+// itl_t: 20 Bytes
 typedef struct st_itl {
     uint64         scn;
     trx_slot_id_t  trx_slot_id;
-    uint32         xnum;
     uint16         fsc; // free space credit (bytes)
-    uint8          is_active : 1;  // committed or not
-    uint8          is_overwrite_scn : 1;   // txn scn overwrite or not
-    uint8          is_copied : 1;  // itl is copied or not
-    uint8          unused : 5;
+    uint16         is_active : 1;  // committed or not
+    uint16         is_overwrite_scn : 1;   // txn scn overwrite or not
+    uint16         is_copied : 1;  // itl is copied or not
+    uint16         unused : 13;
 } itl_t;
 
-#define ROW_ID_SPACE_ID_BITS   20  // 1,048,576
+#define ROW_ID_SPACE_ID_BITS   10  // 1024
 #define ROW_ID_FILE_BITS       10  // 1024
-#define ROW_ID_PAGE_NO_BITS    22  // 4GB * 16KB = 64TB
+#define ROW_ID_PAGE_NO_BITS    32  // 4GB * 16KB = 64TB
 #define ROW_ID_SLOT_BITS       12  // 4096
 
-// row id
+// row_id_t: 8 Bytes
 typedef union st_row_id
 {
     uint64    id;
     struct {
-        uint32 file     : ROW_ID_FILE_BITS;  // file index
-        uint32 page_no  : ROW_ID_PAGE_NO_BITS;
-        uint32 slot     : ROW_ID_SLOT_BITS;  // dir index
-        uint32 space_id : ROW_ID_SPACE_ID_BITS;
+        page_no_t page_no;
+        uint32    space_id : ROW_ID_SPACE_ID_BITS;
+        uint32    file     : ROW_ID_FILE_BITS;  // file index
+        uint32    slot     : ROW_ID_SLOT_BITS;  // dir index
     };
 } row_id_t;
 
+// row_header_t: 
+//   size: 2B
+//   column count: 10bit
+//   bitmap: 0  null, 1 4byte,  2 8byte,  3 variant
 typedef struct st_row_header
 {
     union {
@@ -219,32 +241,22 @@ typedef struct st_row_header
             uint16 aligned1;  // aligned row size
             uint16 aligned2 : 10; // aligned column count
             uint16 is_deleted : 1;
-            uint16 is_link : 1;
-            uint16 is_migr : 1;   // miigration flag
+            uint16 is_ext : 1;  // externally stored
+            uint16 is_migr : 1;   // migration flag
             uint16 is_change : 1; // changed flag after be locked
             uint16 reserved : 2;
         };
     };
-
-    union {
-        struct {
-            uint16 sparse_count;  // sparse column count
-            uint8  sparse_itl_id;
-            uint8  sparse_bitmap[1];
-        };
-        struct {
-            uint8  itl_id;  // row itl id
-            uint8  bitmap[3];
-        };
-    };
+    uint8  itl_id;  // row itl id
+    uint8  null_bits[FLEXIBLE_ARRAY_MEMBER];
 } row_header_t;
 
-
-typedef struct st_row_dir
-{
+// row_dir_t: 16 Bytes
+typedef struct st_row_dir {
     uint64  scn; // commit scn or command id
     uint32  undo_page_no;
     union {
+        uint32 offsets;
         struct {
             uint16 is_free : 1;  // dir is free
             uint16 offset  : 15;  // offset of row
@@ -285,11 +297,11 @@ typedef struct st_heap_page_header
 
 typedef struct st_heap_tuple_header
 {
-	union
-	{
-		HeapTupleFields t_heap;
-		DatumTupleFields t_datum;
-	}			t_choice;
+	//union
+	//{
+	//	HeapTupleFields t_heap;
+	//	DatumTupleFields t_datum;
+	//} t_choice;
 
 
 	/* Fields below here must match MinimalTupleData! */
@@ -306,7 +318,7 @@ typedef struct st_heap_tuple_header
     /* ^ - 23 bytes - ^ */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_BITS 5
-    uint8       t_bits[FLEXIBLE_ARRAY_MEMBER]; /* bitmap of NULLs */
+    //uint8       t_bits[FLEXIBLE_ARRAY_MEMBER]; /* bitmap of NULLs */
 
     /* MORE DATA FOLLOWS AT END OF STRUCT */
 }heap_tuple_header_t;
@@ -324,12 +336,16 @@ typedef struct st_heap_tuple
 
 // --------------------------------------------------------------------------
 
-extern bool32 heap_extend_table_segment(dict_table_t* table);
+//extern bool32 heap_extend_table_segment(dict_table_t* table);
 
-extern uint32 heap_create_entry(uint32        space_id, mtr_t* mtr);
+extern uint32 heap_create_entry(uint32 space_id);
+
+extern inline void heap_page_init(buf_block_t* block, dict_table_t* table, mtr_t* mtr);
 
 
-
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 
 
 #endif  /* _KNL_HEAP_H */

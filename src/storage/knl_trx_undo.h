@@ -2,42 +2,23 @@
 #define _KNL_TRX_UNDO_H
 
 #include "cm_type.h"
+#include "knl_flst.h"
 #include "knl_buf.h"
+#include "knl_heap.h"
+#include "knl_dict.h"
+#include "knl_session.h"
 
 /* Types of an undo log segment */
 #define TRX_UNDO_INSERT         1 /* contains undo entries for inserts */
 #define TRX_UNDO_UPDATE         2 /* contains undo entries for updates and delete markings */
 
 /* States of an undo log segment */
-#define TRX_UNDO_PAGE_ACTIVE         1 /* contains an undo log of an active transaction */
-#define TRX_UNDO_PAGE_CACHED         2 /* update cached for quick reuse */
-#define TRX_UNDO_PAGE_FREE           3 /* insert undo segment can be freed */
-#define TRX_UNDO_PAGE_HISTORY_LIST   4 /* update undo segment will not be reused */
-#define TRX_UNDO_PAGE_PREPARED       5 /* contains an undo log of an prepared transaction */
+#define TRX_UNDO_PAGE_STATE_ACTIVE         1 /* contains an undo log of an active transaction */
+#define TRX_UNDO_PAGE_STATE_CACHED         2 /* update cached for quick reuse */
+#define TRX_UNDO_PAGE_STATE_FREE           3 /* insert undo segment can be freed */
+#define TRX_UNDO_PAGE_STATE_HISTORY_LIST   4 /* update undo segment will not be reused */
+#define TRX_UNDO_PAGE_STATE_PREPARED       5 /* contains an undo log of an prepared transaction */
 
-
-
-typedef struct st_trx_undo_page trx_undo_page_t;
-
-// Transaction undo log page memory object;
-struct st_trx_undo_page {
-    uint64           scn;
-    uint16           type      : 1; // TRX_UNDO_INSERT or TRX_UNDO_UPDATE
-    uint16           offset    : 15;
-    uint16           free_size;
-    uint32           page_no;
-    buf_block_t*     block;
-    SLIST_NODE_T(trx_undo_page_t) list_node;
-};
-
-typedef struct st_undo_rowid {
-    roll_ptr_t    uba;
-    union {
-        page_no_t page_no;
-        uint16    offset;
-        uint16    reserved;
-    }
-} undo_rowid_t;
 
 /* Operation type flags used in trx_undo_write */
 #define TRX_UNDO_INSERT_OP      1
@@ -114,6 +95,10 @@ typedef struct st_undo_rowid {
 //-----------------------------------------------------------------
 
 /* X/Open XA Transaction Identification (XID) */
+
+/** Size of the undo log header without XID information */
+#define TRX_UNDO_LOG_OLD_HDR_SIZE (34 + FLST_NODE_SIZE)
+
 
 /** xid_t::formatID */
 #define TRX_UNDO_XA_FORMAT       (TRX_UNDO_LOG_OLD_HDR_SIZE)
@@ -196,14 +181,23 @@ typedef enum en_undo_type {
 
 #define UNDO_DATA_HEADER_SIZE         OFFSET_OF(undo_data_t, data)
 
+typedef struct st_undo_snapshot {
+    uint64  scn; // commit scn or command id
+    uint32  undo_page_no;
+    uint32  offsets;  // heap page offset and undo page offset
+} undo_snapshot_t;
+
 typedef struct st_undo_data {
-    undo_type_t type; // TRX_UNDO_INSERT_OP or TRX_UNDO_MODIFY_OP
-    uint32      ssn;  // ssn generate current undo
-    row_dir_t   dir;
+    undo_type_t     type; // TRX_UNDO_INSERT_OP or TRX_UNDO_MODIFY_OP
+    uint32          ssn;  // ssn generate current undo
+    undo_snapshot_t snapshot;
 
     union {
-        row_id_t row_id; // rowid to locate row or itl
+        uint64 row_id; // rowid to locate row or itl
         struct {
+            uint32 space_id;
+            uint32 page_no;
+            uint16 dir_slot;
             uint64 seg_file : 10; /* < btree segment entry file_id */
             uint64 seg_page : 30; /* < btree segment entry page_id */
             uint64 user_id : 14;  /* < user id */
@@ -220,14 +214,14 @@ typedef struct st_undo_data {
 
 //-----------------------------------------------------------------
 
-extern inline trx_undo_page_t* trx_undo_prepare(
+extern trx_undo_page_t* trx_undo_prepare(
     que_sess_t *sess,
     uint32 type,
     uint32 size,
     uint64 query_min_scn,
     mtr_t* mtr);
 
-extern inline status_t trx_undo_write(que_sess_t *sess,   undo_data_t* undo_data, mtr_t* mtr);
+extern inline status_t trx_undo_write(que_sess_t *sess, undo_data_t* undo_data, mtr_t* mtr);
 
 
 #endif  /* _KNL_TRX_UNDO_H */

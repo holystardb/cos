@@ -131,7 +131,7 @@ bool32 test_vm_memory()
             goto err_exit;
         }
 
-        char *buf = VM_CTRL_GET_DATA(ctrl[i]);
+        char *buf = VM_CTRL_GET_DATA_PTR(ctrl[i]);
         memset(buf, 0x00, page_size);
         sprintf_s(buf, page_size, "data: %08d", i);
 
@@ -153,7 +153,7 @@ bool32 test_vm_memory()
         }
 
         sprintf_s(temp, 1024, "data: %08d", i);
-        if (strncmp(VM_CTRL_GET_DATA(ctrl[i]), temp, strlen(temp)) == 0) {
+        if (strncmp(VM_CTRL_GET_DATA_PTR(ctrl[i]), temp, strlen(temp)) == 0) {
             //printf("read check: ok, i=%d\n", i);
         } else {
             printf("read check: fail, i=%d\n", i);

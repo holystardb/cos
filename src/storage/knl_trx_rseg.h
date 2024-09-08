@@ -7,7 +7,11 @@
 #include "knl_flst.h"
 #include "knl_mtr.h"
 #include "knl_trx_undo.h"
+#include "knl_trx_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
 
 #define TRX_UNDO_INVALID_PAGENO FIL_NULL
 
@@ -23,80 +27,6 @@
 #define TRX_RSEG_SLOT_HEADER    (8 + 4 * FLST_BASE_NODE_SIZE + 266) // start from 376
 
 
-/** File objects */
-typedef byte    trx_sysf_t;    // Transaction system header
-typedef byte    trx_rsegf_t;  // Rollback segment header
-typedef byte    trx_undo_seg_hdr_t; // Undo segment header
-typedef byte    trx_undo_log_hdr_t; // Undo log header
-typedef byte    trx_undo_page_hdr_t;  // Undo log page header
-typedef byte    trx_undo_rec_t; //Undo log record
-
-typedef struct st_trx_slot trx_slot_t;
-typedef struct st_trx_rseg trx_rseg_t;
-typedef struct st_trx      trx_t;
-
-
-typedef union st_trx_slot_id {
-    uint64 id;
-    struct {
-        uint64  rseg_id : 8;
-        uint64  slot : 16;    // trx_slot index of rseg
-        uint64  xnum : 40;
-    };
-} trx_slot_id_t;
-
-struct st_trx {
-    trx_slot_id_t     trx_slot_id;
-    bool32            is_active;
-    time_t            start_time;
-
-    SLIST_BASE_NODE_T(trx_undo_page_t) insert_undo;
-    SLIST_BASE_NODE_T(trx_undo_page_t) update_undo;
-
-    // listnode for rseg->trxs
-    SLIST_NODE_T(trx_t) list_node;
-};
-
-#define XACT_END            0
-#define XACT_BEGIN          1
-#define XACT_XA_PREPARE     2
-#define XACT_XA_ROLLBACK    3
-
-typedef struct st_trx_status {
-    uint64    scn;
-    bool32    is_overwrite_scn;
-    uint32    status;
-} trx_status_t;
-
-#define TRX_SLOT_PAGE_COUNT_PER_RSEG     4
-
-/* The rollback segment memory object */
-struct st_trx_rseg {
-    uint32            id;       /* rollback segment id */
-    uint32            max_size; /* maximum allowed size in pages */
-    uint32            curr_size;/* current size in pages */
-
-    // trx_list
-    trx_t**           trxs;
-    mutex_t           trx_mutex;
-    SLIST_BASE_NODE_T(trx_t) trx_base;
-
-    // trx_slot list
-    trx_slot_t**      trx_slots;
-    buf_block_t*      trx_slot_blocks[TRX_SLOT_PAGE_COUNT_PER_RSEG];
-    // undo page
-    mutex_t           undo_cache_mutex;
-    SLIST_BASE_NODE_T(trx_undo_page_t) insert_undo_cache;
-    SLIST_BASE_NODE_T(trx_undo_page_t) update_undo_cache;
-    SLIST_BASE_NODE_T(trx_undo_page_t) history_undo_list;
-
-
-    uint32      last_page_no;   /* Page number of the last not yet purged log header in the history list;
-                                   FIL_NULL if all list purged */
-    uint32      last_offset;    /* Byte offset of the last not yet purged log header */
-    trx_id_t    last_trx_no;    /* Transaction number of the last not yet purged log */
-    bool32      last_del_marks; /* TRUE if the last not yet purged log needs purging */
-};
 
 
 // --------------------------------------------------------------------------------------------
@@ -112,6 +42,7 @@ struct st_trx_rseg {
 #define TRX_RSEG_SLOT_RESERVED          17
 #define TRX_RSEG_SLOT_XNUM              19
 
+typedef struct st_trx_slot       trx_slot_t;
 
 // txn slot in txn page
 struct st_trx_slot {
@@ -171,19 +102,6 @@ typedef struct st_trx_info {
 
 #pragma pack()
 
-//-----------------------------------------------------------------
-
-#define TRX_GET_RSEG(rseg_id)           &trx_sys->rseg_array[rseg_id]
-
-#define TRX_GET_RSEG_TRX(slot_id)       trx_sys->rseg_array[slot_id.rseg_id].trxs[slot_id.slot]
-
-#define TRX_GET_RSEG_TRX_SLOT(slot_id)  trx_sys->rseg_array[slot_id.rseg_id].trx_slots[slot_id.slot]
-
-#define TRX_GET_RSEG_TRX_SLOT_PAGE_NO(slot_id)                          \
-    (FSP_FIRST_RSEG_PAGE_NO + slot_id.rseg_id * TRX_SLOT_PAGE_COUNT_PER_RSEG + slot_id.slot / trx_slot_count_per_page)
-
-#define TRX_GET_RSEG_TRX_SLOT_BLOCK(slot_id)                            \
-    trx_sys->rseg_array[slot_id.rseg_id].trx_slot_blocks[slot_id.slot / trx_slot_count_per_page]
 
 
 
@@ -200,6 +118,18 @@ extern inline trx_t* trx_rseg_assign_and_alloc_trx(mtr_t* mtr);
 extern inline void trx_rseg_release_trx(trx_t* trx);
 extern inline void trx_rseg_set_end(trx_t* trx, mtr_t* mtr);
 extern inline uint64 trx_get_next_scn();
+extern inline void trx_get_status_by_itl(trx_slot_id_t trx_slot_id, trx_status_t* trx_status);
+
+
 //-----------------------------------------------------------------
+
+
+
+
+
+
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 
 #endif  /* _KNL_TRX_RSEG_H */

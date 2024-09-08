@@ -2,7 +2,7 @@
 #define _KNL_DATA_H
 
 #include "cm_type.h"
-
+#include "knl_data_type.h"
 
 typedef struct st_dtuple dtuple_t;
 typedef struct st_dfield dfield_t;

@@ -134,12 +134,22 @@ typedef enum {
 typedef struct st_log_group {
     uint32            id;
     char             *name;
-    os_aio_context_t *aio_ctx;
     os_file_t         handle;
     uint64            file_size; // individual log file size in bytes, including the log file header
     uint64            write_offset;
     uint64            base_lsn;
     uint32            status;
+
+
+    uint32            state; // LOG_GROUP_OK or LOG_GROUP_CORRUPTED
+    lsn_t             lsn; // lsn used to fix coordinates within the log group
+    lsn_t             lsn_offset; // the offset of the above lsn
+    // used only in recovery:
+    // recovery scan succeeded up to this lsn in this log group
+    lsn_t             scanned_lsn;
+
+    UT_LIST_NODE_T(struct st_log_group) list_node;
+
 } log_group_t;
 
 /** Redo log buffer */
@@ -158,13 +168,17 @@ typedef struct st_log {
     uint32            max_buf_free; /*!< recommended maximum value of buf_free, after which the buffer is flushed */
     uint32            buf_free; /*!< first free offset within the log buffer */
 
+    byte*             checkpoint_buf;
+
+
     uint8             group_count; // number of log file
     uint8             current_write_group;
     uint8             current_flush_group;
     log_group_t       groups[LOG_GROUP_MAX_COUNT];
     uint64            file_size;
     os_aio_array_t*   aio_array;
-    os_aio_context_t* aio_ctx;
+    os_aio_context_t* aio_ctx_log_write;
+    os_aio_context_t* aio_ctx_checkpoint;
 
     log_slot_t*       slots;
     volatile uint64   slot_write_pos;
@@ -185,6 +199,8 @@ typedef struct st_log {
 
     uint32            n_pending_checkpoint_writes; // number of currently pending checkpoint writes
 
+    UT_LIST_BASE_NODE_T(log_group_t) log_groups;
+
 } log_t;
 
 
@@ -198,8 +214,9 @@ extern uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len);
 extern void log_write_complete(log_buf_lsn_t *log_lsn);
 
 extern void log_write_up_to(lsn_t lsn);
-extern void log_checkpoint();
-
+extern bool32 log_checkpoint();
+extern void log_make_checkpoint_at(duint64 lsn);
+extern lsn_t log_group_calc_lsn_offset(lsn_t lsn, const log_group_t* group);
 extern inline lsn_t log_get_flushed_lsn();
 
 
@@ -213,7 +230,7 @@ extern inline lsn_t log_get_flushed_lsn();
     } while (0)
 
 // Release the flush order mutex
-# define log_flush_order_mutex_exit()                \
+#define log_flush_order_mutex_exit()                 \
     do {                                             \
         mutex_exit(&log_sys->log_flush_order_mutex); \
     } while (0)

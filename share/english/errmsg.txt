@@ -1,0 +1,39 @@
+/* common errors: 0 - 99 */  
+0, Normal, no error reported
+
+
+/* OS errors: 100 - 199 */
+100, Failed to allocate %llu bytes for %s
+101, 
+102, 
+103, Count of vm_open exceeds the maximum %u
+104, Session stack overflow
+105, api has thrown an error %d for system call
+
+
+/* invalid configuration errors: 200 - 299 */
+
+/* network errors: 300 - 399 */
+
+/* privilege error: 400 - 499 */
+
+/* client errors: 500 - 599 */
+
+/* transaction & XA & lock Errors: 600 - 699 */
+
+
+/* PL/SQL Error: 1200 - 1299 */
+
+/* job error , 1300 - 1399 */
+
+/* SPM: 1400 - 1499 */
+
+/* storage engine: 1500 - 1699 */
+1500, Size of row is too large, row size=%u
+1501, Size of undo row is too large, row size=%u
+1502, Size of variant data is too large, size=%llu
+1503, 
+1504, Fatal error, Out of undo segment tablespace
+
+
+/* user define errors: 5000 - 9999 */

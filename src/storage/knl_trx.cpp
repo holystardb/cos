@@ -5,27 +5,30 @@
 #include "knl_trx_rseg.h"
 
 
-/** The transaction system */
+// The transaction system
 trx_sys_t*    trx_sys = NULL;
 
 
+void trx_sys_init_at_db_start()
+{
+}
+
 // Creates the trx_sys instance and initializes ib_bh and mutex.
-void trx_sys_create(uint32 rseg_count)
+void trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count)
 {
     ut_ad(trx_sys == NULL);
 
-    trx_sys = (trx_sys_t *)malloc(sizeof(trx_sys_t));
-    memset(trx_sys, 0x00, sizeof(trx_sys_t));
+    trx_sys = (trx_sys_t *)ut_malloc_zero(sizeof(trx_sys_t));
     mutex_create(&trx_sys->mutex);
     trx_sys->rseg_count = rseg_count;
+    trx_sys->mem_pool = mem_pool;
 }
-
 
 void trx_undo_insert_cleanup(trx_t* trx)
 {
 }
 
-#define TRX_SYS_TRX_ID_WRITE_MARGIN 256
+#define TRX_SYS_TRX_ID_WRITE_MARGIN         256
 
 // Writes the value of max_trx_id to the file based trx system header
 static void trx_sys_flush_max_trx_id(void)
@@ -64,7 +67,7 @@ inline trx_t* trx_begin(mtr_t* mtr)
 static inline void trx_commit_in_memory(trx_t* trx, lsn_t lsn)
 {
     if (lsn) {
-        if (trx->insert_undo != NULL) {
+        if (UT_LIST_GET_LEN(trx->insert_undo) > 0) {
             trx_undo_insert_cleanup(trx);
         }
     }

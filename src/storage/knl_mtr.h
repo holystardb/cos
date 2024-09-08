@@ -281,26 +281,26 @@ enum mlog_id_t {
     MLOG_HEAP_REUSE_ITL = 64,
     MLOG_HEAP_CLEAN_ITL = 65,
 
-    HEAP_INSERT = 66,
-    HEAP_UPDATE_INPLACE = 67,
-    HEAP_UPDATE_INPAGE = 68,
-    HEAP_DELETE = 69,
+    MLOG_HEAP_INSERT = 66,
+    MLOG_HEAP_UPDATE_INPLACE = 67,
+    MLOG_HEAP_UPDATE_INPAGE = 68,
+    MLOG_HEAP_DELETE = 69,
 
-    HEAP_INSERT_MIGR = 70,
-    HEAP_REMOVE_MIGR = 71,
+    MLOG_HEAP_INSERT_MIGR = 70,
+    MLOG_HEAP_REMOVE_MIGR = 71,
 
-    HEAP_SET_LINK = 72,
-    HEAP_DELETE_LINK = 73,
+    MLOG_HEAP_SET_LINK = 72,
+    MLOG_HEAP_DELETE_LINK = 73,
 
-    TRX_RSEG_PAGE_INIT = 74,
-    TRX_RSEG_SLOT_END = 75,
-    TRX_RSEG_SLOT_BEGIN = 76,
-    TRX_RSEG_SLOT_XA_PREPARE = 77,
-    TRX_RSEG_SLOT_XA_ROLLBACK = 78,
+    MLOG_TRX_RSEG_PAGE_INIT = 74,
+    MLOG_TRX_RSEG_SLOT_END = 75,
+    MLOG_TRX_RSEG_SLOT_BEGIN = 76,
+    MLOG_TRX_RSEG_SLOT_XA_PREPARE = 77,
+    MLOG_TRX_RSEG_SLOT_XA_ROLLBACK = 78,
 
 
-	/** biggest value (used in assertions) */
-	MLOG_BIGGEST_TYPE = MLOG_INDEX_LOAD
+    /** biggest value (used in assertions) */
+    MLOG_BIGGEST_TYPE = MLOG_INDEX_LOAD
 };
 
 enum mtr_state_t {
@@ -347,7 +347,7 @@ typedef struct mtr_memo_slot_t{
 
 
 
-extern inline bool32 mtr_init(memory_area_t *area);
+extern inline void mtr_init(memory_pool_t* pool);
 
 extern inline mtr_t* mtr_start(mtr_t *mtr);
 extern inline void mtr_commit(mtr_t *mtr);
@@ -400,6 +400,12 @@ extern inline void mlog_write_initial_log_record(
     mlog_id_t   type,   /*!< in: log item type: MLOG_1BYTE, ... */
     mtr_t*      mtr);   /*!< in: mini-transaction handle */
 
+extern inline byte* mlog_write_initial_log_record_fast(
+    const byte* ptr,    /*!< in: pointer to (inside) a buffer frame holding the file page where modification is made */
+    mlog_id_t   type,   /*!< in: log item type: MLOG_1BYTE, ... */
+    byte*       log_ptr,/*!< in: pointer to mtr log which has been opened */
+    mtr_t*      mtr);   /*!< in: mtr */
+
 extern inline uint32 mtr_read_uint32(
     const byte* ptr,    /*!< in: pointer from where to read */
     mlog_id_t   type,   /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
@@ -413,6 +419,8 @@ extern inline void mlog_catenate_uint64(mtr_t* mtr, uint64 val);
 
 extern inline void mlog_catenate_uint32_compressed(mtr_t* mtr, uint32 val);
 extern inline void mlog_catenate_uint64_compressed(mtr_t* mtr, uint64 val);
+
+extern inline void mlog_catenate_string(mtr_t *mtr, byte* str, uint32 len);
 
 extern inline uint32 mtr_get_log_mode(mtr_t *mtr);
 

@@ -47,6 +47,10 @@ try_again:
         create_flag = CREATE_NEW;
     } else if (create_mode == OS_FILE_OVERWRITE) {
         create_flag = CREATE_ALWAYS;
+    } else if (create_mode == OS_FILE_TRUNCATE_EXISTING) {
+        create_flag = TRUNCATE_EXISTING;
+    } else if (create_mode == OS_FILE_OPEN_ALWAYS) {
+        create_flag = OPEN_ALWAYS;
     } else {
         create_flag = 0;
         ut_error;
@@ -93,9 +97,9 @@ try_again:
 #endif
 
     if (*file == OS_FILE_INVALID_HANDLE) {
-        if (os_file_handle_error(name, "OPEN", FALSE)) {
-            goto try_again;
-        }
+        //if (os_file_handle_error(name, "OPEN", FALSE)) {
+        //    goto try_again;
+        //}
         success = FALSE;
     }
 
@@ -176,7 +180,7 @@ try_again:
     os_mutex_exit(&os_file_seek_mutexes[i]);
 
     *read_size = len;
-    if (ret && *read_size == size) {
+    if (ret) {
         return TRUE;
     }
 
@@ -336,7 +340,7 @@ bool32 os_truncate_file(os_file_t file, uint64 offset)
     return TRUE;
 }
 
-void os_file_get_error_desc_by_err(uint32 err, char *desc, uint32 size)
+inline void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size)
 {
     if (err == OS_FILE_NOT_FOUND) {
         sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
@@ -363,19 +367,19 @@ void os_file_get_error_desc_by_err(uint32 err, char *desc, uint32 size)
     }
 }
 
-void os_file_get_last_error_desc(char *desc, uint32 size)
+inline void os_file_get_last_error_desc(char *desc, uint32 size)
 {
-    uint32 err = os_file_get_last_error();
+    int32 err = os_file_get_last_error();
     os_file_get_error_desc_by_err(err, desc, size);
 }
 
 //If the number is not known to this program, the OS error number + 100 is returned.
-uint32 os_file_get_last_error()
+int32 os_file_get_last_error()
 {
-    uint32 err;
+    int32 err;
 
 #ifdef __WIN__
-    err = (uint32) GetLastError();
+    err = (int32) GetLastError();
     if (err == ERROR_FILE_NOT_FOUND) {
         return OS_FILE_NOT_FOUND;
     } else if (err == ERROR_DISK_FULL) {
@@ -390,7 +394,7 @@ uint32 os_file_get_last_error()
         return 100 + err;
     }
 #else
-    err = (uint32) errno;
+    err = (int32) errno;
     if (err == ENOSPC ) {
         return(OS_FILE_DISK_FULL);
     } else if (err == EAGAIN) {
@@ -728,10 +732,10 @@ loop:
     mutex_exit(&context->mutex);
 
     ut_ad(slot->is_used == FALSE);
+    slot->is_used   = TRUE;
 
     slot->file      = file;
     slot->len       = len;
-    slot->is_used   = TRUE;
     slot->used_time = time(NULL);
     slot->message1  = message1;
     slot->message2  = message2;
@@ -761,18 +765,18 @@ loop:
 
     iocb->data = (void*) slot;
     slot->n_bytes = 0;
-    slot->ret = OS_FILE_IO_TIMEOUT;
 #endif /* __WIN__ */
+
+    slot->ret = OS_FILE_IO_INPROCESS;
 
     return slot;
 }
 
-static void os_aio_context_free_slot(os_aio_context_t* context, os_aio_slot_t* slot)
+inline void os_aio_context_free_slot(os_aio_slot_t* slot)
 {
     uint32 len;
 
     ut_ad(slot->is_used);
-
     slot->is_used = FALSE;
 
 #ifdef __WIN__
@@ -780,61 +784,97 @@ static void os_aio_context_free_slot(os_aio_context_t* context, os_aio_slot_t* s
 #else
     memset(&slot->control, 0x0, sizeof(slot->control));
     slot->n_bytes = 0;
-    slot->ret = 0;
 #endif
 
-    mutex_enter(&context->mutex);
-    len = UT_LIST_GET_LEN(context->free_slots);
-    UT_LIST_ADD_LAST(list_node, context->free_slots, slot);
-    mutex_exit(&context->mutex);
+    mutex_enter(&slot->context->mutex);
+    len = UT_LIST_GET_LEN(slot->context->free_slots);
+    UT_LIST_ADD_LAST(list_node, slot->context->free_slots, slot);
+    mutex_exit(&slot->context->mutex);
 
     if (len == 0) {
-        os_event_set(context->slot_event);
+        os_event_set(slot->context->slot_event);
     }
 }
 
 #ifdef __WIN__
-static int os_aio_windows_handle(
+static int32 os_aio_windows_handle(
     os_aio_context_t* context,
-    uint32            timeout_us,
-    void**            message1, /* out: message to be passed along with the aio operation */
-    void**            message2, /* out: message to be passed along with the aio operation */
-    uint32*           type) /* out: OS_FILE_WRITE or OS_FILE_READ */
+    os_aio_slot_t**   slot, // in and out:
+    uint32            timeout_us, // in
+    void**            message1, // out: message to be passed along with the aio operation
+    void**            message2, // out: message to be passed along with the aio operation
+    uint32*           type) // out: OS_FILE_WRITE or OS_FILE_READ
 {
     uint32          index;
-    int             ret_val;
+    int32           ret_val;
     DWORD           dwMilliseconds = INFINITE;
 
     if (timeout_us != OS_WAIT_INFINITE_TIME) {
         dwMilliseconds = timeout_us / 1000;
     }
 
-    index = WaitForMultipleObjects(context->slot_count, context->handles, FALSE, dwMilliseconds);
+    if (slot && *slot) {
+        index = WaitForSingleObject((*slot)->handle, dwMilliseconds);
+    } else {
+        index = WaitForMultipleObjects(context->slot_count, context->handles, FALSE, dwMilliseconds);
+    }
 
     if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
-        *message1 = NULL;
-        *message2 = NULL;
+        if (message1 && *message1) {
+            *message1 = NULL;
+        }
+        if (message2 && *message2) {
+            *message2 = NULL;
+        }
         return OS_FILE_IO_COMPLETION;
     }
 
     if (index >= WAIT_OBJECT_0 && index < WAIT_OBJECT_0 + context->slot_count) {
-        DWORD len;
-        os_aio_slot_t* slot = os_aio_context_get_nth_slot(context, index);
-        bool32 ret = GetOverlappedResult(slot->file, &(slot->control), &len, TRUE);
-        *message1 = slot->message1;
-        *message2 = slot->message2;
-        *type = slot->type;
-        if (ret && len == slot->len) {
-            ret_val = OS_FILE_IO_COMPLETION;
+        // get current slot
+        os_aio_slot_t* tmp_slot;
+        if (slot) {
+            if (*slot) {
+                tmp_slot = *slot;
+            } else {
+                tmp_slot = os_aio_context_get_nth_slot(context, index);
+                *slot = tmp_slot;
+            }
         } else {
-            ret_val = os_file_get_last_error();
+            tmp_slot = os_aio_context_get_nth_slot(context, index);
         }
-        os_aio_context_free_slot(context, slot);
+
+        if (message1 && *message1) {
+            *message1 = tmp_slot->message1;
+        }
+        if (message2 && *message2) {
+            *message2 = tmp_slot->message2;
+        }
+        if (type) {
+            *type = tmp_slot->type;
+        }
+
+        DWORD len;
+        bool32 ret = GetOverlappedResult(tmp_slot->file, &(tmp_slot->control), &len, TRUE);
+        if (ret && len == tmp_slot->len) {
+            tmp_slot->ret = OS_FILE_IO_COMPLETION;
+        } else {
+            tmp_slot->ret = os_file_get_last_error();
+        }
+        ret_val = OS_FILE_IO_COMPLETION;
     } else if (index == WAIT_TIMEOUT) {
+        if (slot && *slot != NULL) {
+            (*slot)->ret = OS_FILE_IO_TIMEOUT;
+        }
         ret_val = OS_FILE_IO_TIMEOUT;
     } else if (index == WAIT_FAILED) {
-        ret_val = os_file_get_last_error();
-    } else if (index == WAIT_ABANDONED_0) {
+        if (slot && *slot != NULL) {
+            (*slot)->ret = os_file_get_last_error();
+        }
+        ret_val = (*slot)->ret;
+    } else if (index >= WAIT_ABANDONED_0 && index < WAIT_ABANDONED_0 + context->slot_count) {
+        if (slot && *slot != NULL) {
+            (*slot)->ret = OS_FILE_IO_ABANDONED;
+        }
         ret_val = OS_FILE_IO_ABANDONED;
     }
 
@@ -934,7 +974,7 @@ static bool32 os_aio_linux_submit(os_aio_context_t* context, os_aio_slot_t* slot
 
 #endif
 
-bool32 os_file_aio_submit(
+inline os_aio_slot_t* os_file_aio_submit(
     os_aio_context_t* context,
     uint32            type,     /* in: OS_FILE_READ or OS_FILE_WRITE */
     const char*       name,     /* in: name of the file or path as a null-terminated string */
@@ -947,15 +987,10 @@ bool32 os_file_aio_submit(
 {
     os_aio_slot_t*  slot;
 
-    if (type != OS_FILE_READ && type != OS_FILE_WRITE) {
-        return FALSE;
-    }
+    ut_ad(type == OS_FILE_READ || type == OS_FILE_WRITE);
 
     slot = os_aio_context_alloc_slot(context, type,
         message1, message2, file, name, buf, offset, count);
-    if (slot == NULL) {
-        return FALSE;
-    }
 
 #ifdef __WIN__
 
@@ -985,94 +1020,115 @@ bool32 os_file_aio_submit(
     //os_mutex_exit(&os_file_seek_mutexes[mutex_index]);
 
     if ((ret && len == count) || (!ret && GetLastError() == ERROR_IO_PENDING)) {
-        /* aio was queued successfully! */
-        return TRUE;
+        // aio was queued successfully
+        return slot;
     }
-
-    goto err_exit;
 
 #else
 
-    if (!os_aio_linux_submit(context, slot)) {
-        goto err_exit;
+    if (os_aio_linux_submit(context, slot)) {
+        // aio was queued successfully
+        return slot;
     }
 
 #endif // __WIN__
 
-    /* aio was queued successfully! */
-    return TRUE;
+    os_aio_context_free_slot(slot);
 
-err_exit:
-
-    return FALSE;
+    return NULL;
 }
 
-//Waits for an aio operation to complete.
-int os_file_aio_wait(os_aio_context_t* context, uint32 timeout_us)
+
+// Waits for an aio operation to complete.
+inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us)
 {
-    int         ret;
-    void*       fil_node;
-    void*       message;
-    uint32      type;
+    int32 ret;
+
+    ut_ad(slot);
 
 #ifdef __WIN__
-    ret = os_aio_windows_handle(context, timeout_us, &fil_node, &message, &type);
+    ret = os_aio_windows_handle(slot->context, &slot, timeout_us, NULL, NULL, NULL);
 #else
-    ret = os_aio_linux_handle(context, timeout_us, &fil_node, &message, &type);
+    ret = os_aio_linux_handle(slot->context, timeout_us, NULL, NULL, NULL);
+#endif /* WIN_ASYNC_IO */
+
+    os_aio_context_free_slot(slot);
+
+    return ret;
+}
+
+// Waits for an aio operation to complete.
+inline int32 os_file_aio_context_wait(os_aio_context_t* context, os_aio_slot_t** slot, uint32 timeout_us)
+{
+    int32 ret;
+
+#ifdef __WIN__
+    ret = os_aio_windows_handle(context, slot, timeout_us, NULL, NULL, NULL);
+#else
+    ret = os_aio_linux_handle(context, slot, timeout_us, NULL, NULL, NULL);
 #endif /* WIN_ASYNC_IO */
 
     if (ret != OS_FILE_IO_COMPLETION) {
         return ret;
     }
 
-    if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
-        return OS_FILE_IO_COMPLETION;
-    }
-
-    if (fil_node) {
-        //srv_set_io_thread_op_info(segment, "complete io for fil node");
-        
-        //mutex_enter(&fil_system->mutex);
-        //fil_node_complete_io(fil_node, fil_system, type);
-        ///mutex_exit(&fil_system->mutex);
-        //ut_ad(fil_validate_skip());
-    }
+    //if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
+    //    return OS_FILE_IO_COMPLETION;
+    //}
 
     return OS_FILE_IO_COMPLETION;
 }
 
 //Waits for all aio operation to complete.
-int os_file_aio_wait_all(os_aio_context_t* context, uint32 slot_count, uint32 timeout_us)
+int32 os_file_aio_wait_all(os_aio_context_t* aio_ctx, uint32 slot_count, uint32 timeout_us)
 {
-    uint32      index = 0;
-    int         ret;
-    void*       message1;
-    void*       message2;
-    uint32      type;
+    uint32         index = 0;
+    int32          ret;
+    void*          message1;
+    void*          message2;
+    uint32         type;
+    uint32         timeout_us_per= 1000000;
+    uint32         wait_count = timeout_us / timeout_us_per;
+    uint32         wait_loop = 0;
+    bool32         is_disk_full = FALSE;
 
-    while (index < slot_count) {
+    while (index < slot_count && srv_shutdown_state != SHUTDOWN_EXIT_THREADS && wait_loop < wait_count) {
+        os_aio_slot_t* aio_slot = NULL;
 
 #ifdef __WIN__
-        ret = os_aio_windows_handle(context, timeout_us, &message1, &message2, &type);
+        ret = os_aio_windows_handle(aio_ctx, &aio_slot, timeout_us_per, &message1, &message2, &type);
 #else
-        ret = os_aio_linux_handle(context, timeout_us, &fil_node, &message, &type);
+        ret = os_aio_linux_handle(aio_ctx, timeout_us, &fil_node, &message, &type);
 #endif /* WIN_ASYNC_IO */
 
-        if (ret != OS_FILE_IO_COMPLETION) {
+        if (ret == OS_FILE_DISK_FULL) {
+            is_disk_full = TRUE;
+        }
+
+        if (ret == OS_FILE_IO_COMPLETION || ret == OS_FILE_DISK_FULL) {
+            ut_a(aio_slot);
+            os_aio_context_free_slot(aio_slot);
+            index++;
+        } else if (ret == OS_FILE_IO_TIMEOUT) {
+            wait_loop++;
+            continue;
+        } else {
             return ret;
-        }
+        }       
+    }
 
-        if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
-            return OS_FILE_IO_COMPLETION;
-        }
+    if (wait_loop >= wait_count) {
+        return OS_FILE_IO_TIMEOUT;
+    }
 
-        index++;
+    if (is_disk_full) {
+        return OS_FILE_DISK_FULL;
     }
 
     return OS_FILE_IO_COMPLETION;
 }
 
-os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array)
+inline os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array)
 {
     uint64            signal_count = 0;
     os_aio_context_t *ctx;
@@ -1097,7 +1153,7 @@ retry:
     return ctx;
 }
 
-void os_aio_array_free_context(os_aio_context_t* context)
+inline void os_aio_array_free_context(os_aio_context_t* context)
 {
     uint32 len;
     os_aio_array_t* array = context->array;
@@ -1114,7 +1170,7 @@ void os_aio_array_free_context(os_aio_context_t* context)
     }
 }
 
-os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index)
+inline os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index)
 {
     ut_a(index < array->context_count);
 
@@ -1167,6 +1223,7 @@ os_aio_array_t* os_aio_array_create(
         memset(ctx->slots, 0x00, sizeof(ctx->slot_count * sizeof(os_aio_slot_t)));
         for (uint32 i = 0; i < ctx->slot_count; i++) {
             os_aio_slot_t* slot = &ctx->slots[i];
+            slot->context = ctx;
             slot->is_used = FALSE;
             UT_LIST_ADD_LAST(list_node, ctx->free_slots, slot);
 #ifdef __WIN__
@@ -1177,7 +1234,6 @@ os_aio_array_t* os_aio_array_create(
 #else
             memset(&slot->control, 0x0, sizeof(slot->control));
             slot->n_bytes = 0;
-            slot->ret = 0;
 #endif /* __WIN__ */
         }
 

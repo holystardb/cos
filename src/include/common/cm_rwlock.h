@@ -86,11 +86,11 @@ typedef struct st_sync_array {
 numerical values smaller than 30 (smaller than BTR_MODIFY_TREE and
 MTR_MEMO_MODIFY) and the order of the numerical values like below! and they
 should be 2pow value to be used also as ORed combination of flag. */
-enum rw_lock_type_t {
+typedef enum en_rw_lock_type {
     RW_S_LATCH = 1,
     RW_X_LATCH = 2,
     RW_NO_LATCH = 4
-};
+} rw_lock_type_t;
 
 /* We decrement lock_word by X_LOCK_DECR for each x_lock.
 It is also the start value for the lock_word, meaning that it limits the maximum number
@@ -202,23 +202,23 @@ void sync_close(void);
 void sync_print(FILE *file);
 
 
-void rw_lock_create_func(rw_lock_t *lock, const char *cfile_name, uint32 cline);
-void rw_lock_destroy_func(rw_lock_t *lock);
+extern inline void rw_lock_create_func(rw_lock_t *lock, const char *cfile_name, uint32 cline);
+extern inline void rw_lock_destroy_func(rw_lock_t *lock);
 
-void rw_lock_s_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
-void rw_lock_s_unlock_func(uint32 pass, rw_lock_t *lock);
-bool32 rw_lock_s_lock_low(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
+extern inline void rw_lock_s_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
+extern inline void rw_lock_s_unlock_func(uint32 pass, rw_lock_t *lock);
+extern inline bool32 rw_lock_s_lock_low(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
 
-void rw_lock_x_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
-void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock);
-bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line);
+extern inline void rw_lock_x_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
+extern inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock);
+extern inline bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line);
 
-bool32 rw_lock_validate(const rw_lock_t *lock);
-bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type);
+extern inline bool32 rw_lock_validate(const rw_lock_t *lock);
+extern inline bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type);
 
-void sync_check_init(size_t max_threads);
+extern inline void sync_check_init(size_t max_threads);
 
-uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock);
+extern inline uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock);
 
 
 #define rw_lock_create(M) rw_lock_create_func((M), __FILE__, __LINE__)

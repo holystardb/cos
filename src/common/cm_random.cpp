@@ -14,10 +14,10 @@
 #define UT_XOR_RND1 187678878
 #define UT_XOR_RND2 143537923
 
-THREAD_LOCAL uint64 ut_rnd_uint64_counter = 0;
+THREAD_LOCAL uint64 ut_rnd_uint64_counter = 65654363;
 
 
-uint64 ut_rnd_gen_next_uint64(   uint64 rnd) /*!< in: the previous random number value */
+inline uint64 ut_rnd_gen_next_uint64(   uint64 rnd) /*!< in: the previous random number value */
 {
   uint64 n_bits;
 
@@ -34,19 +34,13 @@ uint64 ut_rnd_gen_next_uint64(   uint64 rnd) /*!< in: the previous random number
   return (rnd);
 }
 
-uint64 ut_rnd_gen_uint64() {
-  uint64 rnd = ut_rnd_uint64_counter;
-  if (rnd == 0) {
-    rnd = 65654363;
-  }
-
-  rnd = UT_RND1 * rnd + UT_RND2;
-  ut_rnd_uint64_counter = rnd;
-
-  return (ut_rnd_gen_next_uint64(rnd));
+inline uint64 ut_rnd_gen_uint64()
+{
+  ut_rnd_uint64_counter = UT_RND1 * ut_rnd_uint64_counter + UT_RND2;
+  return ut_rnd_gen_next_uint64(ut_rnd_uint64_counter);
 }
 
-uint64 ut_rnd_interval(
+inline uint64 ut_rnd_interval(
     uint64 low,  /*!< in: low limit; can generate also this value */
     uint64 high) /*!< in: high limit; can generate also this value */
 {
@@ -63,12 +57,12 @@ uint64 ut_rnd_interval(
   return (low + (rnd % (high - low)));
 }
 
-uint32 ut_fold_uint32_pair(uint32 n1, uint32 n2)
+inline uint32 ut_fold_uint32_pair(uint32 n1, uint32 n2)
 {
     return(((((n1 ^ n2 ^ UT_HASH_RANDOM_MASK2) << 8) + n1) ^ UT_HASH_RANDOM_MASK) + n2);
 }
 
-uint32 ut_fold_binary(const byte *str, uint32 len)
+inline uint32 ut_fold_binary(const byte *str, uint32 len)
 {
     uint32  fold = 0;
     const byte* str_end = str + (len & 0xFFFFFFF8);

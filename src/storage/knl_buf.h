@@ -373,7 +373,7 @@ typedef struct st_buf_pool {
 } buf_pool_t;
 
 
-dberr_t buf_pool_init(uint64 total_size, uint32 n_instances);
+status_t buf_pool_init(uint64 total_size, uint32 n_instances);
 buf_pool_t* buf_pool_get(const page_id_t &page_id);
 buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
 buf_pool_t* buf_pool_from_block(const buf_block_t *block);
@@ -408,14 +408,14 @@ buf_block_t* buf_page_create(    const page_id_t &page_id,   const page_size_t &
 
 // This is the general function used to get access to a database page
 buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
-    uint32 rw_latch, Page_fetch mode, mtr_t *mtr);
+    rw_lock_type_t rw_latch, Page_fetch mode, mtr_t *mtr);
 
 #define buf_page_get(ID, SIZE, RW_LOCK, MTR) buf_page_get_gen(ID, SIZE, RW_LOCK, Page_fetch::NORMAL, MTR)
 
 
 
 // Completes an asynchronous read or write request of a file page to or from the buffer pool
-bool32 buf_page_io_complete(buf_page_t* bpage);
+inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool32 evict);
 bool32 buf_page_can_relocate(const buf_page_t *bpage);
 buf_page_t *buf_page_alloc_descriptor(void);
 void buf_page_free_descriptor(buf_page_t *bpage);

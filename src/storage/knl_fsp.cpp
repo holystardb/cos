@@ -39,11 +39,6 @@ static uint32 fsp_seg_inode_page_find_free(
     uint32	zip_size,/*!< in: compressed page size, or 0 */
     mtr_t*	mtr);	/*!< in/out: mini-transaction */
 
-static void fsp_free_page(
-    const page_id_t& page_id,
-    const page_size_t& page_size,
-    mtr_t* mtr);
-
 
 
 byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
@@ -73,7 +68,7 @@ byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
 
 
 // Sets a descriptor bit of a page.
-void xdes_set_bit(
+inline void xdes_set_bit(
     xdes_t  *descr,  /*!< in: descriptor */
     uint32   bit,    /*!< in: XDES_FREE_BIT or XDES_CLEAN_BIT */
     uint32   offset, /*!< in: page offset within extent: 0 ... FSP_EXTENT_SIZE - 1 */
@@ -340,8 +335,7 @@ xdes_t* xdes_lst_get_descriptor(
 /********************************************************************//**
 Returns page offset of the first page in extent described by a descriptor.
 @return offset of the first page in extent */
-uint32 xdes_get_offset(
-	const xdes_t*	descr)	/*!< in: extent descriptor */
+inline uint32 xdes_get_offset(const xdes_t* descr)
 {
 	ut_ad(descr);
 
@@ -369,7 +363,7 @@ uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset)
 }
 
 
-static uint32 fsp_get_autoextend_increment(fil_space_t* space, uint32 size)
+static uint32 fsp_get_autoextend_increment(fil_space_t* space)
 {
     if (space->id >= FIL_USER_SPACE_ID) {
         
@@ -452,7 +446,7 @@ static void fsp_init_file_page_low(buf_block_t* block)
 {
     page_t* page = buf_block_get_frame(block);
 
-    if (!fsp_is_system_temporary(block->page.id.space())) {
+    if (!fsp_is_system_temporary(block->page.id.space_id())) {
         memset(page, 0, UNIV_PAGE_SIZE);
     }
 
@@ -463,7 +457,7 @@ static void fsp_init_file_page_low(buf_block_t* block)
 // Initialize a file page.
 static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr)
 {
-    fsp_init_file_page_low(block);
+    //fsp_init_file_page_low(block);
 
     //ut_d(fsp_space_modify_check(block->page.id.space(), mtr));
     mlog_write_initial_log_record(buf_block_get_frame(block), MLOG_INIT_FILE_PAGE2, mtr);
@@ -478,7 +472,7 @@ static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr)
 //    It is assumed that the block has been x-latched only by mtr,
 //    and freed in mtr in that case.
 // return block, initialized if init_mtr==mtr or rw_lock_x_lock_count(&block->lock) == 1
-static buf_block_t* fsp_page_create(
+buf_block_t* fsp_page_create(
     uint32  space_id,      /*!< in: space id of the allocated page */
     uint32  page_no,    /*!< in: page number of the allocated page */
     mtr_t*  mtr,        /*!< in: mini-transaction of the allocation */
@@ -946,7 +940,7 @@ static void fseg_free_page(uint32 space_id, fseg_inode_t* inode, uint32 page_no,
     if (xdes_is_free(descr, mtr)) {
         /* The extent has become free: free it to space */
         flst_remove(inode + FSEG_NOT_FULL, descr + XDES_FLST_NODE, mtr);
-        fsp_free_extent(page_id, page_size, mtr);
+        fsp_free_extent(space_id, descr, mtr);
     }
 
     //mtr->n_freed_pages++;
@@ -1037,7 +1031,7 @@ xdes_t* fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, mtr_t* mtr)
     ut_ad(!((page_offset(inode) - FSEG_ARR_OFFSET) % FSEG_INODE_SIZE));
     ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
 
-    if (flst_get_len(inode + FSEG_FREE, mtr) > 0) {
+    if (flst_get_len(inode + FSEG_FREE) > 0) {
         // Segment free list is not empty, allocate from it
         fil_addr_t first = flst_get_first(inode + FSEG_FREE, mtr);
         descr = xdes_lst_get_descriptor(space_id, page_size, first, mtr);
@@ -1059,13 +1053,13 @@ xdes_t* fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, mtr_t* mtr)
 }
 
 // Allocates free extents from table space
-bool32 fseg_reserve_free_extents(
+xdes_t* fseg_reserve_free_extents(
     uint32 space_id,
     fseg_inode_t* inode,
     uint32 count, // number of extents to reserve
     mtr_t* mtr)
 {
-    xdes_t* descr;
+    xdes_t* descr = NULL;
     const page_size_t page_size(0);
 
     ut_ad(!((page_offset(inode) - FSEG_ARR_OFFSET) % FSEG_INODE_SIZE));
@@ -1076,7 +1070,7 @@ bool32 fseg_reserve_free_extents(
         descr = fsp_alloc_free_extent(space_id, page_size, mtr);
         if (descr == NULL) {
             /* No free space left */
-            return FALSE;
+            return NULL;
         }
 
         uint64 seg_id = mach_read_from_8(inode + FSEG_ID);
@@ -1085,7 +1079,7 @@ bool32 fseg_reserve_free_extents(
         flst_add_last(inode + FSEG_FREE, descr + XDES_FLST_NODE, mtr);
     }
 
-    return(descr);
+    return descr;
 }
 
 
@@ -1161,7 +1155,7 @@ static void fsp_fill_extent_free_list(fil_space_t* space, fsp_header_t* header, 
 static bool32 fsp_extend_space(fil_space_t *space, fsp_header_t* header, mtr_t* mtr)
 {
     uint32 size = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, mtr);
-    uint32 hwm_page_no = size + fsp_get_autoextend_increment(space, size);
+    uint32 hwm_page_no = size + fsp_get_autoextend_increment(space);
     uint32 actual_size = 0;
 
     if (!fil_space_extend(space, hwm_page_no, &actual_size)) {
@@ -1182,10 +1176,7 @@ static bool32 fsp_try_extend_space(uint32 space_id, mtr_t* mtr)
     bool32       ret = TRUE;
     uint32       hwm_page_no;
 
-    mutex_enter(&fil_system->mutex);
-    space = fil_get_space_by_id(space_id);
-    mutex_exit(&fil_system->mutex);
-
+    space = fil_system_get_space_by_id(space_id);
     if (space == NULL) {
         return FALSE;
     }
@@ -1211,13 +1202,13 @@ retry:
     space->io_in_progress = FALSE;
     mutex_exit(&space->mutex);
 
-    fil_release_space(space);
+    fil_system_unpin_space(space);
 
     return ret;
 }
 
 // Returns an extent to the free list of a space
-void fsp_free_extent(    uint32 space_id,   xdes_t* xdes, mtr_t* mtr)
+void fsp_free_extent(uint32 space_id, xdes_t* xdes, mtr_t* mtr)
 {
     const page_size_t page_size(0);
     fsp_header_t* header;
@@ -1271,8 +1262,8 @@ void fsp_free_page(
 
     /* printf("Freeing page %lu in space %lu\n", page, space); */
 
-    header = fsp_get_space_header(page_id.space(), page_size, mtr);
-    descr = xdes_get_descriptor_with_space_hdr(header, page_id.space(), page_id.page_no(), mtr);
+    header = fsp_get_space_header(page_id.space_id(), page_size, mtr);
+    descr = xdes_get_descriptor_with_space_hdr(header, page_id.space_id(), page_id.page_no(), mtr);
     state = xdes_get_state(descr, mtr);
 
     ut_a((state == XDES_FREE_FRAG) || (state == XDES_FULL_FRAG));
@@ -1296,7 +1287,7 @@ void fsp_free_page(
     if (xdes_is_free(descr, mtr)) {
         /* The extent has become free: move it to another list */
         flst_remove(header + FSP_FREE_FRAG, descr + XDES_FLST_NODE, mtr);
-        fsp_free_extent(page_id, page_size, mtr);
+        fsp_free_extent(page_id.space_id(), descr, mtr);
     }
 }
 
@@ -1389,7 +1380,7 @@ static fsp_header_t* fsp_header_init(fil_space_t *space, mtr_t *mtr)
     flst_init(header + FSP_SEG_INODES_FULL, mtr);
     flst_init(header + FSP_SEG_INODES_FREE, mtr);
 
-    mlog_write_uint64(header + FSP_SEG_ID, ut_ull_create(0, 1), mtr);
+    mlog_write_uint64(header + FSP_SEG_ID, 1, mtr);
 
     return header;
 }
@@ -1402,10 +1393,9 @@ bool32 fsp_init_space(uint32 space_id, uint32 size)
     bool32 ret = TRUE;
     fil_space_t *space;
 
-    mutex_enter(&fil_system->mutex);
-    space = fil_get_space_by_id(space_id);
-    mutex_exit(&fil_system->mutex);
+    LOGGER_INFO(LOGGER, "fsp space initialize");
 
+    space = fil_system_get_space_by_id(space_id);
     if (space == NULL) {
         return FALSE;
     }
@@ -1443,7 +1433,7 @@ exit:
 
     mtr_commit(&mtr);
 
-    fil_release_space(space);
+    fil_system_unpin_space(space);
 
     return ret;
 }
@@ -1451,6 +1441,9 @@ exit:
 bool32 fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
 {
     mtr_t mtr;
+
+    LOGGER_INFO(LOGGER, "system space extend");
+
     mtr_start(&mtr);
 
     const page_size_t page_size(0);

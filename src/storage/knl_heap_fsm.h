@@ -2,8 +2,7 @@
 #define _KNL_HEAP_FSM_H
 
 #include "cm_type.h"
-#include "cm_space.h"
-#include "cm_page.h"
+#include "knl_dict.h"
 
 typedef byte heap_fsm_header_t;
 
@@ -23,7 +22,7 @@ typedef byte heap_fsm_header_t;
 #define FSM_FSEG_INODE_SIZE         (3 * FLST_BASE_NODE_SIZE + FSP_EXTENT_SIZE * FSM_NODE_PAGE_NO_SIZE)
 #define FSM_HEADER_SIZE             (24 + FSM_FSEG_INODE_SIZE)
 
-typedef byte heap_fsm_nodes_t;
+typedef byte      heap_fsm_nodes_t;
 
 #define FSM_NODES                   (FIL_PAGE_DATA + FSM_HEADER_SIZE)
 
@@ -49,8 +48,8 @@ typedef byte heap_fsm_nodes_t;
 
 typedef struct st_fsm_path_node
 {
-    uint32 page_no;
-    int32  page_slot;
+    page_no_t page_no;
+    int32     page_slot_in_upper_level;
 } fsm_path_node_t;
 
 typedef struct st_fsm_search_path
@@ -65,18 +64,18 @@ typedef struct st_fsm_search_path
 
 //----------------------------------------------------------------------
 
-extern bool32 fsm_truncate_avail(page_t page, int32 nslots);
-extern bool32 fsm_rebuild_page(page_t page, mtr_t* mtr);
+extern bool32 fsm_truncate_avail(page_t* page, int32 nslots);
+extern bool32 fsm_rebuild_page(page_t* page, mtr_t* mtr);
 
 extern inline uint8 fsm_get_needed_to_category(dict_table_t* table, uint32 size);
 extern inline uint8 fsm_space_avail_to_category(dict_table_t* table, uint32 avail);
 
-extern void fsm_recursive_set_catagory(dict_table_t* table, fsm_address_t& addr, uint8 value, mtr_t* mtr);
+extern void fsm_recursive_set_catagory(dict_table_t* table, fsm_search_path_t& addr, uint8 value, mtr_t* mtr);
 
 
 extern uint32 fsm_create(uint32     space_id);
 extern bool32 fsm_alloc_heap_page(dict_table_t* table, uint32 page_count, mtr_t* mtr);
-
+extern void fsm_add_free_page(uint32 space_id, uint32 root_page_no, uint32 free_page_no, mtr_t* mtr);
 extern page_no_t fsm_search_free_page(dict_table_t* table, uint8 min_category, fsm_search_path_t& search_path);
 
 #endif  /* _KNL_HEAP_FSM_H */
