@@ -300,8 +300,8 @@ extern buf_block_t* fsp_page_create(uint32 space_id, uint32 page_no, mtr_t* mtr,
 extern bool32 fsp_is_system_temporary(space_id_t space_id);
 extern fsp_header_t* fsp_get_space_header(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);
 
-extern bool32 fsp_init_space(uint32 space_id, uint32 size);
-extern bool32 fsp_system_space_reserve_pages(uint32 reserved_max_page_no);
+extern status_t fsp_init_space(uint32 space_id, uint32 size);
+extern status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no);
 
 extern void fsp_free_page(const page_id_t& page_id, const page_size_t& page_size, mtr_t* mtr);
 extern buf_block_t* fsp_alloc_free_page(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);

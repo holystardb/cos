@@ -179,7 +179,10 @@ retry:
             }
             log_file_size = 0;
         }
-
+        //
+        fprintf(stderr, "%s", write_buffer);
+        fflush(stderr);
+        //
         ret = WriteFile(log_handle, write_buffer, (DWORD)write_pos, &write_size, NULL);
         if (ret == 0 || write_pos != write_size) {
             char err_info[256];

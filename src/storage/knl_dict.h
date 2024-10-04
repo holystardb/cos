@@ -5,7 +5,7 @@
 #include "cm_error.h"
 #include "cm_mutex.h"
 #include "cm_memory.h"
-
+#include "cm_date.h"
 #include "knl_hash_table.h"
 #include "knl_server.h"
 #include "knl_trx_types.h"
@@ -15,21 +15,32 @@
 #define DICT_HDR_SPACE      0   /* the SYSTEM tablespace */
 #define DICT_HDR_PAGE_NO    FSP_DICT_HDR_PAGE_NO
 
+#define DICT_INVALID_OBJECT_ID        UINT_MAX64
+#define DICT_TABLE_COLUMN_MAX_COUNT   1000
+#define DICT_INDEX_COLUMN_MAX_COUNT   30
+
+
 /* The ids for the basic system tables and their indexes */
-#define DICT_TABLES_ID          1
-#define DICT_COLUMNS_ID         2
-#define DICT_INDEXES_ID         3
-#define DICT_FIELDS_ID          4
+#define DICT_TABLES_ID              1
+#define DICT_COLUMNS_ID             2
+#define DICT_INDEXES_ID             3
+#define DICT_FIELDS_ID              4
+
 /* The following is a secondary index on SYS_TABLES */
-#define DICT_TABLE_IDS_ID       5
+#define DICT_TABLES_CLUST_ID        5
+#define DICT_TABLES_INDEX_ID_ID     6
+#define DICT_COLUMNS_CLUST_ID       7
+#define DICT_INDEXES_CLUST_ID       8
+#define DICT_FIELDS_CLUST_ID        9
+
 
 /* the ids for tables etc.
    start from this number, except for basic system tables and their above defined indexes;
    ibuf tables and indexes are assigned as the id the number DICT_IBUF_ID_MIN plus the space id */
-#define DICT_HDR_FIRST_ID       256
+#define DICT_HDR_FIRST_ID           256
 
 /* The offset of the dictionary header on the page */
-#define DICT_HDR                FSEG_PAGE_DATA
+#define DICT_HDR                    FSEG_PAGE_DATA
 
 /*-------------------------------------------------------------*/
 /* Dictionary header offsets */
@@ -38,11 +49,15 @@
 #define DICT_HDR_INDEX_ID       16  /* The latest assigned index id */
 #define DICT_HDR_MAX_SPACE_ID   24  /* The latest assigned space id,or 0*/
 #define DICT_HDR_MIX_ID_LOW     28  /* Obsolete,always DICT_HDR_FIRST_ID*/
-#define DICT_HDR_TABLES         32  /* Root of SYS_TABLES clust index */
-#define DICT_HDR_TABLE_IDS      36  /* Root of SYS_TABLE_IDS sec index */
-#define DICT_HDR_COLUMNS        40  /* Root of SYS_COLUMNS clust index */
-#define DICT_HDR_INDEXES        44  /* Root of SYS_INDEXES clust index */
-#define DICT_HDR_FIELDS         48  /* Root of SYS_FIELDS clust index */
+#define DICT_HDR_TABLES         32  /* Root of SYS_TABLES heap */
+#define DICT_HDR_TABLE_CLUST    36  /* Root of SYS_TABLE_CLUST clust index */
+#define DICT_HDR_TABLE_IDS      40  /* Root of SYS_TABLE_IDS sec index */
+#define DICT_HDR_COLUMNS        44  /* Root of SYS_COLUMNS heap */
+#define DICT_HDR_COLUMNS_CLUST  48  /* Root of SYS_COLUMNS clust index */
+#define DICT_HDR_INDEXES        52  /* Root of SYS_INDEXES heap */
+#define DICT_HDR_INDEXES_CLUST  56  /* Root of SYS_INDEXES clust index */
+#define DICT_HDR_FIELDS         60  /* Root of SYS_FIELDS heap */
+#define DICT_HDR_FIELDS_CLUST   64  /* Root of SYS_FIELDS clust index */
 #define DICT_HDR_FSEG_HEADER    1024  /* Segment header for the tablespace segment
                                        into which the dictionary header is created */
 /*-------------------------------------------------------------*/
@@ -282,11 +297,10 @@ typedef struct st_dict_index    dict_index_t;
 #define M_MIN_NUM_PRECISION     (int32)1
 #define M_MAX_NUM_PRECISION     (int32)38
 
-
-
 // Data structure for a column in a table
-// total 8 Bytes
+// total 16 Bytes
 typedef struct st_dict_col {
+    char*  name;
     uint8  mtype;  // main data type
     union {
         struct {
@@ -309,22 +323,19 @@ typedef struct st_dict_col {
     uint32 reserved      : 18;
 } dict_col_t;
 
+// indexed field length (or indexed prefix length) for indexes on tables
+#define DICT_INDEXE_MAX_COL_LEN     768
 
-/** Data structure for a field in an index */
+
+// Data structure for a field in an index
 typedef struct st_dict_field{
-	dict_col_t*	col;		/*!< pointer to the table column */
-	const char*	name;		/*!< name of the column */
-	unsigned	prefix_len:12;	/*!< 0 or the length of the column
-					prefix in bytes in a MySQL index of
-					type, e.g., INDEX (textcol(25));
-					must be smaller than
-					DICT_MAX_FIELD_LEN_BY_FORMAT;
-					NOTE that in the UTF-8 charset, MySQL
-					sets this to (mbmaxlen * the prefix len)
-					in UTF-8 chars */
-	unsigned	fixed_len:10;	/*!< 0 or the fixed length of the
-					column if smaller than
-					DICT_ANTELOPE_MAX_INDEX_COL_LEN */
+    uint32      col_ind:10;  // table column position (starting from 0)
+    // 0 or the length of the column prefix in bytes in a MySQL index of type, e.g., INDEX (textcol(25));
+    // must be smaller than DICT_INDEXE_MAX_COL_LEN;
+    // NOTE that in the UTF-8 charset, MySQL sets this to (mbmaxlen * the prefix len) in UTF-8 chars
+    uint32      prefix_len:10;
+    uint32      fixed_len:10; // 0 or the fixed length of the column if smaller than DICT_INDEXE_MAX_COL_LEN
+    uint32      reserved:2;
 } dict_field_t;
 
 struct st_dict_heap {
@@ -337,52 +348,24 @@ struct st_dict_heap {
 /** Data structure for an index.  Most fields will be
 initialized to 0, NULL or FALSE in dict_mem_index_create(). */
 struct st_dict_index{
-	index_id_t	id;	/*!< id of the index */
-	const char*	name;	/*!< index name */
-	const char*	table_name;/*!< table name */
-	dict_table_t*	table;	/*!< back pointer to table */
-	unsigned	space:32; /*!< space where the index tree is placed */
-	unsigned	page:32; /*!< index tree root page number */
-	unsigned	type:DICT_IT_BITS;
-				/*!< index type (DICT_CLUSTERED, DICT_UNIQUE,
-				DICT_UNIVERSAL, DICT_IBUF, DICT_CORRUPT) */
-#define MAX_KEY_LENGTH_BITS 12
-	unsigned	trx_id_offset:MAX_KEY_LENGTH_BITS;
-				/*!< position of the trx id column
-				in a clustered index record, if the fields
-				before it are known to be of a fixed size,
-				0 otherwise */
-#if (1<<MAX_KEY_LENGTH_BITS) < MAX_KEY_LENGTH
-# error (1<<MAX_KEY_LENGTH_BITS) < MAX_KEY_LENGTH
-#endif
-	unsigned	n_user_defined_cols:10;
-				/*!< number of columns the user defined to
-				be in the index: in the internal
-				representation we add more columns */
-	unsigned	n_uniq:10;/*!< number of fields from the beginning
-				which are enough to determine an index
-				entry uniquely */
-	unsigned	n_def:10;/*!< number of fields defined so far */
-	unsigned	n_fields:10;/*!< number of fields in the index */
-	unsigned	n_nullable:10;/*!< number of nullable fields */
-	unsigned	cached:1;/*!< TRUE if the index object is in the
-				dictionary cache */
-	unsigned	to_be_dropped:1;
-				/*!< TRUE if the index is to be dropped;
-				protected by dict_operation_lock */
-	unsigned	online_status:2;
-				/*!< enum online_index_status.
-				Transitions from ONLINE_INDEX_COMPLETE (to
-				ONLINE_INDEX_CREATION) are protected
-				by dict_operation_lock and
-				dict_sys->mutex. Other changes are
-				protected by index->lock. */
-	dict_field_t*	fields;	/*!< array of field descriptions */
+    index_id_t      id;
+    const char*     name; // index name
+    dict_table_t*   table;
+    uint32          space_id; // space where the index tree is placed
+    uint32          page_no; // index tree root page number
+    // index type (DICT_CLUSTERED, DICT_UNIQUE, DICT_UNIVERSAL, DICT_IBUF, DICT_CORRUPT)
+    uint32          type:DICT_IT_BITS;
+    uint32          field_index:5;
+    uint32          field_count:5;
+    uint32          to_be_dropped:1;
+    uint32          online_status:2;  // enum online_index_status
+    uint32          reserved:14;
+    dict_field_t*   fields; // array of field descriptions
 
-    HASH_NODE_T	name_hash; /*!< hash chain node */
-    HASH_NODE_T	id_hash; /*!< hash chain node */
+    HASH_NODE_T     name_hash; // hash chain node
+    HASH_NODE_T     id_hash; // hash chain node
 
-	UT_LIST_NODE_T(dict_index_t) indexes; /*!< list of indexes of the table */
+    UT_LIST_NODE_T(dict_index_t) indexes; // list of indexes of the table
 
 	/** Statistics for query optimization */
 	uint64*	stat_n_diff_key_vals;
@@ -418,6 +401,16 @@ struct st_dict_index{
 
 #define DICT_NEED_REDO(table) (!((table)->type == DICT_TYPE_TABLE_NOLOGGING || (table)->type == DICT_TYPE_TEMP_TABLE_SESSION))
 
+#define DICT_TABLE_NOT_FOUND       0
+#define DICT_TABLE_CACHED          1
+#define DICT_TABLE_TO_BE_DROPED    2
+#define DICT_TABLE_TO_BE_LOADED    4
+#define DICT_TABLE_TO_BE_REMOVED   8
+
+#define DICT_TOUCH_AGE             3
+#define DICT_IN_USE(object)          ((object)->ref_count > 0)
+#define DICT_IS_HOT(object)          ((object)->touch_number >= DICT_TOUCH_AGE)
+#define DICT_LRU_INTERVAL_WINDOW_US  3000000  // 3 seconds
 
 
 struct st_dict_table {
@@ -427,63 +420,72 @@ struct st_dict_table {
     page_no_t       entry_page_no;
     uint32          type;
 
-
     // array of column descriptions
-    uint32          col_count;
-    dict_col_t*     cols;
-    // Column names packed in a character string "name1\0name2\0...nameN\0"
-    const char*     col_names;
-
-
+    uint16          column_index;
+    uint16          column_count;
+    dict_col_t*     columns;
     uchar*          default_values;
 
-    bool32      heap_io_in_progress;
-    uint8       init_trans;
-    uint8       pctfree;
-    mutex_t     mutex;
+    bool32          heap_io_in_progress;
+    uint8           init_trans;
+    uint8           pctfree;
+    mutex_t         mutex;
 
-    // TRUE if the table object has been added to the dictionary cache
-    uint32          cached:1;
-    // TRUE if the table is to be dropped,
-    // but not yet actually dropped (could in the bk drop list)
-    // It is protected by dict_operation_lock
-    uint32          to_be_dropped:1;
-    uint32          column_count:10;// number of columns
-    // TRUE if it's not an InnoDB system table or a table that has no FK relationships
-    uint32          can_be_evicted:1;
-    // TRUE if table is corrupted
-    uint32          corrupted:1;
-    // TRUE if some indexes should be dropped
-    // after ONLINE_INDEX_ABORTED or ONLINE_INDEX_ABORTED_DROPPED
-    uint32          drop_aborted:1;
+    union {
+        uint32  status;
+        struct {
+            // TRUE if the table object has been added to the dictionary cache
+            uint32  cached : 1;
+            // TRUE if the table is to be dropped,
+            // but not yet actually dropped (could in the bk drop list)
+            // It is protected by dict_operation_lock
+            uint32  to_be_dropped : 1;
+            uint32  to_be_loaded : 1;
+            uint32  to_be_cache_removed : 1;
 
+            // TRUE if it's not system table or a table that has no FK relationships
+            uint32  can_be_evicted : 1;
+            // TRUE if table is corrupted
+            uint32  corrupted : 1;
+            // TRUE if some indexes should be dropped
+            // after ONLINE_INDEX_ABORTED or ONLINE_INDEX_ABORTED_DROPPED
+            uint32  drop_aborted : 1;
+            uint32  in_lru_list : 1;
+            uint32  reserved : 24;
+        };
+    };
 
     // count of how many handles are opened to this table
-    uint32          ref_count;
+    atomic32_t      ref_count;
+    volatile uint16 touch_number;
+    volatile date_t access_time;
 
     UT_LIST_BASE_NODE_T(dict_index_t) indexes;
     //UT_LIST_BASE_NODE_T(dict_foreign_t) foreign_list;
     //UT_LIST_BASE_NODE_T(dict_foreign_t) referenced_list;
 
-    
+
     UT_LIST_NODE_T(dict_table_t) table_LRU; // node of the LRU list of tables
     HASH_NODE_T                  name_hash; // hash chain node
     HASH_NODE_T                  id_hash;   // hash chain node
-
-    //memory_stack_context_t*      mem_stack_ctx;
-    memory_context_t*            mem_ctx;
+    memory_stack_context_t*      mem_stack_ctx;
 };
+
+#define DICT_TABLE_LRU_LIST_COUNT         16
+#define DICT_TABLE_GET_LRU_LIST_ID(table) (table->id % DICT_TABLE_LRU_LIST_COUNT)
 
 /* Dictionary system struct */
 struct dict_sys_t {
     mutex_t             mutex;
     uint64              row_id;
-    /*!< hash table of the tables, based on name */
+    // hash table of the tables, based on name
     HASH_TABLE*         table_hash;
-    /*!< hash table of the tables, based on id */
+    // hash table of the tables, based on id
     HASH_TABLE*         table_id_hash;
-    /*!< varying space in bytes occupied by the data dictionary table and index objects */
-    uint32              size;
+
+    // varying space in bytes occupied by the data dictionary table and index objects
+    atomic64_t          memory_cache_size;
+    uint64              memory_cache_max_size;
 
     /** Handler to sys_* tables, they're only for upgrade */
     dict_table_t*       sys_tables;  /*!< SYS_TABLES table */
@@ -502,8 +504,9 @@ struct dict_sys_t {
     dict_table_t*       dynamic_metadata;
     memory_pool_t*      mem_pool;
 
-    UT_LIST_BASE_NODE_T(dict_table_t) table_LRU;
-    UT_LIST_BASE_NODE_T(dict_table_t) table_non_LRU;
+    mutex_t             table_LRU_list_mutex[DICT_TABLE_LRU_LIST_COUNT];
+    UT_LIST_BASE_NODE_T(dict_table_t) table_LRU_list[DICT_TABLE_LRU_LIST_COUNT];
+
     
   /** Iterate each table.
   @tparam Functor visitor
@@ -630,22 +633,28 @@ struct dict_sys_t {
 
 //------------------------------------------------------
 
-#define dict_table_get_nth_col(table, pos) ((table)->cols + (pos))
-#define dict_table_get_sys_col(table, sys) \
-    ((table)->cols + (table)->n_cols + (sys) - DATA_N_SYS_COLS)
+#define dict_table_get_nth_col(table, pos) ((table)->columns + (pos))
 #define dict_index_get_nth_field(index, pos) ((index)->fields + (pos))
 
+extern status_t dict_init(memory_pool_t* mem_pool, uint64 memory_cache_size, uint32 table_hash_array_size);
+extern status_t dict_boot();
+extern status_t dict_create();
 
-extern status_t dict_boot(memory_pool_t* mem_pool, uint32 table_hash_array_size);
-extern status_t dict_create(memory_pool_t* mem_pool, uint32 table_hash_array_size);
+extern dict_table_t* dict_mem_table_create(const char* name, table_id_t  table_id,
+    uint32 space_id, uint32 column_count, uint32 flags, uint32 flags2);
+extern status_t dict_mem_table_add_col(dict_table_t* table, const char* name,
+    data_type_t mtype, uint32 precision, uint32 scale_or_len);
+extern dict_index_t* dict_mem_index_create(dict_table_t* table, const char* index_name,
+    index_id_t index_id, uint32 space_id, uint32 type, uint32 field_count);
+extern status_t dict_mem_index_add_field(dict_index_t* index, const char* name, uint32 prefix_len);
 
-extern dict_table_t* dict_mem_table_create(const char* name, uint32 space, uint32 column_count, uint32 flags, uint32 flags2);
-extern void dict_mem_table_add_col(dict_table_t* table, const char* name, data_type_t mtype, uint32 precision, uint32 scale_or_len);
-extern dict_index_t* dict_mem_index_create(dict_table_t* table, const char* index_name, uint32 space_id, uint32 type, uint32 n_fields);
-extern void dict_mem_index_add_field(dict_index_t* index, const char* name, uint32 prefix_len);
-extern void dict_table_add_to_cache(dict_table_t* table, bool32 can_be_evicted);
+extern bool32 dict_add_table_to_cache(dict_table_t* table, bool32 can_be_evicted);
+extern uint32 dict_get_table_from_cache_by_name(char* table_name, dict_table_t** table);
+extern void dict_release_table(dict_table_t* table);
+extern bool32 dict_remove_table_from_cache(char* table_name);
 
-
+extern status_t dict_get_table(char* table_name, dict_table_t** table);
+extern status_t dict_drop_table(char* table_name);
 //------------------------------------------------------
 
 /** the dictionary system */

@@ -369,12 +369,13 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
 static inline bool32 mtr_block_dirtied(const buf_block_t* block)
 {
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad(block->page.buf_fix_count > 0);
+    ut_ad((block->is_resident() && block->page.buf_fix_count == 0) ||
+          (!block->is_resident() && block->page.buf_fix_count > 0));
 
     /* It is OK to read recovery_lsn because no
        other thread can be performing a write of it and it
        is only during write that the value is reset to 0. */
-    return(block->page.recovery_lsn == 0);
+    return (block->page.recovery_lsn == 0);
 }
 
 // Sets and returns a savepoint in mtr
@@ -536,7 +537,7 @@ inline uint32 mtr_get_log_mode(mtr_t *mtr)
 }
 
 // Append the dirty pages to the flush list
-static inline void mtr_add_dirtied_pages_to_flush_list(mtr_t *mtr)
+static inline void mtr_add_dirtied_pages_to_flush_list(mtr_t* mtr)
 {
     ut_ad(!srv_read_only_mode);
 
@@ -550,11 +551,9 @@ static inline void mtr_add_dirtied_pages_to_flush_list(mtr_t *mtr)
     dyn_array_t* memo = &mtr->memo;
     uint32 offset = dyn_array_get_data_size(memo);
 
-    if (mtr->made_dirty) {
-        log_flush_order_mutex_enter();
-    }
-
-    lsn_t flushed_lsn = log_get_flushed_lsn() + 1;
+    //if (mtr->made_dirty) {
+    //    log_flush_order_mutex_enter();
+    //}
 
     while (offset > 0) {
         mtr_memo_slot_t* slot;
@@ -565,13 +564,13 @@ static inline void mtr_add_dirtied_pages_to_flush_list(mtr_t *mtr)
 
         block = (buf_block_t*)slot->object;
         if (block != NULL && (slot->type == MTR_MEMO_PAGE_X_FIX || block->is_resident())) {
-            buf_flush_note_modification(block, mtr, flushed_lsn);
+            buf_flush_note_modification(block, mtr);
         }
     }
 
-    if (mtr->made_dirty) {
-        log_flush_order_mutex_exit();
-    }
+    //if (mtr->made_dirty) {
+    //    log_flush_order_mutex_exit();
+    //}
 }
 
 //Writes the contents of a mini-transaction log, if any, to the database log.
@@ -642,8 +641,9 @@ inline byte* mlog_write_initial_log_record_fast(
 #ifdef UNIV_DEBUG
     buf_block_t* block = (buf_block_t*) buf_block_align(ptr);
     if (block->is_resident()) {
-        ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_BUF_FIX));
+        // refcount == 0 if page is redident
     } else {
+        ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_BUF_FIX));
         ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
     }
 #endif
@@ -757,7 +757,7 @@ inline void mlog_write_uint32(
 		ut_error;
 	}
 
-	if (mtr != 0) {
+	if (mtr != NULL) {
 		byte*	log_ptr = mlog_open(mtr, 11 + 2 + 5);
 
 		/* If no logging is requested, we may return now */
@@ -784,11 +784,11 @@ inline void mlog_write_uint64(
 {
 	mach_write_to_8(ptr, val);
 
-	if (mtr != 0) {
+	if (mtr != NULL) {
 		byte*	log_ptr = mlog_open(mtr, 11 + 2 + 9);
 
 		/* If no logging is requested, we may return now */
-		if (log_ptr != 0) {
+		if (log_ptr != NULL) {
 			log_ptr = mlog_write_initial_log_record_fast(ptr, MLOG_8BYTES, log_ptr, mtr);
 
 			mach_write_to_2(log_ptr, page_offset(ptr));

@@ -48,7 +48,7 @@ void log_group_read_checkpoint_info(
     const page_size_t page_size(0);
 
     fil_io(OS_FILE_READ, TRUE, page_id, page_size, field % UNIV_PAGE_SIZE,
-        OS_FILE_LOG_BLOCK_SIZE, log_sys->checkpoint_buf, NULL);
+        OS_FILE_LOG_BLOCK_SIZE, log_sys->checkpoint_buf);
 }
 
 
@@ -139,7 +139,7 @@ static void log_group_read_log_seg(
     lsn_t        end_lsn)	/*!< in: read area end */
 {
     uint32  len;
-    lsn_t   source_offset;
+    lsn_t   source_offset = 0;
     bool32  sync = (type == LOG_RECOVER);
 
     ut_ad(mutex_own(&(log_sys->mutex)));
@@ -150,7 +150,7 @@ loop:
     len = (uint32) (end_lsn - start_lsn);
     ut_ad(len != 0);
 
-    source_offset = log_group_calc_lsn_offset(start_lsn, group);
+    //source_offset = log_group_calc_lsn_offset(start_lsn, group);
     if ((source_offset % group->file_size) + len > group->file_size) {
         /* If the above condition is true then len (which is ulint)
         is > the expression below, so the typecast is ok */
@@ -163,7 +163,7 @@ loop:
     const page_id_t page_id(FIL_REDO_SPACE_ID, source_offset / UNIV_PAGE_SIZE);
     const page_size_t page_size(0);
     fil_io(OS_FILE_READ, sync, page_id, page_size,
-           (uint32) (source_offset % UNIV_PAGE_SIZE), len, buf, NULL);
+           (uint32) (source_offset % UNIV_PAGE_SIZE), len, buf);
 
     start_lsn += len;
     buf += len;
@@ -433,7 +433,7 @@ status_t recovery_from_checkpoint_start(
     const page_size_t page_size(0);
 
     fil_io(OS_FILE_READ, TRUE, page_id, page_size, 0,
-        LOG_FILE_HDR_SIZE, log_sys->checkpoint_buf, NULL);
+        LOG_FILE_HDR_SIZE, log_sys->checkpoint_buf);
 
     group = UT_LIST_GET_FIRST(log_sys->log_groups);
     while (group) {

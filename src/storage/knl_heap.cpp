@@ -558,10 +558,10 @@ static inline status_t heap_convert_dtuple_to_rec(que_sess_t* sess,
         uint32 field_len = dfield_get_len(field);
 
         if (dfield_is_ext(field)) {
-            M_RETURN_IF_ERROR(heap_check_row_record_size(row, sizeof(row_id_t)));
+            CM_RETURN_IF_ERROR(heap_check_row_record_size(row, sizeof(row_id_t)));
 
             row_id_t row_id;
-            M_RETURN_IF_ERROR(heap_insert_row_ext(sess, table, field, &row_id));
+            CM_RETURN_IF_ERROR(heap_insert_row_ext(sess, table, field, &row_id));
 
             row->is_ext = TRUE;
             mach_write_to_8(data, row_id.id);
@@ -570,7 +570,7 @@ static inline status_t heap_convert_dtuple_to_rec(que_sess_t* sess,
             continue;
         }
 
-        M_RETURN_IF_ERROR(heap_check_row_record_size(row, field_len + mach_get_compressed_size(field_len)));
+        CM_RETURN_IF_ERROR(heap_check_row_record_size(row, field_len + mach_get_compressed_size(field_len)));
 
         data += mach_write_compressed(data, field_len);
         memcpy(data, dfield_get_data(field), field_len);
@@ -707,15 +707,8 @@ err_exit:
 
 status_t heap_insert(que_sess_t* sess, insert_node_t* insert_node)
 {
-    dict_table_t* table = (dict_table_t *)insert_node->table;
-    heap_tuple_t* tuple;
-    uint32 options;
-
     status_t ret = CM_SUCCESS;
     mtr_t mtr;
-    trx_t* trx;
-
-    uint64 xid;
     row_header_t* row;
 
     CM_SAVE_STACK(&sess->stack);
@@ -737,7 +730,7 @@ status_t heap_insert(que_sess_t* sess, insert_node_t* insert_node)
     //    goto err_exit;
     //}
 
-    if (heap_insert_row(sess, table, row) != CM_SUCCESS) {
+    if (heap_insert_row(sess, insert_node->table, row) != CM_SUCCESS) {
         ret = CM_ERROR;
         goto err_exit;
     }

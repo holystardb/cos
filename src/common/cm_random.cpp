@@ -4,10 +4,10 @@
 #define UT_HASH_RANDOM_MASK 1463735687
 #define UT_HASH_RANDOM_MASK2 1653893711
 
-#define UT_RND1 151117737
-#define UT_RND2 119785373
-#define UT_RND3 85689495
-#define UT_RND4 76595339
+#define UT_RND1     151117737
+#define UT_RND2     119785373
+#define UT_RND3     85689495
+#define UT_RND4     76595339
 #define UT_SUM_RND2 98781234
 #define UT_SUM_RND3 126792457
 #define UT_SUM_RND4 63498502
@@ -16,8 +16,7 @@
 
 THREAD_LOCAL uint64 ut_rnd_uint64_counter = 65654363;
 
-
-inline uint64 ut_rnd_gen_next_uint64(   uint64 rnd) /*!< in: the previous random number value */
+inline uint64 ut_rnd_gen_next_uint64(uint64 rnd) // in: the previous random number value
 {
   uint64 n_bits;
 
@@ -99,4 +98,17 @@ inline uint32 ut_fold_binary(const byte *str, uint32 len)
 
     return(fold);
 }
+
+inline uint32 ut_fold_string(const char* str)
+{
+    uint32 fold = 0;
+
+    while (*str != '\0') {
+        fold = ut_fold_uint32_pair(fold, (uint32)(*str));
+        str++;
+    }
+
+    return fold;
+}
+
 

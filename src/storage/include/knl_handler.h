@@ -4,6 +4,9 @@
 #include "cm_type.h"
 #include "cm_memory.h"
 #include "cm_attribute.h"
+#include "knl_session.h"
+#include "knl_heap.h"
+
 
 enum ha_rkey_function {
   HA_READ_KEY_EXACT,			/* Find first record else error */
@@ -76,5 +79,11 @@ extern bool32 knl_server_init(void);
 extern bool32 knl_server_start(memory_area_t* marea);
 
 extern status_t server_open_or_create_database(char* base_dir, attribute_t* attr);
+
+
+
+extern status_t knl_insert(que_sess_t* sess, insert_node_t* insert_node);
+
+
 
 #endif  /* _KNL_HANDLER_H */

@@ -110,7 +110,7 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
     pool->aio_array = os_aio_array_create(io_pending_count_per_context, io_context_count);
     if (pool->aio_array == NULL) {
         os_mem_free_large(pool->buf, pool->memory_size);
-        free(pool);
+        ut_free(pool);
         LOGGER_ERROR(LOGGER, "vm_pool_create: error, can not create aio array");
         return NULL;
     }
@@ -142,7 +142,7 @@ void vm_pool_destroy(vm_pool_t *pool)
     free(pool);
 }
 
-bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
+status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
 {
     bool32       ret;
     uint64       max_size;
@@ -176,7 +176,7 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
 
     if (size > max_size || size < 8 * 1024 * 1024) {
         LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, invalid size %lu", size);
-        return FALSE;
+        return CM_ERROR;
     }
     size = size / (8 * 1024 * 1024) * (8 * 1024 * 1024);
 
@@ -199,21 +199,25 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
 
     if (vm_file == NULL) {
         LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, file array is full, %s", name);
-        return FALSE;
+        return CM_ERROR;
     }
 
 #ifdef __WIN__
     for (uint32 i = 0; i <= VM_FILE_HANDLE_COUNT; i++) {
-        ret = os_open_file(name, i == 0 ? OS_FILE_OVERWRITE : OS_FILE_OPEN, OS_FILE_AIO, &vm_file->handle[i]);
+        ret = os_open_file(name, i == 0 ? OS_FILE_CREATE : OS_FILE_OPEN, OS_FILE_AIO, &vm_file->handle[i]);
         if (ret == FALSE) {
-            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s", name);
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s, error desc %s", name, err_info);
             goto err_exit;
         }
     }
 #else
-    ret = os_open_file(name, OS_FILE_OVERWRITE, OS_FILE_AIO, &vm_file->handle[0]);
+    ret = os_open_file(name, OS_FILE_CREATE, OS_FILE_AIO, &vm_file->handle[0]);
     if (ret == FALSE) {
-        lLOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s", name);
+        char err_info[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+        LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s, error desc %s", name, err_info)
         goto err_exit;
     }
 #endif
@@ -263,7 +267,7 @@ bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
         }
     }
 
-    return TRUE;
+    return CM_SUCCESS;
 
 err_exit:
 
@@ -287,7 +291,7 @@ err_exit:
     ut_free(vm_file->name);
     vm_file->name = NULL;
 
-    return FALSE;
+    return CM_ERROR;
 }
 
 static inline void vm_pool_fill_ctrls_by_page(vm_pool_t *pool, vm_page_t *page)
@@ -826,8 +830,6 @@ static inline bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *
     bool32            ret = TRUE;
     const char       *name = ""; // name of the file or path as a null-terminated string
     uint64            offset; // file offset where to read or write */
-    void*             message1 = NULL;
-    void*             message2 = NULL;
     uint32            timeout_us = 120 * 1000000; // 120 seconds
     vm_file_t        *vm_file = NULL;
     os_aio_context_t* aio_ctx = NULL;
@@ -858,18 +860,18 @@ static inline bool32 vm_file_swap_out(vm_pool_t *pool, vm_ctrl_t *ctrl, uint64 *
     }
 
     offset = (*swap_page_id & 0xFFFFFFFF) * pool->page_size;
-    DBUG_PRINT("ctrl %p swap_page_id: file %u page no %u offset %lu", ctrl,
+    DBUG_PRINT("ctrl %p swap_page_id: file %llu page no %u offset %llu", ctrl,
         VM_GET_FILE_BY_SWAP_PAGE_ID(*swap_page_id),
         VM_GET_PAGE_NO_BY_SWAP_PAGE_ID(*swap_page_id), offset);
 
     aio_ctx = os_aio_array_alloc_context(pool->aio_array);
     aio_slot = os_file_aio_submit(aio_ctx, OS_FILE_WRITE, name,
 #ifdef __WIN__
-                            vm_file->handle[*swap_page_id & VM_FILE_HANDLE_COUNT],
+        vm_file->handle[*swap_page_id & VM_FILE_HANDLE_COUNT],
 #else
-                            vm_file->handle[0],
+        vm_file->handle[0],
 #endif
-                            (void *)ctrl->val.page, pool->page_size, offset, message1, message2);
+        (void *)ctrl->val.page, pool->page_size, offset);
     if (aio_slot == NULL) {
         //ret_val = os_file_get_last_error();
         vm_file_free_page(pool, vm_file, *swap_page_id);
@@ -903,8 +905,6 @@ static inline bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t
     bool32            ret = TRUE;
     const char*       name = ""; // name of the file or path as a null-terminated string
     uint64            offset; // file offset where to read or write */
-    void*             message1 = NULL;
-    void*             message2 = NULL;
     uint32            timeout_us = 120 * 1000000; // 120 seconds
     vm_file_t*        vm_file = NULL;
     os_aio_context_t* aio_ctx = NULL;
@@ -922,11 +922,11 @@ static inline bool32 vm_file_swap_in(vm_pool_t *pool, vm_page_t *page, vm_ctrl_t
     aio_ctx = os_aio_array_alloc_context(pool->aio_array);
     aio_slot = os_file_aio_submit(aio_ctx, OS_FILE_READ, name,
 #ifdef __WIN__
-                            vm_file->handle[ctrl->swap_page_id & VM_FILE_HANDLE_COUNT],
+        vm_file->handle[ctrl->swap_page_id & VM_FILE_HANDLE_COUNT],
 #else
-                            vm_file->handle[0],
+        vm_file->handle[0],
 #endif
-                            (void *)page, pool->page_size, offset, message1, message2);
+        (void *)page, pool->page_size, offset);
     if (aio_slot == NULL) {
         ret = FALSE;
         DBUG_PRINT("ctrl %p error for os_file_aio_submit", ctrl);

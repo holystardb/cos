@@ -197,7 +197,7 @@ struct st_rw_lock
     uint32 magic_n;
 };
 
-void sync_init(void);
+status_t sync_init(void);
 void sync_close(void);
 void sync_print(FILE *file);
 

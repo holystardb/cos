@@ -9,10 +9,10 @@
 #include "knl_file_system.h"
 
 static uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset);
-static bool32 fil_node_prepare_for_io(fil_node_t *node);
+//static bool32 fil_node_prepare_for_io(fil_node_t *node);
 static void fsp_space_modify_check(uint32 id, const mtr_t* mtr);
 static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr);
-static void fil_node_complete_io(fil_node_t* node, uint32 type);
+//static void fil_node_complete_io(fil_node_t* node, uint32 type);
 
 // Gets the page number from the nth fragment page slot.
 // return page number, FIL_NULL if not in use
@@ -1186,7 +1186,7 @@ retry:
     mutex_enter(&space->mutex);
     if (space->io_in_progress) {
         mutex_exit(&space->mutex);
-        os_thread_sleep(100);
+        os_thread_sleep(1000);
         goto retry;
     }
     space->io_in_progress = TRUE;
@@ -1388,16 +1388,17 @@ static fsp_header_t* fsp_header_init(fil_space_t *space, mtr_t *mtr)
 
 // Initializes the space header of a new created space
 // and creates also the insert buffer tree root. */
-bool32 fsp_init_space(uint32 space_id, uint32 size)
+status_t fsp_init_space(uint32 space_id, uint32 size)
 {
-    bool32 ret = TRUE;
+    status_t ret = CM_SUCCESS;
     fil_space_t *space;
 
     LOGGER_INFO(LOGGER, "fsp space initialize");
 
     space = fil_system_get_space_by_id(space_id);
     if (space == NULL) {
-        return FALSE;
+        LOGGER_ERROR(LOGGER, "fsp_init_space: Failed to find space by space_id %lu", space_id);
+        return CM_ERROR;
     }
 
     mtr_t mtr;
@@ -1406,16 +1407,17 @@ bool32 fsp_init_space(uint32 space_id, uint32 size)
     // fsp header
     fsp_header_t* header = fsp_header_init(space, &mtr);
     if (header == NULL) {
-        LOGGER_FATAL(LOGGER, "error for init fsp_header");
-        goto exit;
+        LOGGER_ERROR(LOGGER, "fsp_init_space: error for init fsp_header");
+        ret = CM_ERROR;
+        goto err_exit;
     }
 
     uint32 size_in_header = 0;
     while (size_in_header < size) {
         if (!fsp_extend_space(space, header, &mtr)) {
-            LOGGER_FATAL(LOGGER, "error for extend space, increase size %u", size);
-            ret = FALSE;
-            goto exit;
+            LOGGER_ERROR(LOGGER, "fsp_init_space: error for extend space, increase size %u", size);
+            ret = CM_ERROR;
+            goto err_exit;
         }
         size_in_header = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, &mtr);
     }
@@ -1423,13 +1425,13 @@ bool32 fsp_init_space(uint32 space_id, uint32 size)
     // inode
     buf_block_t* block = fsp_alloc_seg_inode_page(header, &mtr);
     if (block == NULL) {
-        LOGGER_FATAL(LOGGER, "error for alloc inode page");
-        ret = FALSE;
-        goto exit;
+        LOGGER_ERROR(LOGGER, "fsp_init_space: error for alloc inode page");
+        ret = CM_ERROR;
+        goto err_exit;
     }
     ut_a(block->get_page_no() == FSP_FIRST_INODE_PAGE_NO);
 
-exit:
+err_exit:
 
     mtr_commit(&mtr);
 
@@ -1438,7 +1440,7 @@ exit:
     return ret;
 }
 
-bool32 fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
+status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
 {
     mtr_t mtr;
 
@@ -1481,6 +1483,6 @@ bool32 fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
 
     mtr_commit(&mtr);
 
-    return TRUE;
+    return CM_SUCCESS;
 }
 

@@ -79,18 +79,18 @@ typedef struct st_spin_lock {
 
 typedef struct st_spinlock_stats {
     typedef counter_t<uint64, IB_N_SLOTS> uint64_counter_t;
-    /** number of spin thread yield  */
+    // number of spin thread yield
     uint64_counter_t     spin_thread_yield_count;
-    /** number of spin loop rounds */
+    // number of spin loop rounds
     uint64_counter_t     spin_round_count;
-    /** number of fail */
+    // number of fail
     uint64_counter_t     spin_fail_count;
 } spinlock_stats_t;
 
 #define SPIN_ROUND_COUNT          30
 #define SPIN_ROUND_WAIT_DELAY     6
 
-inline void spin_lock_init(spinlock_t *lock)
+inline void spin_lock_init(spinlock_t* lock)
 {
     os_wmb;
 #ifdef UNIV_MUTEX_DEBUG
@@ -100,11 +100,11 @@ inline void spin_lock_init(spinlock_t *lock)
     lock->lock = 0;
 }
 
-inline void spin_lock_destroy(spinlock_t *lock)
+inline void spin_lock_destroy(spinlock_t* lock)
 {
 }
 
-inline void spin_lock(spinlock_t *lock, spinlock_stats_t *stats = NULL)
+inline void spin_lock(spinlock_t* lock, spinlock_stats_t* stats = NULL)
 {
     uint32 i = 0;
     uint64 thread_yield_count = 0, spin_round_count = 0;
@@ -147,7 +147,7 @@ lock_loop:
     goto lock_loop;
 }
 
-inline bool32 spin_trylock(spinlock_t *lock)
+inline bool32 spin_trylock(spinlock_t* lock)
 {
     if (lock->lock != 0 || !atomic32_compare_and_swap(&lock->lock, 0, 1)) {
         return FALSE;
@@ -156,13 +156,13 @@ inline bool32 spin_trylock(spinlock_t *lock)
     return TRUE;
 }
 
-inline void spin_unlock(spinlock_t *lock)
+inline void spin_unlock(spinlock_t* lock)
 {
     os_mb;
     lock->lock = 0;
 }
 
-inline bool32 spin_lock_own(spinlock_t *lock)
+inline bool32 spin_lock_own(spinlock_t* lock)
 {
 #ifdef UNIV_MUTEX_DEBUG
     ut_ad(lock->magic_n == SPINLOCK_MAGIC_N);

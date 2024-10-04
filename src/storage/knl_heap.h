@@ -5,6 +5,7 @@
 #include "knl_data.h"
 #include "knl_trx_types.h"
 #include "knl_dict.h"
+#include "knl_session.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -290,7 +291,7 @@ typedef struct st_heap_page_header
 */
 
 
-#pragma pack(4)
+#pragma pack()
 
 // --------------------------------------------------------------------------
 
@@ -342,6 +343,7 @@ extern uint32 heap_create_entry(uint32 space_id);
 
 extern inline void heap_page_init(buf_block_t* block, dict_table_t* table, mtr_t* mtr);
 
+extern status_t heap_insert(que_sess_t* sess, insert_node_t* insert_node);
 
 #ifdef __cplusplus
 }

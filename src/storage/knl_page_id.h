@@ -19,15 +19,15 @@ public:
 
     /** Retrieve the tablespace id.
     @return tablespace id */
-    inline space_id_t space_id() const { return (m_space); }
+    space_id_t space_id() const { return (m_space); }
 
     /** Retrieve the page number.
     @return page number */
-    inline page_no_t page_no() const { return (m_page_no); }
+    page_no_t page_no() const { return (m_page_no); }
 
     /** Retrieve the fold value.
     @return fold value */
-    inline uint32 fold() const {
+    uint32 fold() const {
         /* Initialize m_fold if it has not been initialized yet. */
         if (m_fold == UINT32_UNDEFINED) {
             m_fold = (m_space << 20) + m_space + m_page_no;
@@ -39,7 +39,7 @@ public:
 
     /** Copy the values from a given page_id_t object.
     @param[in]    src page id object whose values to fetch */
-    inline void copy_from(const page_id_t &src) {
+    void copy_from(const page_id_t &src) {
         m_space = src.space_id();
         m_page_no = src.page_no();
         m_fold = src.fold();
@@ -48,7 +48,7 @@ public:
     /** Reset the values from a (space, page_no).
     @param[in]    space   tablespace id
     @param[in]    page_no page number */
-    inline void reset(space_id_t space, page_no_t page_no) {
+    void reset(space_id_t space, page_no_t page_no) {
         m_space = space;
         m_page_no = page_no;
         m_fold = UINT32_UNDEFINED;
@@ -64,7 +64,7 @@ public:
     /** Check if a given page_id_t object is equal to the current one.
     @param[in]    a   page_id_t object to compare
     @return true if equal */
-    inline bool equals_to(const page_id_t &a) const {
+    bool equals_to(const page_id_t &a) const {
         return (a.space_id() == m_space && a.page_no() == m_page_no);
     }
 

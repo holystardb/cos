@@ -38,6 +38,8 @@ extern "C" {
 #define OS_FILE_PATH_NOT_FOUND              7
 #define OS_FILE_IO_TIMEOUT                  8
 #define OS_FILE_IO_ABANDONED                9
+#define OS_FILE_IO_WAIT_FAILED              10
+
 
 /* io type */
 #define OS_FILE_READ                        1
@@ -90,11 +92,14 @@ extern int32 get_file_size(char  *file_name, long long *file_byte_size);
 
 typedef struct st_os_aio_array os_aio_array_t;
 typedef struct st_os_aio_context os_aio_context_t;
+typedef struct st_os_aio_slot os_aio_slot_t;
+
+typedef status_t (*aio_slot_func)(int32 code, os_aio_slot_t* slot);
 
 
 /** The asynchronous i/o array slot structure */
-typedef struct st_os_aio_slot {
-    UT_LIST_NODE_T(struct st_os_aio_slot) list_node;
+struct st_os_aio_slot {
+    UT_LIST_NODE_T(os_aio_slot_t) list_node;
     os_aio_context_t* context;
     uint32          len;        /* length of the block to read or write */
     os_file_t       file;       /* file where to read or write */
@@ -106,6 +111,7 @@ typedef struct st_os_aio_slot {
     const char*     name;       /* file name or path */
     void*           message1;
     void*           message2;
+    aio_slot_func   callback_func;
 
 #ifdef __WIN__
     HANDLE          handle;     /* handle object we need in the OVERLAPPED struct */
@@ -115,7 +121,7 @@ typedef struct st_os_aio_slot {
     uint32          n_bytes;    /* bytes written/read. */
 #endif /* __WIN__ */
     int32           ret;        /* AIO return code */
-}os_aio_slot_t;
+};
 
 struct st_os_aio_context {
     os_aio_array_t    *array;
@@ -165,8 +171,9 @@ extern inline os_aio_slot_t* os_file_aio_submit(
     void*             buf,       /* in: buffer where to read or from which to write */
     uint32            count,     /* in: number of bytes to read or write */
     uint64            offset,    /* in: file offset where to read or write */
-    void*             message1,  /* in: message to be passed along with the aio operation */
-    void*             message2); /* in: message to be passed along with the aio operation */
+    aio_slot_func     slot_func = NULL,
+    void*             message1 = NULL,  /* in: message to be passed along with the aio operation */
+    void*             message2 = NULL); /* in: message to be passed along with the aio operation */
 
 extern inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us);
 
@@ -174,8 +181,6 @@ extern inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us
 extern inline int32 os_file_aio_context_wait(os_aio_context_t* context,
                                                        os_aio_slot_t** slot,
                                                        uint32 timeout_us = OS_WAIT_INFINITE_TIME);
-extern int os_file_aio_wait_all(os_aio_context_t* aio_ctx,
-    uint32 slot_count, uint32 timeout_us = OS_WAIT_INFINITE_TIME);
 
 #ifndef __WIN__
 extern void* os_aio_open_dl();

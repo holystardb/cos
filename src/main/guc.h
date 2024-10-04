@@ -6,7 +6,7 @@
 #include "cm_attribute.h"
 
 #ifdef __cplusplus
-extern "C" {
+//extern "C" {
 #endif // __cplusplus
 
 #define GUC_TYPE_BOOL            1
@@ -144,17 +144,20 @@ typedef struct
 
 
 extern void build_guc_variables(void);
-extern config_generic* find_guc_variable(char *key_name);
-extern bool32 set_guc_option_value(config_generic *gconfig, char* value);
+extern config_generic* find_guc_variable(char* key_name);
+extern bool32 set_guc_option_value(config_generic* gconfig, char* value);
 
 //------------------------------------------------------------------------------
 
-extern attribute_t* initialize_guc_options(char *config_file);
+extern status_t initialize_guc_options(char* config_file, attribute_t* attr);
 
-extern attribute_t     g_attribute;
 
 #ifdef __cplusplus
-}
+//}
 #endif // __cplusplus
+
+
+
+
 
 #endif  /* _GUC_H */

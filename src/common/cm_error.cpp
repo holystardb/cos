@@ -5,12 +5,16 @@
 #include "cm_log.h"
 #include "m_ctype.h"
 
-THREAD_LOCAL error_info_t g_tls_error = { 0 };
+THREAD_LOCAL error_info_t       g_tls_error = { 0 };
+THREAD_LOCAL errinfo_stack_t    g_tls_errinfo_stack = { 0 };
+
 
 const char *g_error_desc[ERR_CODE_CEIL] = { 0 };
 
 static char* remove_annotation_or_space(CHARSET_INFO *cs, char* src, char* end, char* errmsg_file)
 {
+retry:
+
     for (; src < end && my_isspace(cs, *src); src++);
 
     ut_a(my_mbcharlen(cs, *src) == 1 && my_mbcharlen(cs, *(src + 1)) == 1);
@@ -26,7 +30,12 @@ static char* remove_annotation_or_space(CHARSET_INFO *cs, char* src, char* end, 
                 ut_error;
             }
         }
-        return ret_ptr == NULL ? NULL : ret_ptr + 1;
+        //return ret_ptr == NULL ? NULL : ret_ptr + 1;
+        if (ret_ptr == NULL || (ret_ptr + 1) == NULL) {
+            return NULL;
+        }
+        src = ret_ptr + 1;
+        goto retry;
     }
 
     return src;
@@ -60,7 +69,7 @@ static bool32 error_message_append(CHARSET_INFO *cs, char* err_msg, char* end, c
 
         ptr = remove_annotation_or_space(cs, ptr+1, end, errmsg_file);
         g_error_desc[err_no] = ptr;
-        LOGGER_DEBUG(LOGGER, "err code = %d err desc = %s", err_no, g_error_desc[err_no]);
+        LOGGER_DEBUG(LOGGER, "error_message_append: err code = %d err desc = %s", err_no, g_error_desc[err_no]);
     }
 
     return TRUE;

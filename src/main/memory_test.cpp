@@ -85,7 +85,7 @@ void test_memory()
     buf[0] = (char *)mcontext_stack_push(stack_context, 44);
     mcontext_stack_push(stack_context, 5000);
     mcontext_stack_push(stack_context, 6000);
-    mcontext_stack_pop2(stack_context, buf[0]);
+    //mcontext_stack_pop2(stack_context, buf[0]);
     mcontext_stack_clean(stack_context);
     mcontext_stack_destroy(stack_context);
 
@@ -109,7 +109,7 @@ bool32 test_vm_memory()
 
     os_del_file(name);
     pool = vm_pool_create(memory_size, page_size);
-    if (!vm_pool_add_file(pool, name, 1024 * 1024 * 100)) {
+    if (vm_pool_add_file(pool, name, 1024 * 1024 * 100) != CM_SUCCESS) {
         printf("error: cannot create file %s\n", name);
         goto err_exit;
     }

@@ -34,17 +34,20 @@ typedef struct st_attr_storage {
     int32       purge_threads;
 
     int64       undo_cache_size;
+    int32       undo_segment_count;
 
     int64       redo_log_buffer_size;
     int32       redo_log_file_size;
     int32       redo_log_files;
+
     int64       lock_wait_timeout;
+
 
 
 } attr_storage_t;
 
 typedef struct st_attr_replication {
-    int         enable_logical_rep;
+    int32       enable_logical_rep;
 
 } attr_replication_t;
 
@@ -65,7 +68,7 @@ typedef struct st_attr_sql {
 
     int32       table_open_cache;
 
-    double      sample_rate;
+    //double      sample_rate;
 } attr_sql_t;
 
 typedef struct st_attr_network {

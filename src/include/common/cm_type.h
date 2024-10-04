@@ -351,28 +351,65 @@ typedef enum st_status {
     CM_TIMEDOUT = 1,
 } status_t;
 
+// break the loop if ret is not CT_SUCCESS
+#define CM_BREAK_IF_ERROR(ret) \
+    if ((ret) != CM_SUCCESS) { \
+        break;                 \
+    }
 
-#define M_RETURN_IF_ERROR(ret)            \
+// continue the loop if cond is true
+#define CM_BREAK_IF_TRUE(cond) \
+    if (cond) {                \
+        break;                 \
+    }
+
+// continue the loop if cond is true
+#define CM_CONTINUE_IFTRUE(cond) \
+    if (cond) {                  \
+        continue;                \
+    }
+
+#define CM_RETURN_IF_ERROR(ret)                 \
+    do {                                        \
+        status_t _status_ = (ret);              \
+        if (UNLIKELY(_status_ != CM_SUCCESS)) { \
+            return _status_;                    \
+        }                                       \
+    } while (0)
+
+#define CM_RETURN_VOID_IF_FALSE(ret)      \
     do {                                  \
-        status_t _status_ = (ret);        \
-        if (_status_ != CM_SUCCESS) {      \
-            return _status_;              \
+        if ((ret) == FALSE) {             \
+            return;                       \
         }                                 \
     } while (0)
 
-#define M_RETURN_IF_FALSE(ret)            \
+#define CM_RETURN_VOID_IF_TRUE(ret)       \
+    do {                                  \
+        if ((ret) == TRUE ) {             \
+            return;                       \
+        }                                 \
+    } while (0)
+
+#define CM_RETURN_FALSE_IF_FALSE(ret)     \
     do {                                  \
         if ((ret) == FALSE) {             \
             return FALSE;                 \
         }                                 \
     } while (0)
 
-#define M_RETURN_IF_TRUE(ret)             \
+#define CM_RETURN_TRUE_IF_TRUE(ret)     \
     do {                                  \
-        if ((ret) == TRUE ) {             \
-            return TRUE;                  \
+        if ((ret) == TRUE) {             \
+            return TRUE;                 \
         }                                 \
     } while (0)
+
+// return specific value if cond is true
+#define CM_RETURN_VALUE_IF_TRUE(cond, value) \
+    if (cond) {                              \
+        return (value);                      \
+    }
 
 // securec memory function check
 #define MEMS_RETURN_IFERR(func)                        \

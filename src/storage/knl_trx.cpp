@@ -9,19 +9,36 @@
 trx_sys_t*    trx_sys = NULL;
 
 
-void trx_sys_init_at_db_start()
+status_t trx_sys_init_at_db_start()
 {
+    return CM_SUCCESS;
 }
 
 // Creates the trx_sys instance and initializes ib_bh and mutex.
-void trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count)
+status_t trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count)
 {
     ut_ad(trx_sys == NULL);
+    ut_a(rseg_count >= TRX_RSEG_MIN_COUNT && rseg_count <= TRX_RSEG_MAX_COUNT);
 
     trx_sys = (trx_sys_t *)ut_malloc_zero(sizeof(trx_sys_t));
+    if (trx_sys == NULL) {
+        return CM_ERROR;
+    }
+
     mutex_create(&trx_sys->mutex);
-    trx_sys->rseg_count = rseg_count;
+
     trx_sys->mem_pool = mem_pool;
+    trx_sys->context = mcontext_stack_create(trx_sys->mem_pool);
+    if (trx_sys->context == NULL) {
+        return CM_ERROR;
+    }
+
+    trx_sys->rseg_count = rseg_count;
+    for (uint32 i = 0; i < TRX_RSEG_MAX_COUNT; i++) {
+        trx_sys->rseg_array[i].id = 0xFFFFFFFF;
+    }
+
+    return CM_SUCCESS;
 }
 
 void trx_undo_insert_cleanup(trx_t* trx)

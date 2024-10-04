@@ -1,5 +1,5 @@
 #include "knl_buf_flush.h"
-
+#include "cm_log.h"
 
 /** This function picks up a single page from the tail of the LRU
 list, flushes it (if it is dirty), removes it from page_hash and LRU
@@ -93,50 +93,48 @@ bool32 buf_flush_single_page_from_LRU(buf_pool_t *buf_pool)
 
 
 // Inserts a modified block into the flush list
-static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_block_t* block, lsn_t flushed_lsn)
+static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_block_t* block)
 {
     ut_ad(mutex_own(&block->mutex));
+    ut_ad(block->is_resident() || rw_lock_own(&block->rw_lock, RW_LOCK_EXCLUSIVE));
 
-    mutex_enter(&buf_pool->flush_list_mutex, NULL);
-
-    ut_ad((UT_LIST_GET_FIRST(buf_pool->flush_list) == NULL)
-          || (UT_LIST_GET_FIRST(buf_pool->flush_list)->recovery_lsn <= flushed_lsn));
-
-    // If we are in the recovery then we need to update the flush red-black tree as well.
-    //if (UNIV_LIKELY_NULL(buf_pool->flush_rbt)) {
-    //    mutex_exit(&buf_pool->flush_list_mutex);
-    //    buf_flush_insert_sorted_into_flush_list(buf_pool, block, lsn);
-    //    return;
-    //}
+    mutex_enter(&buf_pool->flush_list_mutex, &buf_pool->stat.flush_list_mutex_stat);
 
     ut_ad(!block->page.in_flush_list);
     block->page.in_flush_list = TRUE;
-    block->page.recovery_lsn = flushed_lsn;
-    UT_LIST_ADD_FIRST(list_node, buf_pool->flush_list, &block->page);
+    block->page.recovery_lsn = log_get_flushed_lsn() + 1;
+    UT_LIST_ADD_FIRST(list_node_flush, buf_pool->flush_list, block);
 
     buf_pool->stat.flush_list_bytes += UNIV_PAGE_SIZE;
 
     mutex_exit(&buf_pool->flush_list_mutex);
+
+    LOGGER_DEBUG(LOGGER,
+        "buf_flush_insert_into_flush_list: block (space id = %lu, page no = %lu) newest_modification = %llu recovery_lsn = %llu",
+        block->page.id.space_id(), block->page.id.page_no(), block->page.newest_modification, block->page.recovery_lsn);
 }
 
 // Puts the block to the list of modified blocks, if it is not already in it.
-inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr, lsn_t flushed_lsn)
+inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
 {
     buf_pool_t* buf_pool = buf_pool_from_block(block);
 
     ut_ad(!srv_read_only_mode);
+    ut_ad(block->is_resident() || rw_lock_own(&block->rw_lock, RW_LOCK_EXCLUSIVE));
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad(block->page.buf_fix_count > 0);
+    ut_ad((block->is_resident() && block->get_fix_count() == 0) ||
+        (!block->is_resident() && block->get_fix_count() > 0));
     ut_ad(mtr->modifications);
-    ut_ad(!mtr->made_dirty || log_flush_order_mutex_own());
-
+    
     mutex_enter(&block->mutex);
 
-    ut_ad(block->page.newest_modification <= mtr->end_lsn);
-    block->page.newest_modification = mtr->end_lsn;
+    //ut_ad(!block->is_resident() && block->page.newest_modification <= mtr->end_lsn);
+    if (block->page.newest_modification < mtr->end_lsn) {
+        block->page.newest_modification = mtr->end_lsn;
+    }
 
     if (block->page.recovery_lsn == 0) {
-        buf_flush_insert_into_flush_list(buf_pool, block, flushed_lsn);
+        buf_flush_insert_into_flush_list(buf_pool, block);
     } else {
         ut_ad(block->page.recovery_lsn <= mtr->start_buf_lsn.val.lsn);
     }

@@ -5,6 +5,13 @@
 #include "cm_memory.h"
 #include "cm_rwlock.h"
 
+/* Differnt types of hash_table based on the synchronization method used for it. */
+enum hash_table_sync_t {
+  HASH_TABLE_SYNC_NONE = 0, // Don't use any internal synchronization objects for this hash_table
+  HASH_TABLE_SYNC_MUTEX,    // Use mutexes to control access to this hash_table
+  HASH_TABLE_SYNC_RW_LOCK   // Use rw_locks to control access to this hash_table
+};
+
 typedef void* HASH_NODE_T;
 
 typedef struct ST_HASH_CELL{
@@ -116,31 +123,20 @@ do {                                                                       \
 } while (0)
 
 
-HASH_TABLE* HASH_TABLE_CREATE(uint32 n);
-void HASH_TABLE_FREE(HASH_TABLE *table);
+extern HASH_TABLE* HASH_TABLE_CREATE(uint32 hash_cell_count,
+    enum hash_table_sync_t type, // in: HASH_TABLE_SYNC_MUTEX or HASH_TABLE_SYNC_RW_LOCK
+    uint32 n_sync_obj); // in: number of sync objects, must be a power of 2
 
-HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE *table, uint32 n);
-uint32 HASH_CALC_HASH(HASH_TABLE *table, uint32 fold);
+extern void HASH_TABLE_FREE(HASH_TABLE* table);
 
-mutex_t* HASH_GET_MUTEX(HASH_TABLE *table, uint32 fold);
+extern HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE* table, uint32 n);
+extern uint32 HASH_CALC_HASH(HASH_TABLE* table, uint32 fold);
 
+extern mutex_t* HASH_GET_MUTEX(HASH_TABLE* table, uint32 fold);
 
-/* Differnt types of hash_table based on the synchronization method used for it. */
-enum hash_table_sync_t {
-  HASH_TABLE_SYNC_NONE = 0, /*!< Don't use any internal
-                            synchronization objects for
-                            this hash_table. */
-  HASH_TABLE_SYNC_MUTEX,    /*!< Use mutexes to control
-                            access to this hash_table. */
-  HASH_TABLE_SYNC_RW_LOCK   /*!< Use rw_locks to control
-                            access to this hash_table. */
-};
-
-
-
-rw_lock_t *hash_get_lock(HASH_TABLE *table, uint32 fold);
-rw_lock_t *hash_lock_s_confirm(rw_lock_t *hash_lock, HASH_TABLE *table, uint32 fold);
-rw_lock_t *hash_lock_x_confirm(rw_lock_t *hash_lock, HASH_TABLE *table, uint32 fold);
+extern rw_lock_t* hash_get_lock(HASH_TABLE* table, uint32 fold);
+extern rw_lock_t* hash_lock_s_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold);
+extern rw_lock_t* hash_lock_x_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold);
 
 
 #endif  /* _KNL_HASH_TABLE_H */

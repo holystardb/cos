@@ -62,6 +62,10 @@ int get_time_of_day(struct timeval *tv);
 #define get_time_of_day(a)         gettimeofday(a, NULL)
 #endif
 
+
+// --------------------------------------------------------------------------------
+
+
 #ifdef __cplusplus
 }
 #endif

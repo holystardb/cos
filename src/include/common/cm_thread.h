@@ -40,6 +40,12 @@ typedef void* os_thread_ret_t;
 #define OS_THREAD_DUMMY_RETURN return(NULL)
 #endif
 
+typedef struct st_thread {
+    os_thread_t     thread;
+    os_thread_id_t  thread_id;
+    volatile bool32 exited;
+} thread_t;
+
 
 inline int os_create_thread_local_key(os_thread_local_key_t *key,            void (*destructor)(void *))
 {
@@ -78,20 +84,22 @@ inline int os_set_thread_local(os_thread_local_key_t key,         void *value)
 #endif
 }
 
-os_thread_t os_thread_create(
-    void*            (*start_f)(void*),    /* in: pointer to function from which to start */
-    void*            arg,    /* in: argument to start function */
-    os_thread_id_t*  thread_id);    /* out: id of created 	thread */	
-void os_thread_exit(void* exit_value);
-bool32 os_thread_join(os_thread_t thread);
-bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b);
-bool32 os_thread_is_valid(os_thread_t thread);
-os_thread_id_t os_thread_get_curr_id(void);
-os_thread_t os_thread_get_curr(void);
-void os_thread_yield(void);
-void os_thread_sleep(unsigned int microseconds);
-uint64 os_thread_delay(uint64 delay);
-uint32 os_thread_get_last_error(void);
+extern os_thread_t os_thread_create(
+    void*            (*start_f)(void*),  // in: pointer to function from which to start
+    void*            arg,    // in: argument to start function
+    os_thread_id_t*  thread_id);    // out: id of created thread
+extern void os_thread_exit(void* exit_value);
+
+extern inline bool32 os_thread_join(os_thread_t thread);
+extern inline bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b);
+extern inline bool32 os_thread_is_valid(os_thread_t thread);
+extern inline os_thread_id_t os_thread_get_curr_id(void);
+extern inline os_thread_t os_thread_get_curr(void);
+extern inline uint32 os_thread_get_last_error(void);
+
+extern void os_thread_yield(void);
+extern void os_thread_sleep(unsigned int microseconds);
+extern uint64 os_thread_delay(uint64 delay);
 
 #ifdef __cplusplus
 }

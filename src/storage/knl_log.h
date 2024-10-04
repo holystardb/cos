@@ -76,23 +76,27 @@ extern "C" {
 
 
 
+// Maximum number of log groups
+#define LOG_GROUPS_MAX_COUNT            32
+
 
 /* Offsets for a checkpoint field */
 #define LOG_CHECKPOINT_NO               0
 #define LOG_CHECKPOINT_LSN              8
-#define LOG_CHECKPOINT_OFFSET_LOW32     16
-#define LOG_CHECKPOINT_LOG_BUF_SIZE     20
+#define LOG_CHECKPOINT_OFFSET_LOW32     16  // group file index for LOG_CHECKPOINT_LSN
+#define LOG_CHECKPOINT_OFFSET_HIGH32    20  // offset of group file for LOG_CHECKPOINT_LSN
 #define LOG_CHECKPOINT_ARCHIVED_LSN     24
 #define LOG_CHECKPOINT_GROUP_ARRAY      32
 
-#define LOG_CHECKPOINT_ARRAY_END        (LOG_CHECKPOINT_GROUP_ARRAY + 1 * 8)
+// For each value smaller than LOG_MAX_N_GROUPS the following 8 bytes
+#define LOG_CHECKPOINT_ARCHIVED_FILE_NO 0
+#define LOG_CHECKPOINT_ARCHIVED_OFFSET  4
+
+#define LOG_CHECKPOINT_ARRAY_END        (LOG_CHECKPOINT_GROUP_ARRAY + LOG_GROUPS_MAX_COUNT * 8)
 #define LOG_CHECKPOINT_CHECKSUM_1       LOG_CHECKPOINT_ARRAY_END
 #define LOG_CHECKPOINT_CHECKSUM_2       (4 + LOG_CHECKPOINT_ARRAY_END)
 
-#define LOG_CHECKPOINT_OFFSET_HIGH32    (16 + LOG_CHECKPOINT_ARRAY_END)
-#define LOG_CHECKPOINT_SIZE             (20 + LOG_CHECKPOINT_ARRAY_END)
-
-
+#define LOG_CHECKPOINT_SIZE             (8 + LOG_CHECKPOINT_ARRAY_END)
 
 
 constexpr uint32 LOG_SESSION_WAIT_EVENT_COUNT = 2048;
@@ -192,12 +196,10 @@ typedef struct st_log {
     os_thread_t       writer_thread;
     os_thread_t       flusher_thread;
 
-    uint64            max_checkpoint_age;
+    //uint64            max_checkpoint_age;
     uint64            next_checkpoint_no; // next checkpoint number
-    uint64            last_checkpoint_lsn; // latest checkpoint lsn
+    volatile uint64   last_checkpoint_lsn; // latest checkpoint lsn
     uint64            next_checkpoint_lsn; // next checkpoint lsn
-
-    uint32            n_pending_checkpoint_writes; // number of currently pending checkpoint writes
 
     UT_LIST_BASE_NODE_T(log_group_t) log_groups;
 
@@ -206,18 +208,18 @@ typedef struct st_log {
 
 /*-----------------------------------------------------------------------*/
 
-extern bool32 log_init();
+extern status_t log_init(uint32 log_buffer_size);
 extern bool32 log_group_add(char *name, uint64 file_size);
 
-extern log_buf_lsn_t log_buffer_reserve(uint32 len);
-extern uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len);
-extern void log_write_complete(log_buf_lsn_t *log_lsn);
-
-extern void log_write_up_to(lsn_t lsn);
-extern bool32 log_checkpoint();
-extern void log_make_checkpoint_at(duint64 lsn);
-extern lsn_t log_group_calc_lsn_offset(lsn_t lsn, const log_group_t* group);
+extern inline log_buf_lsn_t log_buffer_reserve(uint32 len);
+extern inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len);
+extern inline void log_write_complete(log_buf_lsn_t *log_lsn);
 extern inline lsn_t log_get_flushed_lsn();
+extern inline void log_write_up_to(lsn_t lsn);
+
+extern void log_checkpoint(lsn_t checkpoint_lsn);
+extern void log_make_checkpoint_at(duint64 lsn);
+
 
 
 // Test if flush order mutex is owned.

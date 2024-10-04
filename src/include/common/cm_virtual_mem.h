@@ -94,9 +94,9 @@ typedef struct st_vm_pool {
 // =====================================================================================
 
 
-vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size);
-void vm_pool_destroy(vm_pool_t *pool);
-bool32 vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size);
+extern vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size);
+extern void vm_pool_destroy(vm_pool_t *pool);
+extern status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size);
 
 extern inline vm_ctrl_t* vm_alloc(vm_pool_t *pool);
 extern inline bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl);

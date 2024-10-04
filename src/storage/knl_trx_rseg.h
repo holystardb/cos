@@ -103,15 +103,8 @@ typedef struct st_trx_info {
 #pragma pack()
 
 
-
-
-extern uint32 trx_sysf_rseg_get_page_no(
-    trx_sysf_t*	sys_header,	/*!< in: trx system header */
-    uint32		i,		/*!< in: slot index == rseg id */
-    mtr_t*		mtr); /*!< in: mtr */
-
-extern void trx_sys_create_sys_pages(void);
-
+extern status_t trx_sys_create_undo_segments(uint64 undo_cache_size);
+extern status_t trx_sys_open_undo_segments(uint64 undo_cache_size);
 extern inline trx_sysf_t* trx_sysf_get(mtr_t* mtr);
 
 extern inline trx_t* trx_rseg_assign_and_alloc_trx(mtr_t* mtr);

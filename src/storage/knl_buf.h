@@ -23,14 +23,14 @@ extern "C" {
 
 
 
-/** The maximum number of buffer pools that can be defined */
+// The maximum number of buffer pools that can be defined
 constexpr uint32 MAX_BUFFER_POOLS = 64;
+// The maximum number of page_hash locks
+constexpr uint32 MAX_PAGE_HASH_LOCKS = 4096;
+// Maximum number of concurrent buffer pool watches
+//#define BUF_POOL_WATCH_SIZE (srv_n_purge_threads + 1)
 
-/** Maximum number of concurrent buffer pool watches */
-#define BUF_POOL_WATCH_SIZE (srv_n_purge_threads + 1)
 
-/*!< The maximum number of page_hash locks */
-#define MAX_PAGE_HASH_LOCKS 1024
 
 
 
@@ -114,7 +114,7 @@ public:
 
     bool32 is_resident;
     bool32 in_page_hash;
-    bool32 in_flush_list;
+    bool32 in_flush_list;  // protected by buf_pool->flush_list_mutex
     bool32 in_free_list;
     bool32 in_LRU_list;
     bool32 in_unzip_LRU_list;
@@ -142,9 +142,12 @@ public:
     //        - BUF_BLOCK_FILE_PAGE:  flush_list
     //        - BUF_BLOCK_ZIP_DIRTY:  flush_list
     //        - BUF_BLOCK_ZIP_PAGE:   zip_clean
-    UT_LIST_NODE_T(buf_page_t) list_node;
+    //UT_LIST_NODE_T(buf_page_t) list_node;
 
+    // Writes to this field must be covered by both block->mutex and buf_pool->flush_list_mutex.
+    // Hence reads can happen while holding any one of the two mutexes.
     uint64 recovery_lsn;
+    // protected by block->mutex
     uint64 newest_modification;
 
     UT_LIST_NODE_T(buf_page_t) LRU;
@@ -175,7 +178,9 @@ public:
 
     rw_lock_t        rw_lock; /*!< read-write lock of the buffer frame */
 
-    UT_LIST_NODE_T(buf_block_t) unzip_LRU;  /* node of the decompressed LRU list */
+    UT_LIST_NODE_T(buf_block_t) list_node_LRU;
+    UT_LIST_NODE_T(buf_block_t) list_node_flush;
+    UT_LIST_NODE_T(buf_block_t) list_node;
 
     uint64 modify_clock; /*!< this clock is incremented every
                             time a pointer to a record on the
@@ -215,27 +220,29 @@ public:
     page_no_t get_prev_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_PREV)); }
     page_type_t get_page_type() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE)); }
     bool32 is_resident() const { return page.is_resident; }
-
+    uint32 get_fix_count() const { return page.buf_fix_count; }
 };
 
 // The buffer pool statistics structure
 typedef struct st_buf_pool_stat {
-  uint32 n_page_gets;            /*!< number of page gets performed;
+    uint32 n_page_gets;            /*!< number of page gets performed;
                                 also successful searches through the adaptive hash index are
                                 counted as page gets; this field is NOT protected by the buffer pool mutex */
-  uint32 n_pages_read;           /*!< number of read operations. Accessed atomically. */
-  uint32 n_pages_written;        /*!< number of write operations. Accessed atomically. */
-  atomic32_t n_pages_created;        /*!< number of pages created in the pool with no read. Accessed atomically. */
-  uint32 n_ra_pages_read_rnd;    /*!< number of pages read in as part of random read ahead. Not protected. */
-  uint32 n_ra_pages_read;        /*!< number of pages read in as part of read ahead. Not protected. */
-  uint32 n_ra_pages_evicted;     /*!< number of read ahead pages that are evicted without
+    uint32 n_pages_read;           /*!< number of read operations. Accessed atomically. */
+    uint32 n_pages_written;        /*!< number of write operations. Accessed atomically. */
+    atomic32_t n_pages_created;        /*!< number of pages created in the pool with no read. Accessed atomically. */
+    uint32 n_ra_pages_read_rnd;    /*!< number of pages read in as part of random read ahead. Not protected. */
+    uint32 n_ra_pages_read;        /*!< number of pages read in as part of read ahead. Not protected. */
+    uint32 n_ra_pages_evicted;     /*!< number of read ahead pages that are evicted without
                              being accessed. Protected by LRU_list_mutex. */
-  uint32 n_pages_made_young;     /*!< number of pages made young, in
+    uint32 n_pages_made_young;     /*!< number of pages made young, in
                             calls to buf_LRU_make_block_young(). Protected by LRU_list_mutex. */
-  uint32 n_pages_not_made_young; /*!< number of pages not made young because the first access
+    uint32 n_pages_not_made_young; /*!< number of pages not made young because the first access
                         was not long enough ago, in buf_page_peek_if_too_old(). Not protected. */
-  uint32 LRU_bytes;              /*!< LRU size in bytes. Protected by LRU_list_mutex. */
-  uint32 flush_list_bytes;       /*!< flush_list size in bytes. Protected by flush_list_mutex */
+    uint32 LRU_bytes;              /*!< LRU size in bytes. Protected by LRU_list_mutex. */
+    uint32 flush_list_bytes;       /*!< flush_list size in bytes. Protected by flush_list_mutex */
+    mutex_stats_t flush_list_mutex_stat;
+
 } buf_pool_stat_t;
 
 /** Flags for flush types */
@@ -292,7 +299,8 @@ typedef struct st_buf_pool {
                                 also protects writes to
                                 bpage::oldest_modification and
                                 flush_list_hp */
-  UT_LIST_BASE_NODE_T(buf_page_t) flush_list; /*!< base node of the modified block list */
+  UT_LIST_BASE_NODE_T(buf_block_t) flush_list; /*!< base node of the modified block list */
+
   bool32 init_flush[BUF_FLUSH_N_TYPES];
   /*!< this is TRUE when a flush of the given type is being initialized.
   Protected by flush_state_mutex. */
@@ -333,7 +341,7 @@ typedef struct st_buf_pool {
 
   uint64 max_lsn_io; /* Maximum LSN for which write io has already started. */
 
-  UT_LIST_BASE_NODE_T(buf_page_t) free_pages;
+  UT_LIST_BASE_NODE_T(buf_block_t) free_pages;
 
   UT_LIST_BASE_NODE_T(buf_page_t) withdraw;
   /*!< base node of the withdraw
@@ -373,10 +381,12 @@ typedef struct st_buf_pool {
 } buf_pool_t;
 
 
-status_t buf_pool_init(uint64 total_size, uint32 n_instances);
-buf_pool_t* buf_pool_get(const page_id_t &page_id);
-buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
-buf_pool_t* buf_pool_from_block(const buf_block_t *block);
+extern status_t buf_pool_init(uint64 total_size, uint32 n_instances, uint32 page_hash_lock_count);
+extern uint32 buf_pool_get_instances();
+extern buf_pool_t* buf_pool_get(uint32 id);
+extern buf_pool_t* buf_pool_from_page_id(const page_id_t &page_id);
+extern buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
+extern buf_pool_t* buf_pool_from_block(const buf_block_t *block);
 lsn_t buf_pool_get_oldest_modification(void);
 
 
@@ -471,46 +481,15 @@ void buf_ptr_get_fsp_addr(const void *ptr, uint32 *space,  fil_addr_t *addr);
 
 extern inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state);
 extern inline buf_page_state_t buf_block_get_state(const buf_block_t *block);
-spinlock_t *buf_page_get_mutex(const buf_page_t *bpage);
+extern mutex_t* buf_page_get_mutex(const buf_page_t* bpage);
 
 
-/* There are four different ways we can try to get a bpage or block
-from the page hash:
-    1) Caller already holds the appropriate page hash lock: in the case call buf_page_hash_get_low() function.
-    2) Caller wants to hold page hash lock in x-mode
-    3) Caller wants to hold page hash lock in s-mode
-    4) Caller doesn't want to hold page hash lock */
-#define buf_page_hash_get_s_locked(b, s, o, l) buf_page_hash_get_locked(b, s, o, l, RW_LOCK_SHARED)
-#define buf_page_hash_get_x_locked(b, s, o, l) buf_page_hash_get_locked(b, s, o, l, RW_LOCK_EX)
-#define buf_page_hash_get(b, s, o) buf_page_hash_get_locked(b, s, o, NULL, 0)
-
-#define buf_block_hash_get_s_locked(b, s, o, l) buf_block_hash_get_locked(b, s, o, l, RW_LOCK_SHARED)
-#define buf_block_hash_get_x_locked(b, s, o, l) buf_block_hash_get_locked(b, s, o, l, RW_LOCK_EX)
-#define buf_block_hash_get(b, s, o) buf_block_hash_get_locked(b, s, o, NULL, 0)
-
-    /** Test if page_hash lock is held in s-mode. */
-#define buf_page_hash_lock_held_s(buf_pool, bpage) \
-      rw_lock_own(buf_page_hash_lock_get((buf_pool), (bpage)->id), RW_LOCK_SHARED)
-    
-    /** Test if page_hash lock is held in x-mode. */
-#define buf_page_hash_lock_held_x(buf_pool, bpage) \
-      rw_lock_own(buf_page_hash_lock_get((buf_pool), (bpage)->id), RW_LOCK_EXCLUSIVE)
-
-    /** Test if page_hash lock is held in x or s-mode. */
-#define buf_page_hash_lock_held_s_or_x(buf_pool, bpage) \
-      (buf_page_hash_lock_held_s((buf_pool), (bpage)) ||    \
-       buf_page_hash_lock_held_x((buf_pool), (bpage)))
-
-#define buf_block_hash_lock_held_s(buf_pool, block) \
-      buf_page_hash_lock_held_s((buf_pool), &(block)->page)
-
-#define buf_block_hash_lock_held_x(buf_pool, block) \
-      buf_page_hash_lock_held_x((buf_pool), &(block)->page)
-
-#define buf_block_hash_lock_held_s_or_x(buf_pool, block) \
-      buf_page_hash_lock_held_s_or_x((buf_pool), &(block)->page)
-
-
+extern buf_page_t* buf_page_hash_get_locked(
+    buf_pool_t* buf_pool,
+    const page_id_t& page_id,
+    rw_lock_t** lock, /*!< in/out: lock of the page hash acquired if bpage is found. NULL otherwise.
+                      If NULL is passed then the hash_lock is released by this function */
+    uint32 lock_mode); /*!< in: RW_LOCK_EXCLUSIVE or RW_LOCK_SHARED. Ignored if lock == NULL */
 
 #ifdef __cplusplus
 }

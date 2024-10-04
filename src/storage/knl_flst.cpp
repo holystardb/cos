@@ -22,7 +22,7 @@ void flst_write_addr(
     fil_addr_t   addr,  /*!< in: file address */
     mtr_t       *mtr)   /*!< in: mini-transaction handle */
 {
-    ut_ad(faddr && mtr);
+    ut_ad(faddr);
     //ut_ad(mtr_memo_contains_page_flagged(mtr, faddr, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
     ut_a(addr.page == FIL_NULL || addr.boffset >= FIL_PAGE_DATA);
     ut_a(ut_align_offset(faddr, UNIV_PAGE_SIZE) >= FIL_PAGE_DATA);

@@ -668,8 +668,8 @@ void rw_lock_add_debug_info(
     info->thread_id = os_thread_get_curr_id();
     UT_LIST_ADD_FIRST(list_node, lock->debug_list, info);
 
-    LOGGER_DEBUG(LOGGER, "rw_lock_add_debug_info: rwlock %p lock type %s",
-        lock, rw_lock_type_desc[info->lock_type]);
+    //LOGGER_DEBUG(LOGGER, "rw_lock_add_debug_info: rwlock %p lock type %s",
+    //    lock, rw_lock_type_desc[info->lock_type]);
 
     rw_lock_debug_mutex_exit();
 }
@@ -1274,7 +1274,7 @@ inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock)
     ut_ad(rw_lock_validate(lock));
 }
 
-void sync_init(void)
+status_t sync_init(void)
 {
     ut_a(sync_initialized == FALSE);
 
@@ -1290,6 +1290,8 @@ void sync_init(void)
     os_mutex_create(&rw_lock_debug_mutex);
     rw_lock_debug_event = os_event_create("rw_lock_debug_event");
     rw_lock_debug_waiters = FALSE;
+
+    return CM_SUCCESS;
 }
 
 void sync_close(void)

@@ -123,6 +123,7 @@ typedef struct st_trx_sys {
     time_t         init_time;
     atomic64_t     scn;
     memory_pool_t* mem_pool;
+    memory_stack_context_t* context;
 } trx_sys_t;
 
 

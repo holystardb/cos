@@ -122,8 +122,8 @@ typedef struct st_xa_id {
 
 //-----------------------------------------------------------------
 
-extern void trx_sys_init_at_db_start();
-extern void trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count);
+extern status_t trx_sys_init_at_db_start();
+extern status_t trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count);
 
 extern inline trx_t* trx_begin(mtr_t* mtr);
 extern inline void trx_commit(trx_t* trx, mtr_t* mtr);

@@ -66,7 +66,7 @@ int main1(int argc, const char *argv[])
 {
     char *config_file = "D:\\MyWork\\cos\\etc\\server.ini";
 
-    initialize_guc_options(config_file);
+    //initialize_guc_options(config_file);
 
     os_file_init();
 

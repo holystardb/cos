@@ -300,7 +300,7 @@ enum mlog_id_t {
 
 
     /** biggest value (used in assertions) */
-    MLOG_BIGGEST_TYPE = MLOG_INDEX_LOAD
+    MLOG_BIGGEST_TYPE = 127
 };
 
 enum mtr_state_t {

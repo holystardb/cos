@@ -134,20 +134,24 @@ static void log_block_init(byte* log_block, lsn_t lsn)
 }
 
 // This function is called, e.g., when a transaction wants to commit.
-void log_write_up_to(lsn_t lsn)
+inline void log_write_up_to(lsn_t lsn)
 {
-    uint64   trx_sync_log_waits = 0, signal_count = 0;
-    uint32   idx;
-    uint32   timeout_microseconds = 1000;
-    int      ret;
-
     ut_ad(!srv_read_only_mode);
 
-    idx = (lsn / OS_FILE_LOG_BLOCK_SIZE) & (LOG_SESSION_WAIT_EVENT_COUNT - 1);
+    if (log_sys->flusher_flushed_lsn >= lsn) {
+        return;
+    }
 
+    // notify flusher thread
+    os_event_set(log_sys->flusher_event);
+
+    //
+    uint64 trx_sync_log_waits = 0, signal_count = 0;
+    uint32 timeout_microseconds = 1000;
+    uint32 idx = (lsn / OS_FILE_LOG_BLOCK_SIZE) & (LOG_SESSION_WAIT_EVENT_COUNT - 1);
     while (log_sys->flusher_flushed_lsn < lsn) {
         trx_sync_log_waits++;
-        ret = os_event_wait_time(log_sys->session_wait_event[idx], timeout_microseconds, signal_count);
+        os_event_wait_time(log_sys->session_wait_event[idx], timeout_microseconds, signal_count);
         signal_count = os_event_reset(log_sys->session_wait_event[idx]);
     }
 
@@ -156,69 +160,116 @@ void log_write_up_to(lsn_t lsn)
     }
 }
 
-static void log_writer_write_to_file(log_group_t *group, uint64 start_pos, uint64 data_len)
+// Waits for an aio operation to complete.
+inline void log_writer_write_wait_io_complete(os_aio_context_t* context, uint32 timeout_us)
 {
-    uint64 log_checkpoint_waits = 0;
-    uint32 timeout_seconds = 300; // 300 seconds
+    int32          ret;
+    os_aio_slot_t* slot = NULL;
+
+    ret = os_file_aio_context_wait(context, &slot, timeout_us);
+
+    if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
+        return;
+    }
+
+    //if (ret != OS_FILE_IO_COMPLETION && ret != OS_FILE_IO_TIMEOUT) {
+    //    LOGGER_FATAL(LOGGER, "A fatal error occurred in reader thread or writes thread, service exited.");
+    //    ut_error;
+    //}
+
+    if (slot) {
+        if (slot->callback_func) {
+            slot->callback_func(ret, slot);
+        }
+
+        os_aio_context_free_slot(slot);
+    }
+}
+
+
+static bool32 log_writer_write_to_file(log_group_t *group, uint64 start_pos, uint64 data_len)
+{
     uint64 offset = group->write_offset;
     uint32 slot_count;
 
     if (start_pos + data_len <= log_sys->buf_size) {
         if (os_file_aio_submit(log_sys->aio_ctx_log_write, OS_FILE_WRITE, group->name, group->handle,
-                               (void *)(log_sys->buf + start_pos), (uint32)data_len, offset, NULL, NULL) == NULL) {
-            char errinfo[1024];
-            os_file_get_last_error_desc(errinfo, 1024);
-            LOGGER_FATAL(LOGGER, "fail to write redo file, name %s error %s", group->name, errinfo);
+                               (void *)(log_sys->buf + start_pos), (uint32)data_len, offset) == NULL) {
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+            LOGGER_ERROR(LOGGER, "log_writer: fail to write redo file, name %s error %s", group->name, err_info);
             goto err_exit;
         }
         slot_count = 1;
     } else {
         if (os_file_aio_submit(log_sys->aio_ctx_log_write, OS_FILE_WRITE, group->name, group->handle,
                                (void *)(log_sys->buf + start_pos),
-                               log_sys->buf_size - (uint32)start_pos, offset, NULL, NULL) == NULL) {
-            char errinfo[1024];
-            os_file_get_last_error_desc(errinfo, 1024);
-            LOGGER_FATAL(LOGGER, "fail to write redo file, name %s error %s", group->name, errinfo);
+                               log_sys->buf_size - (uint32)start_pos, offset) == NULL) {
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+            LOGGER_ERROR(LOGGER, "log_writer: fail to write redo file, name %s error %s", group->name, err_info);
             goto err_exit;
         }
         offset += log_sys->buf_size - start_pos;
         if (os_file_aio_submit(log_sys->aio_ctx_log_write, OS_FILE_WRITE, group->name, group->handle,
                                 (void *)log_sys->buf, (uint32)(data_len - (log_sys->buf_size - (uint32)start_pos)),
-                                offset, NULL, NULL) == NULL) {
-            char errinfo[1024];
-            os_file_get_last_error_desc(errinfo, 1024);
-            LOGGER_FATAL(LOGGER, "fail to write redo file, name %s error %s", group->name, errinfo);
+                                offset) == NULL) {
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+            LOGGER_ERROR(LOGGER, "log_writer: fail to write redo file, name %s error %s", group->name, err_info);
             goto err_exit;
         }
         slot_count = 2;
     }
 
-    int ret = os_file_aio_wait_all(log_sys->aio_ctx_log_write, slot_count, timeout_seconds * 1000000);
-    switch (ret) {
-    case OS_FILE_IO_COMPLETION:
-        break;
-    case OS_FILE_IO_TIMEOUT:
-        LOGGER_FATAL(LOGGER, "IO timeout for writing redo file, timeout : %u seconds", timeout_seconds);
-        goto err_exit;
+    // wait for io-complete
+    bool32 is_disk_full = FALSE;
+    uint32 timeout_seconds = 300; // 300 seconds
+    os_aio_slot_t* aio_slot = NULL;
+    while (slot_count > 0) {
+        int32 err = os_file_aio_context_wait(log_sys->aio_ctx_log_write, &aio_slot, timeout_seconds * 1000000);
+        switch (err) {
+        case OS_FILE_IO_COMPLETION:
+            break;
+        case OS_FILE_DISK_FULL:
+            LOGGER_DEBUG(LOGGER, "log_writer: disk is full, name %s", group->name);
+            is_disk_full = TRUE;
+            break;
+        case OS_FILE_IO_TIMEOUT:
+            LOGGER_ERROR(LOGGER,
+                "log_writer: IO timeout for writing redo file, name %s timeout %u seconds",
+                group->name, timeout_seconds);
+            goto err_exit;
+        default:
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
+            LOGGER_ERROR(LOGGER,
+                "log_writer: failed to write redo file, name %s error %s",
+                group->name, err_info);
+            goto err_exit;
+        }
 
-    default:
-        char err_info[1024];
-        os_file_get_last_error_desc(err_info, 1024);
-        LOGGER_FATAL(LOGGER, "fail to flush redo file, name %s error %s", group->name, err_info);
-        goto err_exit;
+        //
+        ut_a(aio_slot);
+        os_aio_context_free_slot(aio_slot);
+
+        slot_count--;
     }
 
-    LOGGER_INFO(LOGGER, "log_writer write redo to group, group name %s position %lu - %lu",
-        group->name, group->write_offset, group->write_offset + data_len);
+    if (!is_disk_full) {
+        LOGGER_DEBUG(LOGGER, "log_writer: write redo to group file, group (%u, %s) position (%lu - %lu)",
+            group->id, group->name, group->write_offset, group->write_offset + data_len);
+        group->write_offset += data_len;
+    }
 
-    group->write_offset += data_len;
-
-    return;
+    return is_disk_full ? FALSE : TRUE;
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "log_writer: A fatal error occurred, service exited.");
+    LOGGER_FATAL(LOGGER, "log_writer: A fatal error occurred, service exited");
     ut_error;
+
+    return FALSE;
 }
 
 static void log_writer_wait_for_checkpoint(uint64 write_lsn)
@@ -307,10 +358,15 @@ static void log_start_next_file(uint64 base_lsn)
     next_group->status = LogGroupStatus::CURRENT;
 
     cur_group->status = LogGroupStatus::ACTIVE;
+
+    LOGGER_DEBUG(LOGGER,
+        "log_start_next_file: switch group (%u, %s) to group (%u, %s)",
+        cur_group->id, cur_group->name, next_group->id, next_group->name);
 }
 
 static void* log_writer_thread_entry(void *arg)
 {
+    uint64 signal_count = 0;
     uint64 slot_write_pos;
     uint32 slot_sleep_microseconds = 1000;
 
@@ -321,7 +377,8 @@ static void* log_writer_thread_entry(void *arg)
             log_sys->slot_write_pos++;
         }
         if (slot_write_pos == log_sys->slot_write_pos) {
-            os_thread_sleep(slot_sleep_microseconds);
+            os_event_wait_time(log_sys->writer_event, slot_sleep_microseconds, signal_count);
+            signal_count = os_event_reset(log_sys->writer_event);
             continue;
         }
 
@@ -336,6 +393,8 @@ static void* log_writer_thread_entry(void *arg)
         }
 
         // write to file
+        uint32 sleep_time = 1000000;
+        uint32 disk_full_wait_count = 0, disk_full_log_interval = 60;
         while (data_len > 0) {
 
             log_group_t *group = &log_sys->groups[log_sys->current_write_group];
@@ -349,7 +408,16 @@ static void* log_writer_thread_entry(void *arg)
             log_writer_wait_for_checkpoint(start_lsn + write_size);
 
             uint64 buf_begin_pos = (start_lsn - log_sys->buf_base_lsn) % log_sys->buf_size;
-            log_writer_write_to_file(group, buf_begin_pos, write_size);
+            if (!log_writer_write_to_file(group, buf_begin_pos, write_size)) {
+                // disk is full
+                if (disk_full_wait_count % disk_full_log_interval == 0) {
+                    LOGGER_ERROR(LOGGER, "log_writer: disk is full, name %s", group->name);
+                }
+                disk_full_wait_count++;
+
+                os_thread_sleep(sleep_time);
+                continue;
+            }
 
             data_len -= write_size;
             start_lsn += write_size;
@@ -361,6 +429,7 @@ static void* log_writer_thread_entry(void *arg)
         }
 
         log_sys->writer_writed_lsn = end_lsn;
+        LOGGER_DEBUG(LOGGER, "LOG_WRITER: set writer_writed_lsn = %llu", log_sys->writer_writed_lsn);
 
         // wake up flusher
         os_event_set(log_sys->flusher_event);
@@ -390,14 +459,27 @@ static void* log_flusher_thread_entry(void *arg)
         }
 
         //
+        uint32 sleep_time = 1000000;
+        uint32 disk_full_wait_count = 0, disk_full_log_interval = 60;
         uint8 flush_group = log_sys->current_flush_group;
         uint8 write_group = log_sys->current_write_group;
         for (;;) {
             log_group_t *group = &log_sys->groups[flush_group];
             if (!os_fsync_file(group->handle)) {
-                char errinfo[1024];
-                os_file_get_last_error_desc(errinfo, 1024);
-                LOGGER_FATAL(LOGGER, "fail to flush redo file, name %s error %s", group->name, errinfo);
+                int32 err = os_file_get_last_error();
+                if (err == OS_FILE_DISK_FULL) {
+                    if (disk_full_wait_count % disk_full_log_interval == 0) {
+                        LOGGER_ERROR(LOGGER, "log_writer: disk is full, name %s", group->name);
+                    }
+                    disk_full_wait_count++;
+
+                    os_thread_sleep(sleep_time);
+                    continue;
+                }
+                //
+                char err_info[CM_ERR_MSG_MAX_LEN];
+                os_file_get_error_desc_by_err(err, err_info, CM_ERR_MSG_MAX_LEN);
+                LOGGER_FATAL(LOGGER, "LOG_FLUSHER: fail to flush redo file, name %s error %s", group->name, err_info);
                 goto err_exit;
             }
 
@@ -408,7 +490,11 @@ static void* log_flusher_thread_entry(void *arg)
         }
 
         log_sys->flusher_flushed_lsn = flush_up_to_lsn;
+        LOGGER_DEBUG(LOGGER, "LOG_FLUSHER: set flusher_flushed_lsn = %llu", log_sys->flusher_flushed_lsn);
         if (write_group != flush_group) {
+            LOGGER_DEBUG(LOGGER,
+                "LOG_FLUSHER: switch flush group (id = %u) to group (id = %u)",
+                log_sys->current_flush_group, write_group);
             log_sys->current_flush_group = write_group;
         }
 
@@ -429,8 +515,10 @@ static void* log_flusher_thread_entry(void *arg)
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "log_flusher: A fatal error occurred, service exited.");
-    exit(1);
+    LOGGER_FATAL(LOGGER, "LOG_FLUSHER: A fatal error occurred, service exited.");
+    ut_error;
+
+    return NULL;
 }
 
 inline lsn_t log_get_flushed_lsn()
@@ -463,7 +551,7 @@ static uint32 log_calc_data_size(uint64 start_lsn, uint32 len)
 
 // Opens the log for log_write_low. The log must be closed with log_close and released with log_release.
 // return: start lsn of the log record */
-log_buf_lsn_t log_buffer_reserve(uint32 len) /*!< in: length of data to be catenated */
+inline log_buf_lsn_t log_buffer_reserve(uint32 len) /*!< in: length of data to be catenated */
 {
     log_buf_lsn_t cur_log_lsn;
 
@@ -526,7 +614,7 @@ retry_check:
 
 // Writes to the log the string given.
 // It is assumed that the caller holds the log mutex.
-uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len)
+inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len)
 {
     uint32       buf_free;
     uint32       len;
@@ -584,7 +672,7 @@ part_loop:
     return start_lsn;
 }
 
-void log_write_complete(log_buf_lsn_t *log_lsn)
+inline void log_write_complete(log_buf_lsn_t *log_lsn)
 {
     uint64 wait_slot_count = 0;
 
@@ -592,7 +680,9 @@ void log_write_complete(log_buf_lsn_t *log_lsn)
     ut_a(log_lsn->val.slot_index >= log_sys->slot_write_pos);
     while (log_lsn->val.slot_index - log_sys->slot_write_pos >= LOG_SLOT_MAX_COUNT) {
         wait_slot_count++;
-        os_thread_sleep(100);
+        // wake up writer
+        os_event_set(log_sys->writer_event);
+        os_thread_sleep(20);
     }
 
     // set STATUS_COPIED
@@ -657,19 +747,19 @@ bool32 log_group_add(char *name, uint64 file_size)
 }
 
 // Initializes the log
-bool32 log_init()
+status_t log_init(uint32 log_buffer_size)
 {
-    ut_a(srv_redo_log_buffer_size >= 16 * OS_FILE_LOG_BLOCK_SIZE);
-    ut_a(srv_redo_log_buffer_size >= 4 * UNIV_PAGE_SIZE);
+    ut_a(log_buffer_size >= 16 * OS_FILE_LOG_BLOCK_SIZE);
+    ut_a(log_buffer_size >= 4 * UNIV_PAGE_SIZE);
 
     log_sys = (log_t*)ut_malloc_zero(sizeof(log_t));
 
     mutex_create(&log_sys->mutex);
     mutex_create(&log_sys->log_flush_order_mutex);
 
-    log_sys->buf_ptr = (byte*)ut_malloc(srv_redo_log_buffer_size + OS_FILE_LOG_BLOCK_SIZE);
+    log_sys->buf_ptr = (byte*)ut_malloc(log_buffer_size + OS_FILE_LOG_BLOCK_SIZE);
     log_sys->buf = (byte*)ut_align(log_sys->buf_ptr, OS_FILE_LOG_BLOCK_SIZE);
-    log_sys->buf_size = (uint32)srv_redo_log_buffer_size;
+    log_sys->buf_size = (uint32)log_buffer_size;
     log_sys->buf_free = LOG_BLOCK_HDR_SIZE;
 
     log_sys->buf_lsn.val.lsn = LOG_BLOCK_HDR_SIZE;
@@ -710,12 +800,12 @@ bool32 log_init()
     log_sys->writer_thread = os_thread_create(log_writer_thread_entry, NULL, NULL);
     if (!os_thread_is_valid(log_sys->writer_thread)) {
         LOGGER_ERROR(LOGGER, "log_init: failed to create thread of log_writer");
-        return FALSE;
+        return CM_ERROR;
     }
     log_sys->flusher_thread = os_thread_create(log_flusher_thread_entry, NULL, NULL);
     if (!os_thread_is_valid(log_sys->flusher_thread)) {
         LOGGER_ERROR(LOGGER, "log_init: failed to create thread of log_flusher");
-        return FALSE;
+        return CM_ERROR;
     }
 
     uint32 io_pending_count = 8;
@@ -723,7 +813,7 @@ bool32 log_init()
     log_sys->aio_array = os_aio_array_create(io_pending_count, io_context_count);
     if (log_sys->aio_array == NULL) {
         LOGGER_ERROR(LOGGER, "log_init: failed to create aio array");
-        return FALSE;
+        return CM_ERROR;
     }
     log_sys->aio_ctx_log_write = os_aio_array_alloc_context(log_sys->aio_array);
     log_sys->aio_ctx_checkpoint = os_aio_array_alloc_context(log_sys->aio_array);
@@ -733,7 +823,43 @@ bool32 log_init()
     log_sys->group_count = 0;
     log_sys->file_size = 0;
 
-    return TRUE;
+    return CM_SUCCESS;
+}
+
+static uint32 log_group_calc_group_id_by_lsn(lsn_t lsn)
+{
+    log_group_t* group;
+    uint32 group_id = LOG_GROUP_MAX_COUNT;
+
+    mutex_enter(&log_sys->mutex);
+    for (uint32 i = 0; i < log_sys->group_count; i++) {
+        group = &log_sys->groups[i];
+        if (group->base_lsn < lsn && group->base_lsn + group->file_size >= lsn) {
+            group_id = i;
+            break;
+        }
+    }
+    mutex_exit(&log_sys->mutex);
+
+    return group_id;
+}
+
+static uint32 log_group_calc_group_offset_by_lsn(lsn_t lsn)
+{
+    log_group_t* group;
+    uint32 group_offset = 0;
+
+    mutex_enter(&log_sys->mutex);
+    for (uint32 i = 0; i < log_sys->group_count; i++) {
+        group = &log_sys->groups[i];
+        if (group->base_lsn < lsn && group->base_lsn + group->file_size >= lsn) {
+            group_offset = lsn - group->base_lsn + LOG_BUF_WRITE_MARGIN;
+            break;
+        }
+    }
+    mutex_exit(&log_sys->mutex);
+
+    return group_offset;
 }
 
 // Writes the checkpoint info
@@ -746,17 +872,19 @@ static void log_checkpoint_write()
 
     ut_ad(!srv_read_only_mode);
 
-    ut_ad(mutex_own(&(log_sys->mutex)));
-
     mach_write_to_8(buf + LOG_CHECKPOINT_NO, log_sys->next_checkpoint_no);
     mach_write_to_8(buf + LOG_CHECKPOINT_LSN, log_sys->next_checkpoint_lsn);
 
-    //lsn_offset = log_group_calc_lsn_offset(log_sys->next_checkpoint_lsn, group);
-    lsn_offset = 0;
-    mach_write_to_4(buf + LOG_CHECKPOINT_OFFSET_LOW32, lsn_offset & 0xFFFFFFFFUL);
-    mach_write_to_4(buf + LOG_CHECKPOINT_OFFSET_HIGH32, lsn_offset >> 32);
-    mach_write_to_4(buf + LOG_CHECKPOINT_LOG_BUF_SIZE, log_sys->buf_size);
+    uint32 group_id = log_group_calc_group_id_by_lsn(log_sys->next_checkpoint_lsn);
+    mach_write_to_4(buf + LOG_CHECKPOINT_OFFSET_LOW32, group_id);
+    uint32 group_offset = log_group_calc_group_offset_by_lsn(log_sys->next_checkpoint_lsn);
+    mach_write_to_4(buf + LOG_CHECKPOINT_OFFSET_HIGH32, group_offset);
+
     mach_write_to_8(buf + LOG_CHECKPOINT_ARCHIVED_LSN, UINT64_MAX);
+    for (uint32 i = 0; i < LOG_GROUPS_MAX_COUNT; i++) {
+        mach_write_to_4(buf + LOG_CHECKPOINT_GROUP_ARRAY + 8 * i + LOG_CHECKPOINT_ARCHIVED_FILE_NO, 0);
+        mach_write_to_4(buf + LOG_CHECKPOINT_GROUP_ARRAY + 8 * i + LOG_CHECKPOINT_ARCHIVED_OFFSET, 0);
+    }
 
     fold = ut_fold_binary(buf, LOG_CHECKPOINT_CHECKSUM_1);
     mach_write_to_4(buf + LOG_CHECKPOINT_CHECKSUM_1, fold);
@@ -771,79 +899,68 @@ static void log_checkpoint_write()
         write_offset = LOG_CHECKPOINT_2;
     }
 
-    //log_sys->n_log_ios++;
-    uint32      timeout_seconds = 300;
-    log_group_t *group = &log_sys->groups[0];
-    if (os_file_aio_submit(log_sys->aio_ctx_checkpoint, OS_FILE_WRITE, group->name, group->handle,
-                           (void *)buf, OS_FILE_LOG_BLOCK_SIZE, write_offset, NULL, NULL) == NULL) {
-        char errinfo[1024];
-        os_file_get_last_error_desc(errinfo, 1024);
-        LOGGER_FATAL(LOGGER, "checkpoint: fail to write redo file, name %s error %s", group->name, errinfo);
+    //
+    uint32 timeout_seconds = 300;
+    log_group_t* group = &log_sys->groups[0];
+    os_aio_slot_t* aio_slot = os_file_aio_submit(log_sys->aio_ctx_checkpoint, OS_FILE_WRITE,
+        group->name, group->handle, (void *)buf, OS_FILE_LOG_BLOCK_SIZE, write_offset);
+    if (aio_slot == NULL) {
+        char errinfo[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(errinfo, CM_ERR_MSG_MAX_LEN);
+        LOGGER_ERROR(LOGGER,
+            "log_checkpoint_write: fail to write redo file, name %s error %s",
+            group->name, errinfo);
         goto err_exit;
     }
 
-    int ret = os_file_aio_wait_all(log_sys->aio_ctx_checkpoint, 1, timeout_seconds * 1000000);
+    int32 ret = os_file_aio_context_wait(log_sys->aio_ctx_checkpoint, &aio_slot, timeout_seconds * 1000000);
     switch (ret) {
     case OS_FILE_IO_COMPLETION:
         break;
     case OS_FILE_IO_TIMEOUT:
-        LOGGER_FATAL(LOGGER, "checkpoint: IO timeout for writing redo file, timeout : %u seconds", timeout_seconds);
+        LOGGER_ERROR(LOGGER,
+            "log_checkpoint_write: IO timeout for writing redo file, timeout : %u seconds",
+            timeout_seconds);
         // fall through
     default:
         goto err_exit;
     }
 
+    //
+    if (!os_fsync_file(group->handle)) {
+        char errinfo[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(errinfo, CM_ERR_MSG_MAX_LEN);
+        LOGGER_ERROR(LOGGER,
+            "log_checkpoint_write: fail to flush redo file, name %s error %s",
+            group->name, errinfo);
+        goto err_exit;
+    }
+
+    LOGGER_DEBUG(LOGGER,
+        "log_checkpoint_write: checkpoint_no = %llu checkpoint_lsn = %llu",
+        log_sys->next_checkpoint_no, log_sys->next_checkpoint_lsn);
+
     return;
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "checkpoint: A fatal error occurred, service exited.");
+    LOGGER_FATAL(LOGGER, "log_checkpoint_write: A fatal error occurred, service exited");
     ut_error;
-
 }
 
-void log_io_complete_checkpoint(void)
+void log_checkpoint(lsn_t checkpoint_lsn)
 {
-    mutex_enter(&(log_sys->mutex), NULL);
-
-    ut_ad(log_sys->n_pending_checkpoint_writes > 0);
-
-    log_sys->n_pending_checkpoint_writes--;
-
-    if (log_sys->n_pending_checkpoint_writes == 0) {
-        log_sys->next_checkpoint_no++;
-        log_sys->last_checkpoint_lsn = log_sys->next_checkpoint_lsn;
+    if (log_sys->last_checkpoint_lsn >= checkpoint_lsn) {
+        return;
     }
 
-    mutex_exit(&(log_sys->mutex));
-}
-
-
-bool32 log_checkpoint()
-{
-    uint64 oldest_lsn;
-
-    ut_ad(!recv_no_log_write);
-
-    mutex_enter(&(log_sys->mutex));
-
-    oldest_lsn = buf_pool_get_oldest_modification();
-
-    mutex_exit(&(log_sys->mutex));
-
-    log_write_up_to(oldest_lsn);
-
-    if (log_sys->last_checkpoint_lsn >= oldest_lsn) {
-        return TRUE;
-    }
-
-    log_sys->next_checkpoint_lsn = oldest_lsn;
-
-    log_io_complete_checkpoint();
-
+    //
+    log_sys->next_checkpoint_lsn = checkpoint_lsn;
     log_checkpoint_write();
 
-    return TRUE;
+    //
+    log_sys->next_checkpoint_no++;
+    log_sys->last_checkpoint_lsn = log_sys->next_checkpoint_lsn;
 }
 
 
@@ -859,9 +976,9 @@ void log_make_checkpoint_at(duint64 lsn)
     //}
 
     success = FALSE;
-    while (!success) {
-        success = log_checkpoint();
-    }
+    //while (!success) {
+    //    success = log_checkpoint();
+    //}
 }
 
 
@@ -874,59 +991,5 @@ static lsn_t log_group_get_capacity(const log_group_t* group)
 
     //return (group->file_size - LOG_FILE_HDR_SIZE) * group->n_files;
     return group->file_size;
-}
-
-// Calculates the offset within a log group,
-// when the log file headers are not included.
-// return size offset (<= offset)
-static lsn_t log_group_calc_size_offset(
-    lsn_t offset, // in: real offset within the log group
-    const log_group_t* group)
-{
-    ut_ad(mutex_own(&(log_sys->mutex)));
-
-    return(offset - LOG_FILE_HDR_SIZE * (1 + offset / group->file_size));
-}
-
-// Calculates the offset within a log group,
-// when the log file headers are included.
-// return real offset (>= offset)
-static lsn_t log_group_calc_real_offset(
-    lsn_t offset, // in: size offset within the log group
-    const log_group_t* group)
-{
-    ut_ad(mutex_own(&(log_sys->mutex)));
-
-    return (offset + LOG_FILE_HDR_SIZE
-            * (1 + offset / (group->file_size - LOG_FILE_HDR_SIZE)));
-}
-
-
-// Calculates the offset of an lsn within a log group
-// return offset within the log group
-lsn_t log_group_calc_lsn_offset(lsn_t lsn, const log_group_t* group)
-{
-    lsn_t   gr_lsn;
-    lsn_t   gr_lsn_size_offset;
-    lsn_t   difference;
-    lsn_t   group_size;
-    lsn_t   offset;
-
-    ut_ad(mutex_own(&(log_sys->mutex)));
-
-    gr_lsn = group->lsn;
-    gr_lsn_size_offset = log_group_calc_size_offset(group->lsn_offset, group);
-    group_size = log_group_get_capacity(group);
-
-    if (lsn >= gr_lsn) {
-        difference = lsn - gr_lsn;
-    } else {
-        difference = gr_lsn - lsn;
-        difference = difference % group_size;
-        difference = group_size - difference;
-    }
-    offset = (gr_lsn_size_offset + difference) % group_size;
-
-    return(log_group_calc_real_offset(offset, group));
 }
 

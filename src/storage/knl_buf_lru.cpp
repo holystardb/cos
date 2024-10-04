@@ -21,7 +21,7 @@ buf_block_t *buf_LRU_get_free_only(buf_pool_t *buf_pool)
         ut_ad(!block->page.in_LRU_list);
         ut_a(!buf_page_in_file(&block->page));
 
-        UT_LIST_REMOVE(list_node, buf_pool->free_pages, &block->page);
+        UT_LIST_REMOVE(list_node, buf_pool->free_pages, block);
 
         mutex_exit(&buf_pool->free_list_mutex);
 
@@ -40,7 +40,7 @@ static const uint32 BUF_LRU_SEARCH_SCAN_THRESHOLD = 100;
 
 bool32 buf_flush_ready_for_replace(buf_page_t *bpage)
 {
-    ut_ad(spin_lock_own(buf_page_get_mutex(bpage)));
+    ut_ad(mutex_own(buf_page_get_mutex(bpage)));
     ut_ad(bpage->in_LRU_list);
 
     if (buf_page_in_file(bpage)) {
@@ -387,7 +387,7 @@ void buf_LRU_block_free_non_file_page(buf_block_t *block)
     memset(block->frame + FIL_PAGE_SPACE, 0xfe, 4);
 
     mutex_enter(&buf_pool->free_list_mutex, NULL);
-    UT_LIST_ADD_FIRST(list_node, buf_pool->free_pages, (&block->page));
+    UT_LIST_ADD_FIRST(list_node, buf_pool->free_pages, block);
     ut_d(block->page.in_free_list = TRUE);
     mutex_exit(&buf_pool->free_list_mutex);
 }

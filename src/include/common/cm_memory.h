@@ -54,6 +54,7 @@ typedef struct st_memory_free_pages {
     UT_LIST_BASE_NODE_T(memory_page_t) pages;
 } memory_free_pages_t;
 
+
 #define MPOOL_FREE_PAGE_LIST_COUNT      64
 struct st_memory_pool {
     UT_LIST_NODE_T(struct st_memory_pool) list_node;
@@ -94,8 +95,9 @@ typedef struct st_mem_block {
 } mem_block_t;
 
 typedef struct st_mem_buf {
-    char               *buf;
-    uint32              offset;
+    char*  buf;
+    uint32 offset;
+    uint32 reserved;
 } mem_buf_t;
 
 struct st_memory_context {
@@ -140,6 +142,9 @@ extern inline bool32 mcontext_clean(memory_context_t* context);
 extern inline void* mcontext_alloc(memory_context_t* context, uint32 size, const char* file, int line);
 extern inline void* mcontext_realloc(void* ptr, uint32 size, const char* file, int line);
 extern inline void mcontext_free(void* ptr, memory_context_t* context = NULL);
+extern inline uint64 mcontext_get_size(memory_context_t* context);
+
+
 
 #define mem_alloc(mem_ctx, size)  mcontext_alloc(mem_ctx, size, __FILE__, __LINE__)
 #define mem_realloc(ptr, size)    mcontext_realloc(ptr, size, __FILE__, __LINE__)
@@ -151,10 +156,12 @@ extern inline void mcontext_free(void* ptr, memory_context_t* context = NULL);
 extern inline memory_stack_context_t* mcontext_stack_create(memory_pool_t* pool);
 extern inline void mcontext_stack_destroy(memory_stack_context_t* context);
 extern inline bool32 mcontext_stack_clean(memory_stack_context_t* context);
+extern inline uint64 mcontext_stack_get_size(memory_stack_context_t* context);
 
 extern inline void* mcontext_stack_push(memory_stack_context_t* context, uint32 size);
-extern inline void mcontext_stack_pop(memory_stack_context_t* context, void* ptr, uint32 size);
-extern inline void mcontext_stack_pop2(memory_stack_context_t* context, void* ptr);
+extern inline status_t mcontext_stack_pop(memory_stack_context_t* context, void* ptr, uint32 size);
+extern inline void* mcontext_stack_save(memory_stack_context_t *context);
+extern inline status_t mcontext_stack_restore(memory_stack_context_t* context, void* ptr);
 
 
 //------------------------------------------------------------------------------

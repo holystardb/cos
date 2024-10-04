@@ -4,9 +4,12 @@
 #include "cm_log.h"
 #include "cm_dbug.h"
 #include "cm_file.h"
+#include "cm_date.h"
+#include "cm_timer.h"
 
 #include "knl_handler.h"
 #include "knl_server.h"
+#include "knl_dict.h"
 #include "guc.h"
 
 #ifndef HAVE_CHARSET_gb2312
@@ -26,105 +29,150 @@
 #endif
 
 
-int main(int argc, const char *argv[])
+
+status_t create_database(char* base_dir)
 {
-    char base_dir[1024];
-    attribute_t* attr;
+    status_t err = CM_SUCCESS;
 
-    // 1. base dir
-    strncpy_s(base_dir, 1024, "D:\\MyWork\\cos", strlen("D:\\MyWork\\cos"));
+    // 1. only for windows platform
+    os_file_init();
 
-    // 2. 
-    os_file_init(); // only for windows platform
-
-    // 3. log
+    // 2.
     char *log_path = "D:\\MyWork\\cos\\data\\";
     LOGGER.log_init(LOG_DEBUG, log_path, "initdb");
 
-    // 4. err message
-    if (!error_message_init("D:\\MyWork\\cos\\share\\english\\errmsg.txt")) {
+    // 3.
+    char err_file[1024];
+    sprintf_s(err_file, 1024, "%s\\share\\english\\errmsg.txt", base_dir);
+    if (!error_message_init(err_file)) {
         LOGGER_ERROR(LOGGER, "Failed to init error messages, Service exited");
-        return 1;
+        return CM_ERROR;
     }
 
-    // 5. guc
-    char *config_file = "D:\\MyWork\\cos\\etc\\server.ini";
-    attr = initialize_guc_options(config_file);
+    // 4. guc
+    char config_file[1024];
+    sprintf_s(config_file, 1024, "%s\\etc\\server.ini", base_dir);
+    attribute_t attr = { 0 };
+    err = initialize_guc_options(config_file, &attr);
+    CM_RETURN_IF_ERROR(err);
 
-    
-    srv_buf_pool_size = 100 * 1024 * 1024; // 100MB
-    srv_buf_pool_instances = 1;
-        
-
-    srv_system_file_size = 4 * 1024 * 1024;
-    srv_system_file_max_size = 100 * 1024 * 1024;
-    srv_system_file_auto_extend_size = 1024 * 1024;
-
-    srv_redo_log_buffer_size = 4 * 1024 * 1024; // 8MB
-    srv_redo_log_file_size = 4 * 1024 * 1024;
-    srv_redo_log_file_count = 3;
-
-    srv_undo_buffer_size = 4 * 1024 * 1024;
-    srv_undo_file_max_size = 4 * 1024 * 1024;
-    srv_undo_file_auto_extend_size = 3;
-
-    srv_temp_buffer_size = 2 * 1024 * 1024;
-    srv_temp_file_size = 4 * 1024 * 1024;
-    srv_temp_file_max_size = 8 * 1024 * 1024;
-    srv_temp_file_auto_extend_size = 3;
-
-
-    srv_max_n_open = 256;
-    srv_space_max_count = 10;
-    srv_fil_node_max_count = 10;
-
-
-    //
-    uint64 total_memory_size = 64 * 1024 * 1024;  // 64MB
-    memory_area_t* marea = marea_create(total_memory_size, FALSE);
-
-    //
+    // 5.
     db_ctrl_createdatabase("cosdb", "utf8mb4_bin");
 
-    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf",
-        srv_system_file_size, srv_system_file_max_size, TRUE);
+    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf", 4 * 1024 * 1024, 100 * 1024 * 1024, TRUE);
 
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01",
-        srv_redo_log_file_size, srv_redo_log_file_size, TRUE);
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02",
-        srv_redo_log_file_size, srv_redo_log_file_size, TRUE);
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo03",
-        srv_redo_log_file_size, srv_redo_log_file_size, TRUE);
+    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
+    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
+    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo03", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
 
-    db_ctrl_add_undo("D:\\MyWork\\cos\\data\\undo01",
-        srv_undo_file_max_size, srv_undo_file_max_size, TRUE);
+    db_ctrl_add_undo("D:\\MyWork\\cos\\data\\undo01", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
+    db_ctrl_add_undo("D:\\MyWork\\cos\\data\\undo02", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
 
-    db_ctrl_add_temp("D:\\MyWork\\cos\\data\\temp01",
-        srv_temp_file_size, srv_temp_file_max_size, TRUE);
+    db_ctrl_add_dbwr("D:\\MyWork\\cos\\data\\dbwr", 4 * 1024 * 1024);
 
+    db_ctrl_add_temp("D:\\MyWork\\cos\\data\\temp01", 4 * 1024 * 1024, 8 * 1024 * 1024, TRUE);
 
-    server_open_or_create_database(base_dir, &g_attribute);
+    db_ctrl_add_user_space("default_user_space");
+    db_ctrl_add_space_file("default_user_space",
+        "D:\\MyWork\\cos\\data\\user01", 4 * 1024 * 1024, 100 * 1024 * 1024, FALSE);
+    db_ctrl_add_space_file("default_user_space",
+        "D:\\MyWork\\cos\\data\\user02", 4 * 1024 * 1024, 100 * 1024 * 1024, TRUE);
 
-#if 0
-    bool32 create_new_db = TRUE;
+    err = server_open_or_create_database(base_dir, &attr);
 
-    uint32 dirname_len = (uint32)strlen(data_home);
+    return err;
+}
 
-    char *filename_prefix = "redo", filename[1024];
-    uint32 filename_size = (uint32)strlen(data_home) + 1 /*PATH_SEPARATOR*/
-        + (uint32)strlen(filename_prefix) + 2 /*index*/ + 1 /*'\0'*/;
-    ut_a(filename_size < 1024);
+status_t start_database(char* base_dir)
+{
+    status_t err = CM_SUCCESS;
 
-    if (data_home[dirname_len - 1] != SRV_PATH_SEPARATOR) {
-        sprintf_s(filename, filename_size, "%s%c%s%d", data_home, SRV_PATH_SEPARATOR, filename_prefix, i);
-    } else {
-        sprintf_s(filename, filename_size, "%s%s%d", data_home, filename_prefix, i);
+    // 1. only for windows platform
+    os_file_init();
+
+    // 2.
+    char *log_path = "D:\\MyWork\\cos\\data\\";
+    LOGGER.log_init(LOG_DEBUG, log_path, "initdb");
+
+    // 3.
+    char err_file[1024];
+    sprintf_s(err_file, 1024, "%s\\share\\english\\errmsg.txt", base_dir);
+    if (!error_message_init(err_file)) {
+        LOGGER_ERROR(LOGGER, "Failed to init error messages, Service exited");
+        return CM_ERROR;
     }
-#endif
+
+    // 4. guc
+    char config_file[1024];
+    sprintf_s(config_file, 1024, "%s\\etc\\server.ini", base_dir);
+    const attribute_t attr = { 0 };
+    //err = initialize_guc_options(config_file, &attr);
+    CM_RETURN_IF_ERROR(err);
+
+    //err = server_open_or_create_database(base_dir, &attr);
+
+    return err;
+}
+
+
+
+int main(int argc, const char *argv[])
+{
+    status_t err;
+    char*    base_dir = "D:\\MyWork\\cos";
+
+    cm_timer_t* timer = g_timer();
+    cm_start_timer(timer);
+
+    err = create_database(base_dir);
+    if (err != CM_SUCCESS) {
+        LOGGER_ERROR(LOGGER, "Failed to create database, Service exited");
+        goto err_exit;
+    }
+
+    for (uint32 i = 0; i < 10; i++) {
+        os_thread_sleep(1000000);
+        LOGGER.log_file_flush();
+    }
+    
+    dict_table_t* table;
+    uint32 status = dict_get_table_from_cache_by_name("SYS_TABLES", &table);
+    if (table == NULL) {
+        if (status & DICT_TABLE_NOT_FOUND) {
+        }
+        goto err_exit;
+    }
+
+    que_sess_t sess;
+    uint32 stack_size = 1024 * 1024;
+    que_sess_init(&sess, 0, stack_size);
+
+    insert_node_t insert_node;
+    insert_node.type = 0;
+    insert_node.table = table;
+
+    err = knl_insert(&sess, &insert_node);
+    if (err != CM_SUCCESS) {
+        LOGGER_ERROR(LOGGER, "Failed to knl_insert");
+        goto err_exit;
+    }
+
+    dict_release_table(table);
+
+
+
+    err = start_database(base_dir);
+    if (err != CM_SUCCESS) {
+        LOGGER_ERROR(LOGGER, "Failed to start database, Service exited");
+        goto err_exit;
+    }
 
     while (TRUE) {
         os_thread_sleep(100000);
     }
+
+err_exit:
+
     return 0;
 }
 

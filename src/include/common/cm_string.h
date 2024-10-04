@@ -10,9 +10,9 @@ extern "C" {
 
 class String {
 private:
+    const CHARSET_INFO *m_charset;
     char               *m_ptr;
     uint32              m_length;
-    const CHARSET_INFO *m_charset;
     uint32              m_alloced_length;  // should be size_t, but kept uint32 for size reasons
     bool                m_is_alloced;
 

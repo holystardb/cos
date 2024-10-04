@@ -309,7 +309,7 @@ inline void mpool_free_page(memory_pool_t *pool, memory_page_t *page)
 static inline void mpool_fill_mcontext(memory_pool_t *pool, memory_page_t *page)
 {
     memory_context_t *ctx = NULL;
-    uint32 num = pool->page_size / MemoryContextHeaderSize;
+    uint32 num = M_CONTEXT_PAGE_SIZE / MemoryContextHeaderSize;
     char *buf = MEM_PAGE_DATA_PTR(page);
 
     ut_ad(mutex_own(&pool->context_mutex));
@@ -356,7 +356,7 @@ static inline void mpool_free_mcontext(memory_context_t *ctx)
 static inline void mpool_fill_stack_mcontext(memory_pool_t *pool, memory_page_t *page)
 {
     memory_stack_context_t *ctx = NULL;
-    uint32 num = pool->page_size / MemoryStackContextHeaderSize;
+    uint32 num = M_CONTEXT_PAGE_SIZE / MemoryStackContextHeaderSize;
     char *buf = MEM_PAGE_DATA_PTR(page);
 
     ut_ad(mutex_own(&pool->stack_context_mutex));
@@ -434,7 +434,7 @@ static inline bool32 mcontext_stack_page_extend(memory_stack_context_t *context)
 
     mutex_enter(&context->mutex, NULL);
     mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
-    buf->offset = 0;
+    buf->offset = MemoryBufHeaderSize;
     buf->buf = (char *)buf + MemoryBufHeaderSize;
     UT_LIST_ADD_LAST(list_node, context->used_buf_pages, page);
     mutex_exit(&context->mutex);
@@ -457,7 +457,7 @@ inline void* mcontext_stack_push(memory_stack_context_t *context, uint32 size)
         page = UT_LIST_GET_LAST(context->used_buf_pages);
         if (page) {
             mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
-            if (context->pool->page_size - mem_buf->offset >= align_size) {
+            if (context->pool->page_size >= mem_buf->offset + align_size) {
                 ptr = mem_buf->buf + mem_buf->offset;
                 mem_buf->offset += align_size;
                 mutex_exit(&context->mutex);
@@ -476,19 +476,21 @@ inline void* mcontext_stack_push(memory_stack_context_t *context, uint32 size)
     return ptr;
 }
 
-inline void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
+inline status_t mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint32 size)
 {
-    bool32 is_need_free = FALSE;
+    bool32 is_need_free = FALSE, is_popped = FALSE;
     memory_page_t *page;
     uint32 align_size = ut_align8(size);
+
+    ut_ad(ptr);
 
     mutex_enter(&context->mutex, NULL);
     page = UT_LIST_GET_LAST(context->used_buf_pages);
     if (page) {
         mem_buf_t *buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
-        if ((buf->offset >= align_size) &&
-            (ptr == NULL || ptr == buf->buf + buf->offset - align_size)) {
+        if (buf->offset >= align_size && ((char *)ptr + align_size == buf->buf + buf->offset)) {
             buf->offset -= align_size;
+            is_popped = TRUE;
             if (buf->offset == 0) {
                 UT_LIST_REMOVE(list_node, context->used_buf_pages, page);
                 is_need_free = TRUE;
@@ -497,33 +499,62 @@ inline void mcontext_stack_pop(memory_stack_context_t *context, void *ptr, uint3
     }
     mutex_exit(&context->mutex);
 
+    if (!is_popped) {
+        return CM_ERROR;
+    }
+
     if (is_need_free) {
         mpool_free_page(context->pool, page);
     }
+
+    return CM_SUCCESS;
 }
 
-inline void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
+inline void* mcontext_stack_save(memory_stack_context_t* context)
 {
+    void* ptr = NULL;
+    memory_page_t *page;
+
+    mutex_enter(&context->mutex, NULL);
+    page = UT_LIST_GET_LAST(context->used_buf_pages);
+    if (page) {
+        mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
+        ptr = mem_buf->buf + mem_buf->offset;
+    }
+    mutex_exit(&context->mutex);
+
+    return ptr;
+}
+
+inline status_t mcontext_stack_restore(memory_stack_context_t* context, void* ptr)
+{
+    bool32 is_restored = FALSE;
     memory_page_t *page, *tmp;
     UT_LIST_BASE_NODE_T(memory_page_t) used_buf_pages;
 
     UT_LIST_INIT(used_buf_pages);
 
     mutex_enter(&context->mutex, NULL);
-    page = UT_LIST_GET_LAST(context->used_buf_pages);
-    while (page) {
-        mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
-        if ((char *)mem_buf < (char *)ptr &&
-             ((uint32)((char *)ptr - mem_buf->buf) < context->pool->page_size)) {
-            if ((char *)ptr != mem_buf->buf) {
-                page = UT_LIST_GET_NEXT(list_node, page);
-            }
-            break;
-        }
-        page = UT_LIST_GET_PREV(list_node, page);
-    }
 
-    ut_a(page);
+    if (ptr == NULL) {
+        page = UT_LIST_GET_FIRST(context->used_buf_pages);
+        is_restored = TRUE;
+    } else {
+        page = UT_LIST_GET_LAST(context->used_buf_pages);
+        while (page) {
+            mem_buf_t *mem_buf = (mem_buf_t *)MEM_PAGE_DATA_PTR(page);
+            if (mem_buf->buf <= (char *)ptr &&
+                (char *)ptr < (char *)mem_buf + context->pool->page_size) {
+                is_restored = TRUE;
+                if ((char *)ptr > mem_buf->buf) {
+                    mem_buf->offset = (char *)ptr - mem_buf->buf;
+                    page = UT_LIST_GET_NEXT(list_node, page);
+                }
+                break;
+            }
+            page = UT_LIST_GET_PREV(list_node, page);
+        }
+    }
 
     while (page) {
         tmp = page;
@@ -531,6 +562,7 @@ inline void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
         UT_LIST_REMOVE(list_node, context->used_buf_pages, tmp);
         UT_LIST_ADD_LAST(list_node, used_buf_pages, tmp);
     }
+
     mutex_exit(&context->mutex);
 
     page = UT_LIST_GET_FIRST(used_buf_pages);
@@ -539,6 +571,12 @@ inline void mcontext_stack_pop2(memory_stack_context_t *context, void *ptr)
         mpool_free_page(context->pool, page);
         page = UT_LIST_GET_FIRST(used_buf_pages);
     }
+
+    if (!is_restored) {
+        return CM_ERROR;
+    }
+
+    return CM_SUCCESS;
 }
 
 inline bool32 mcontext_stack_clean(memory_stack_context_t *context)
@@ -561,6 +599,17 @@ inline bool32 mcontext_stack_clean(memory_stack_context_t *context)
     }
 
     return TRUE;
+}
+
+inline uint64 mcontext_stack_get_size(memory_stack_context_t* context)
+{
+    uint64 size;
+
+    mutex_enter(&context->mutex, NULL);
+    size = UT_LIST_GET_LEN(context->used_buf_pages) * context->pool->page_size;
+    mutex_exit(&context->mutex);
+
+    return size;
 }
 
 
@@ -612,6 +661,17 @@ inline bool32 mcontext_clean(memory_context_t *context)
     }
 
     return TRUE;
+}
+
+inline uint64 mcontext_get_size(memory_context_t* context)
+{
+    uint64 size;
+
+    mutex_enter(&context->mutex, NULL);
+    size = UT_LIST_GET_LEN(context->used_block_pages) * context->pool->page_size;
+    mutex_exit(&context->mutex);
+
+    return size;
 }
 
 static inline uint32 mcontext_get_free_blocks_index(uint32 align_size)

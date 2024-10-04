@@ -7,7 +7,7 @@ typedef struct st_thr_identifier {
 } thr_identifier_t;
 
 /*Returns the thread identifier of current thread. */
-os_thread_id_t os_thread_get_curr_id(void)
+inline os_thread_id_t os_thread_get_curr_id(void)
 {
 #ifdef __WIN__
     return GetCurrentThreadId();
@@ -61,7 +61,7 @@ void os_thread_exit(void* exit_value)
 #endif
 }
 
-bool32 os_thread_join(os_thread_t thread)
+inline bool32 os_thread_join(os_thread_t thread)
 {
     bool32 result = TRUE;
 
@@ -93,7 +93,7 @@ bool32 os_thread_join(os_thread_t thread)
     return result;
 }
 
-bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b)
+inline bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b)
 {
 #ifdef __WIN__
     if (a == b) {
@@ -111,7 +111,7 @@ bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b)
 }
 
 
-bool32 os_thread_is_valid(os_thread_t thread)
+inline bool32 os_thread_is_valid(os_thread_t thread)
 {
 #ifdef __WIN__
     return (thread == NULL) ? FALSE : TRUE;
@@ -121,7 +121,7 @@ bool32 os_thread_is_valid(os_thread_t thread)
 }
 
 /*Returns handle to the current thread. */
-os_thread_t os_thread_get_curr(void)
+inline os_thread_t os_thread_get_curr(void)
 {
 #ifdef __WIN__
     return GetCurrentThread();
@@ -171,7 +171,7 @@ uint64 os_thread_delay(uint64 delay)
 }
 
 /*Gets the last operating system error code for the calling thread. */
-uint32 os_thread_get_last_error(void)
+inline uint32 os_thread_get_last_error(void)
 {
 #ifdef __WIN__
     return GetLastError();

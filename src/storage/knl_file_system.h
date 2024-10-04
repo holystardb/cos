@@ -93,10 +93,15 @@ extern fil_addr_t   fil_addr_null;
 #define M_FIL_NODE_NAME_LEN          64
 #define M_FIL_NODE_MAGIC_N           89389
 
+#define FIL_NODE_IS_IN_READ_WRITE(node)    (node->n_pending > 0)
+#define FIL_NODE_IS_IN_SYNC(node)          (node->n_pending_flushes > 0)
+#define FIL_NODE_IS_IN_OPEN_CLOSE(node)    (node->is_io_progress)
+
+
 typedef struct st_fil_space fil_space_t;
 
 typedef struct st_fil_node {
-    char        *name;
+    char*        name;
     mutex_t      mutex;
     os_file_t    handle;
     uint32       id;
@@ -106,43 +111,43 @@ typedef struct st_fil_node {
     uint32       is_open : 1;   /* TRUE if file open */
     uint32       is_extend : 1;
     uint32       is_io_progress : 1;  // io progress for open or close
-    uint32       n_pending : 16; /* count of pending i/o-ops on this file */
-    uint32       reserved : 13;
+    uint32       is_in_unflushed_list : 1; // only for checkpoint thread, unprotected by mutex
+    uint32       reserved : 28;
+
+    // count of pending i/o's on this file;
+    // closing of the file is not allowed if this is > 0
+    uint32       n_pending;
+    // count of pending flushes on this file;
+    // closing of the file is not allowed if this is > 0
+    uint32       n_pending_flushes;
+
+
+
+    // when we write to the file we increment this by one
+    uint64       modification_counter;
+    // up to what modification_counter value we have flushed the modifications to disk
+    uint64       flush_counter;
+
     fil_space_t *space;
 
     UT_LIST_NODE_T(struct st_fil_node) chain_list_node;
-    UT_LIST_NODE_T(struct st_fil_node) lru_list_node; /* link field for the LRU list */
+    UT_LIST_NODE_T(struct st_fil_node) lru_list_node;
+    UT_LIST_NODE_T(struct st_fil_node) unflushed_list_node;
 } fil_node_t;
 
 /** Space types */
-#define FIL_TABLESPACE   501  // tablespace
-#define FIL_LOG          502  // redo log
+#define FIL_TABLESPACE                501  // tablespace
+#define FIL_LOG                       502  // redo log
 
 /* Space types */
-#define FIL_SYSTEM_SPACE_ID           0
-#define FIL_REDO_SPACE_ID             1
-#define FIL_ARCH_LOG_SPACE_ID         2
-#define FIL_UNDO_SPACE_ID             3
-#define FIL_TEMP_SPACE_ID             4
-#define FIL_DICT_SPACE_ID             5
-#define FIL_USER_SPACE_ID             100
-
-/** Use maximum UINT value to indicate invalid space ID. */
-#define FIL_INVALID_SPACE_ID          0xFFFFFFFF
-#define FIL_INVALID_NODE_ID           0xFFFFFFFF
-
-
-
-
-#define SRV_INVALID_SPACE_ID          0xFFFFFFFF
-#define SRV_DICT_SPACE_ID             0xFFFFFFFE
-#define SRV_TEMP_SPACE_ID             0xFFFFFFFD
-#define SRV_REDO_SPACE_ID             0xFFFFFFFC
-#define SRV_UNDO_SPACE_ID             0xFFFFFFFB
-#define SRV_SYSTEM_SPACE_ID           0x00000000
-
-
-#define M_FIL_SPACE_NAME_LEN            64
+#define FIL_SYSTEM_SPACE_ID           DB_SYSTEM_SPACE_ID
+#define FIL_SYSAUX_SPACE_ID           DB_SYSAUX_SPACE_ID
+#define FIL_REDO_SPACE_ID             DB_REDO_SPACE_ID
+#define FIL_UNDO_SPACE_ID             DB_UNDO_SPACE_ID
+#define FIL_TEMP_SPACE_ID             DB_TEMP_SPACE_ID
+#define FIL_DICT_SPACE_ID             DB_DICT_SPACE_ID
+#define FIL_DBWR_SPACE_ID             DB_DBWR_SPACE_ID
+#define FIL_USER_SPACE_ID             DB_USER_SPACE_FIRST_ID
 
 typedef struct st_fil_page {
     uint32       file;  /* file id */
@@ -170,7 +175,6 @@ struct st_fil_space {
 
     atomic32_t   refcount;
 
-
     UT_LIST_BASE_NODE_T(fil_node_t) fil_nodes;
     UT_LIST_NODE_T(struct st_fil_space) list_node;
 };
@@ -185,8 +189,6 @@ typedef struct st_fil_system {
     uint32              fil_node_num;
     fil_node_t        **fil_nodes;
     uint32              space_max_count;
-    mutex_t             mutex;
-    mutex_t             lru_mutex;
 
     memory_area_t      *mem_area;
     memory_pool_t      *mem_pool;
@@ -200,8 +202,14 @@ typedef struct st_fil_system {
     HASH_TABLE         *space_id_hash; // hash table based on space id
     HASH_TABLE         *name_hash; // hash table based on space name
 
+    mutex_t             mutex;
     UT_LIST_BASE_NODE_T(fil_space_t) fil_spaces;
+
+    mutex_t             lru_mutex;
     UT_LIST_BASE_NODE_T(fil_node_t) fil_node_lru;
+
+    // fil_node_unflushed: only checkpoint thread, no need for locking protection
+    UT_LIST_BASE_NODE_T(fil_node_t) fil_node_unflushed;
 } fil_system_t;
 
 
@@ -228,13 +236,19 @@ inline void fil_system_unpin_space(fil_space_t *space)
     atomic32_dec(&space->refcount);
 }
 
+inline bool32 fil_space_is_pinned(fil_space_t *space)
+{
+    return space->refcount > 0;
+}
+
 //-----------------------------------------------------------------------------------------------------
 
-extern bool32 fil_system_init(memory_pool_t *pool, uint32 max_n_open,
-                                    uint32 space_max_count, uint32 fil_node_max_count);
+extern bool32 fil_system_init(memory_pool_t *mem_pool, uint32 max_n_open);
 extern inline rw_lock_t* fil_system_get_hash_lock(uint32 space_id);
 extern inline fil_space_t* fil_system_get_space_by_id(uint32 space_id);
 extern inline void fil_system_insert_space_to_hash_table(fil_space_t* space);
+extern bool32 fil_system_flush_filnodes();
+
 
 extern fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
 extern void fil_space_destroy(uint32 space_id);
@@ -244,15 +258,20 @@ extern bool32 fil_node_destroy(fil_space_t* space, fil_node_t* node, bool32 need
 extern bool32 fil_node_open(fil_space_t *space, fil_node_t *node);
 extern bool32 fil_node_close(fil_space_t *space, fil_node_t *node);
 
+extern inline fil_node_t* fil_node_get_by_page_id(fil_space_t* space, const page_id_t &page_id);
+extern inline void fil_node_complete_io(fil_node_t* node, uint32 type);
+
+
 extern bool fil_addr_is_null(fil_addr_t addr);
 
 extern inline status_t fil_io(uint32 type, bool32 sync, const page_id_t &page_id,
-    const page_size_t &page_size, uint32 byte_offset, uint32 len, void* buf, void* message);
+    const page_size_t &page_size, uint32 byte_offset, uint32 len, void* buf,
+    aio_slot_func slot_func = NULL, void* message = NULL);
 extern inline status_t fil_write(bool32 sync, const page_id_t &page_id,
-    const page_size_t &page_size, uint32 len, void* buf, void* message);
+    const page_size_t &page_size, uint32 len, void* buf, aio_slot_func slot_func, void* message);
 extern inline status_t fil_read(bool32 sync, const page_id_t &page_id,
-    const page_size_t &page_size, uint32 len, void* buf, void* message);
-extern inline void fil_aio_reader_and_writer_wait(os_aio_context_t* context, uint32 timeout_us);
+    const page_size_t &page_size, uint32 len, void* buf, aio_slot_func slot_func, void* message);
+extern inline void fil_aio_reader_and_writer_wait(os_aio_context_t* context);
 
 extern bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size);
 extern uint64 fil_space_get_size(uint32 space_id);

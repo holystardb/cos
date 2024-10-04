@@ -1,9 +1,8 @@
 #include "guc.h"
-#include "cm_type.h"
 #include "cm_config.h"
 #include "cm_util.h"
 
-attribute_t     g_attribute = {0};
+attribute_t   g_guc_options = {0};
 
 // Actual lookup of variables is done through this single, sorted array.
 static config_generic **guc_variables;
@@ -34,7 +33,7 @@ static config_bool ConfigureNamesBool[] =
          "Enables read only for server.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_BOOL, 0, NULL
         },
-        &g_attribute.attr_common.read_db_only,
+        &g_guc_options.attr_common.read_db_only,
         FALSE,
         NULL, NULL, NULL, NULL
     },
@@ -43,7 +42,7 @@ static config_bool ConfigureNamesBool[] =
          "flush_log_at_commit.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_BOOL
         },
-        &g_attribute.attr_storage.flush_log_at_commit,
+        &g_guc_options.attr_storage.flush_log_at_commit,
         TRUE,
         NULL, NULL, NULL, NULL
     },
@@ -61,7 +60,7 @@ static config_int32 ConfigureNamesInt32[] =
          "server id.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32
         },
-        &g_attribute.attr_common.server_id, 0, 0, UINT_MAX16,
+        &g_guc_options.attr_common.server_id, 1, 1, INT_MAX32,
         NULL, NULL, NULL, NULL
     },
     {
@@ -69,7 +68,7 @@ static config_int32 ConfigureNamesInt32[] =
          "port.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32
         },
-        &g_attribute.attr_network.port, 5500, 1, UINT_MAX16,
+        &g_guc_options.attr_network.port, 5500, 1, UINT_MAX16,
         NULL, NULL, NULL, NULL
     },
     {
@@ -77,7 +76,7 @@ static config_int32 ConfigureNamesInt32[] =
          "max connections.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32
         },
-        &g_attribute.attr_network.max_connections, 256, 1, UINT_MAX16,
+        &g_guc_options.attr_network.max_connections, 256, 1, UINT_MAX16,
         NULL, NULL, NULL, NULL
     },
     {
@@ -85,7 +84,7 @@ static config_int32 ConfigureNamesInt32[] =
          "thread count of thread pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32
         },
-        &g_attribute.attr_common.thread_pool_size, 16, 1, 4096,
+        &g_guc_options.attr_common.thread_pool_size, 16, 1, 4096,
         NULL, NULL, NULL, NULL
     },
     {
@@ -93,7 +92,7 @@ static config_int32 ConfigureNamesInt32[] =
          "thread stack depth of thread pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_common.thread_stack_depth, 64, 16, 256,
+        &g_guc_options.attr_common.thread_stack_depth, 64, 16, 256,
         NULL, NULL, NULL, NULL
     },
     {
@@ -101,7 +100,7 @@ static config_int32 ConfigureNamesInt32[] =
          "max opened file count of server.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_common.open_files_limit, 1024, 128, UINT_MAX16,
+        &g_guc_options.attr_common.open_files_limit, 1024, 128, INT_MAX32,
         NULL, NULL, NULL, NULL
     },
     {
@@ -109,7 +108,7 @@ static config_int32 ConfigureNamesInt32[] =
          "table open cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_sql.table_open_cache, 128, 0, 4096,
+        &g_guc_options.attr_sql.table_open_cache, 128, 128, UINT_MAX16,
         NULL, NULL, NULL, NULL
     },
     {
@@ -117,7 +116,7 @@ static config_int32 ConfigureNamesInt32[] =
          "hash array size of table cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_memory.table_hash_array_size, 10000, 100, 1000000,
+        &g_guc_options.attr_memory.table_hash_array_size, 10000, 100, 1000000,
         NULL, NULL, NULL, NULL
     },
 
@@ -126,7 +125,7 @@ static config_int32 ConfigureNamesInt32[] =
          "max_dirty_pages_pct.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.max_dirty_pages_pct, 50, 0, 100,
+        &g_guc_options.attr_storage.max_dirty_pages_pct, 50, 0, 100,
         NULL, NULL, NULL, NULL
     },
     {
@@ -134,7 +133,7 @@ static config_int32 ConfigureNamesInt32[] =
          "io_capacity.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.io_capacity, 2000, 1, UINT_MAX16,
+        &g_guc_options.attr_storage.io_capacity, 2000, 1, INT_MAX32,
         NULL, NULL, NULL, NULL
     },
     {
@@ -142,7 +141,7 @@ static config_int32 ConfigureNamesInt32[] =
          "io_capacity_max.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.io_capacity_max, 10000, 1, UINT_MAX16,
+        &g_guc_options.attr_storage.io_capacity_max, 10000, 1, INT_MAX32,
         NULL, NULL, NULL, NULL
     },
     {
@@ -150,7 +149,7 @@ static config_int32 ConfigureNamesInt32[] =
          "read_io_threads.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.read_io_threads, 4, 1, 32,
+        &g_guc_options.attr_storage.read_io_threads, 4, 1, 128,
         NULL, NULL, NULL, NULL
     },
     {
@@ -158,7 +157,7 @@ static config_int32 ConfigureNamesInt32[] =
          "write_io_threads.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.write_io_threads, 4, 1, 32,
+        &g_guc_options.attr_storage.write_io_threads, 4, 1, 128,
         NULL, NULL, NULL, NULL
     },
     {
@@ -166,7 +165,7 @@ static config_int32 ConfigureNamesInt32[] =
          "purge_threads.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.purge_threads, 4, 1, 32,
+        &g_guc_options.attr_storage.purge_threads, 4, 1, 128,
         NULL, NULL, NULL, NULL
     },
     {
@@ -174,7 +173,7 @@ static config_int32 ConfigureNamesInt32[] =
          "lru_scan_depth.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.lru_scan_depth, 4000, 1, UINT_MAX16,
+        &g_guc_options.attr_storage.lru_scan_depth, 4000, 1, UINT_MAX16,
         NULL, NULL, NULL, NULL
     },
     {
@@ -182,14 +181,22 @@ static config_int32 ConfigureNamesInt32[] =
          "count of data buffer pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
         },
-        &g_attribute.attr_storage.buffer_pool_instances, 1, 1, 512,
+        &g_guc_options.attr_storage.buffer_pool_instances, 1, 1, 1024,
+        NULL, NULL, NULL, NULL
+    },
+    {
+        {"undo_segment_count",
+         "count of undo segment.",
+         GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT32, 0
+        },
+        &g_guc_options.attr_storage.undo_segment_count, 32, 4, 96,
         NULL, NULL, NULL, NULL
     },
 
 
     /* End-of-list marker */
     {
-        { NULL, NULL, 0, 0, 0, NULL }, NULL, 0, 0, 0, NULL, NULL, NULL, NULL
+        { NULL, NULL, 0, 0, 0 }, NULL, 0, 0, 0, NULL, NULL, NULL, NULL
     }
 };
 
@@ -200,7 +207,7 @@ static config_int64 ConfigureNamesInt64[] =
          "wait seconds of lock.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_S
         },
-        &g_attribute.attr_storage.lock_wait_timeout, 10, 0, UINT_MAX16,
+        &g_guc_options.attr_storage.lock_wait_timeout, 10, 0, UINT_MAX16,
         guc_time_check_hook, guc_time_assign_hook, guc_time_init_hook, NULL
     },
     {
@@ -208,7 +215,7 @@ static config_int64 ConfigureNamesInt64[] =
          "wait seconds of session.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_S
         },
-        &g_attribute.attr_network.session_wait_timeout, 60, 0, UINT_MAX16,
+        &g_guc_options.attr_network.session_wait_timeout, 60, 0, UINT_MAX16,
         guc_time_check_hook, guc_time_assign_hook, guc_time_init_hook, NULL
     },
     {
@@ -216,7 +223,7 @@ static config_int64 ConfigureNamesInt64[] =
          "thread stack size of thread pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_KB
         },
-        &g_attribute.attr_common.thread_stack_size, 512, 512, 8196,
+        &g_guc_options.attr_common.thread_stack_size, 512, 512, 8196,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -224,7 +231,7 @@ static config_int64 ConfigureNamesInt64[] =
          "max allowed package of connection.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_network.max_allowed_package, 1, 1, 64,
+        &g_guc_options.attr_network.max_allowed_package, 1, 1, 64,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -232,7 +239,7 @@ static config_int64 ConfigureNamesInt64[] =
          "totoal memory size of data buffer pool.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_storage.buffer_pool_size, 16 , 16, INT_MAX32,
+        &g_guc_options.attr_storage.buffer_pool_size, 16 , 16, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -240,7 +247,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of dictionary cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.dictionary_memory_cache_size, 16 , 1, INT_MAX32,
+        &g_guc_options.attr_memory.dictionary_memory_cache_size, 16 , 1, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -248,7 +255,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of min transaction cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.mtr_memory_cache_size, 16 , 1, 1024,
+        &g_guc_options.attr_memory.mtr_memory_cache_size, 16 , 1, 1024,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
 
@@ -257,7 +264,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of common cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.common_memory_cache_size, 16 , 1, INT_MAX32,
+        &g_guc_options.attr_memory.common_memory_cache_size, 16 , 1, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -265,7 +272,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of temporary cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.temp_memory_cache_size, 16 , 1, INT_MAX32,
+        &g_guc_options.attr_memory.temp_memory_cache_size, 16 , 1, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -273,7 +280,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of plan cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.plan_memory_cache_size, 16 , 1, INT_MAX32,
+        &g_guc_options.attr_memory.plan_memory_cache_size, 16 , 1, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -281,7 +288,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of query cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.query_memory_cache_size, 16 , 1, INT_MAX32,
+        &g_guc_options.attr_memory.query_memory_cache_size, 16 , 1, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -289,7 +296,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory limit of query cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_memory.query_memory_cache_limit, 16 , 1, INT_MAX32,
+        &g_guc_options.attr_memory.query_memory_cache_limit, 16 , 1, INT_MAX32,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -297,7 +304,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of undo cache.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_storage.undo_cache_size, 16, 16, 512 * 1024,
+        &g_guc_options.attr_storage.undo_cache_size, 16, 16, 512 * 1024,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
     {
@@ -305,7 +312,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of redo buffer.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_attribute.attr_storage.redo_log_buffer_size, 16, 1, 1024,
+        &g_guc_options.attr_storage.redo_log_buffer_size, 16, 1, 1024,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
 
@@ -317,14 +324,14 @@ static config_int64 ConfigureNamesInt64[] =
 
 static config_real ConfigureNamesReal[] =
 {
-    {
-        {"sample_rate",
-         "rate .",
-         GUC_CONTEXT_SIGHUP, GUC_TYPE_REAL
-        },
-        &g_attribute.attr_sql.sample_rate, 0, 0, 100,
-        NULL, NULL, NULL, NULL
-    },
+    //{
+    //    {"sample_rate",
+    //     "rate .",
+    //     GUC_CONTEXT_SIGHUP, GUC_TYPE_REAL
+    //    },
+    //    &g_guc_options.attr_sql.sample_rate, 0, 0, 100,
+    //    NULL, NULL, NULL, NULL
+    //},
 
     /* End-of-list marker */
     {
@@ -339,7 +346,7 @@ static config_string ConfigureNamesString[] =
          "host address.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_STRING
         },
-        &g_attribute.attr_network.host_address,
+        &g_guc_options.attr_network.host_address,
         "*",
         NULL, NULL, NULL, NULL
     },
@@ -348,7 +355,7 @@ static config_string ConfigureNamesString[] =
          "character set for client.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_STRING
         },
-        &g_attribute.attr_common.character_set_client,
+        &g_guc_options.attr_common.character_set_client,
         "utf8mb4",
         NULL, NULL, NULL, NULL
     },
@@ -357,7 +364,7 @@ static config_string ConfigureNamesString[] =
          "character set for server.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_STRING
         },
-        &g_attribute.attr_common.character_set_server,
+        &g_guc_options.attr_common.character_set_server,
         "utf8mb4",
         NULL, NULL, NULL, NULL
     },
@@ -366,7 +373,7 @@ static config_string ConfigureNamesString[] =
          "flush_method.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_STRING
         },
-        &g_attribute.attr_storage.flush_method,
+        &g_guc_options.attr_storage.flush_method,
         "O_DIRECT",
         NULL, NULL, NULL, NULL
     },
@@ -375,7 +382,7 @@ static config_string ConfigureNamesString[] =
          "transaction_isolation.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_STRING
         },
-        &g_attribute.attr_storage.transaction_isolation,
+        &g_guc_options.attr_storage.transaction_isolation,
         "REPEATABLE-READ", NULL, NULL, NULL, NULL
     },
 
@@ -389,7 +396,7 @@ static config_enum ConfigureNamesEnum[] =
 {
     {
         {"wal_level", "wal_level", GUC_CONTEXT_POSTMASTER, GUC_TYPE_ENUM},
-        &g_attribute.attr_storage.wal_level,
+        &g_guc_options.attr_storage.wal_level,
         WAL_LEVEL_MINIMAL, NULL, NULL, NULL
     },
 
@@ -841,7 +848,7 @@ void build_guc_variables(void)
     qsort((void **)guc_variables, num_guc_variables, sizeof(config_generic *), guc_var_compare);
 }
 
-config_generic* find_guc_variable(char *key_name)
+config_generic* find_guc_variable(char* key_name)
 {
     config_generic **conf;
     char **key = &key_name;
@@ -853,7 +860,7 @@ config_generic* find_guc_variable(char *key_name)
     return conf ? *conf : NULL;
 }
 
-bool32 set_guc_option_value(config_generic *gconfig, char* value)
+bool32 set_guc_option_value(config_generic* gconfig, char* value)
 {
     switch (gconfig->type)
     {
@@ -933,7 +940,11 @@ bool32 set_guc_option_value(config_generic *gconfig, char* value)
     return TRUE;
 }
 
-attribute_t* initialize_guc_options(char *config_file)
+
+
+
+
+status_t initialize_guc_options(char* config_file, attribute_t* attr)
 {
     build_guc_variables();
 
@@ -942,7 +953,7 @@ attribute_t* initialize_guc_options(char *config_file)
     for (uint32 i = 0; i < lines->num_lines; i++) {
         if (!parse_key_value_from_config_line(lines->lines[i], &section, &key, &value)) {
             printf("Invalid config: %s\n", key);
-            return NULL;
+            return CM_ERROR;
         }
         if (key == NULL) {
             continue;
@@ -956,5 +967,7 @@ attribute_t* initialize_guc_options(char *config_file)
         set_guc_option_value(conf, value);
     }
 
-    return &g_attribute;
+    *attr = g_guc_options;
+
+    return CM_SUCCESS;
 }

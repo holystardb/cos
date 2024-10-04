@@ -15,12 +15,18 @@ typedef enum en_err_no {
 
     /* os errors: 100 - 199 */
     ERR_ALLOC_MEMORY = 100,
-    ERR_OUT_OF_MEMORY = 101,
-    ERR_VM_NOT_OPEN = 102,
-    ERR_VM_OPEN_LIMIT_EXCEED  = 103,
-    ERR_STACK_OVERFLOW = 104,
-    ERR_IO_ERROR = 105, /* Generic IO error */
-    ERR_SYSTEM_CALL = 105,
+    ERR_ALLOC_MEMORY_REACH_LIMIT = 101,
+    ERR_OUT_OF_MEMORY = 102,
+    ERR_STACK_OVERFLOW = 103,
+    ERR_ALLOC_MEMORY_CONTEXT = 104,
+
+
+
+    ERR_VM_NOT_OPEN = 110,
+    ERR_VM_OPEN_LIMIT_EXCEED  = 111,
+
+    ERR_IO_ERROR = 120, /* Generic IO error */
+    ERR_SYSTEM_CALL = 121,
 
 
     /* invalid configuration errors: 200 - 299 */
@@ -49,17 +55,32 @@ typedef enum en_err_no {
     ERR_TABLESPACE_EXISTS = 800,  /* file of the same name already exists */
     ERR_TABLESPACE_DELETED,       /* tablespace was deleted or is being dropped right now */
     ERR_TABLESPACE_NOT_FOUND,     /* Attempt to delete a tablespace instance that was not found in the tablespace hash table */
+
     ERR_TABLE_EXISTS,
-    ERR_TABLE_NOT_FOUND,
+    ERR_TABLE_OR_VIEW_NOT_FOUND,
     ERR_TABLE_IS_BEING_USED,
-    ERR_TABLE_CHANGED,        /* Some part of table dictionary has changed. Such as index dropped or foreign key dropped */
-    ERR_DUPLICATE_KEY,
+    ERR_TABLE_CHANGED = 806,        /* Some part of table dictionary has changed. Such as index dropped or foreign key dropped */
+
+    ERR_COLUMN_COUNT_REACH_LIMIT,
+    ERR_COLUMN_NOT_EXIST,
+    ERR_COLUMN_EXISTS,
+    ERR_COLUMN_INDEXED,
+
+    ERR_DUPLICATE_KEY = 811,
     ERR_FOREIGN_DUPLICATE_KEY,  /* foreign key constraints activated by the operation would lead to a duplicate key in some table */
     ERR_CLUSTER_NOT_FOUND,
     ERR_CANNOT_ADD_CONSTRAINT,  /* adding a foreign key constraint to a table failed */
     ERR_CANNOT_DROP_CONSTRAINT, /* dropping a foreign key constraint from a table failed */
     ERR_NO_REFERENCED_ROW,  /* referenced key value not found for a foreign key in an insert or update of a row */
     ERR_ROW_IS_REFERENCED,  /* cannot delete or update a row because it contains a key value which is referenced */
+
+
+    ERR_USER_NOT_EXIST = 820,
+    ERR_ROLE_NOT_EXIST,
+    ERR_FUNCTION_NOT_EXIST,
+
+
+
 
     /* sql engine: 1000 - 1199*/
     ERR_UNSUPPORTED = 1000,
@@ -70,6 +91,12 @@ typedef enum en_err_no {
 
 
     /* PL/SQL Error: 1200 - 1299 */
+    ERR_TYPE_DATETIME_OVERFLOW = 1250,
+    ERR_TYPE_TIMESTAMP_OVERFLOW,
+    ERR_TEXT_FORMAT_ERROR,
+    ERR_UNRECOGNIZED_FORMAT_ERROR,
+    ERR_TYPE_OVERFLOW,
+    ERR_MUTIPLE_FORMAT_ERROR,
 
     /* job error , 1300 - 1399 */
 
@@ -114,21 +141,31 @@ typedef struct st_source_location {
     uint16 column;
 } source_location_t;
 
-#define ERROR_INFO_MSG_LENGTH    1024
+#define ERROR_INFO_MSG_LENGTH         256
+#define ERROR_INFO_STACK_MAX_LEVEL    16
 
 typedef struct st_error_info_t {
-    int32 code;
+    int32  code;
+    uint32 line;
+    char*  file;
     source_location_t loc;
-    char message[ERROR_INFO_MSG_LENGTH];
+    char   message[ERROR_INFO_MSG_LENGTH];
     bool8 is_ignored;
     bool8 is_ignore_log;
     bool8 is_full;
     bool8 reserved;
 } error_info_t;
 
+typedef struct st_errinfo_stack_t {
+    uint32       level;
+    error_info_t err_info[ERROR_INFO_STACK_MAX_LEVEL];
+} errinfo_stack_t;
+
 // -----------------------------------------------------------------------------------------------
 
-extern THREAD_LOCAL error_info_t g_tls_error;
+extern THREAD_LOCAL error_info_t       g_tls_error;
+extern THREAD_LOCAL errinfo_stack_t    g_tls_errinfo_stack;
+
 
 #define CM_THROW_ERROR(err_no, ...)                                   \
     do {                                                              \
@@ -138,24 +175,34 @@ extern THREAD_LOCAL error_info_t g_tls_error;
         LOGGER_ERROR(LOGGER, g_error_desc[err_no], ##__VA_ARGS__);    \
     } while (0)
 
-inline void set_error_message(const char *fmt, ...)
+extern inline void set_stack_error_message(const char *fmt, ...)
 {
     int32 len;
     va_list ap;
 
     va_start(ap, fmt);
-    len = vsnprintf(g_tls_error.message, ERROR_INFO_MSG_LENGTH, fmt, ap);
-    g_tls_error.message[len] = '\0';
+    len = vsnprintf(g_tls_errinfo_stack.err_info[g_tls_errinfo_stack.level].message, ERROR_INFO_MSG_LENGTH, fmt, ap);
+    g_tls_errinfo_stack.err_info[g_tls_errinfo_stack.level].message[len] = '\0';
     va_end(ap);
 }
 
-#define CM_SET_ERROR(err_no, ...)                                     \
-    do {                                                              \
-        g_tls_error.code = err_no;                                    \
-        g_tls_error.loc.line = 0;                                     \
-        g_tls_error.loc.column = 0;                                   \
-        set_error_message(g_error_desc[err_no], ##__VA_ARGS__);       \
+#define CM_SET_ERROR(err_no, ...)                                                \
+    do {                                                                         \
+        if (g_tls_errinfo_stack.level >= ERROR_INFO_STACK_MAX_LEVEL) {           \
+            break;                                                               \
+        }                                                                        \
+        g_tls_errinfo_stack.err_info[g_tls_errinfo_stack.level].code = err_no;   \
+        g_tls_errinfo_stack.err_info[g_tls_errinfo_stack.level].file = __FILE__; \
+        g_tls_errinfo_stack.err_info[g_tls_errinfo_stack.level].line = __LINE__; \
+        set_stack_error_message(g_error_desc[err_no], ##__VA_ARGS__);            \
+        g_tls_errinfo_stack.level++;                                             \
     } while (0)
+
+#define CM_RESET_ERR_INFO_STACK                            \
+    do {                                                   \
+        g_tls_errinfo_stack.level = 0;                     \
+    } while (0)
+
 
 extern bool32 error_message_init(char* errmsg_file);
 
