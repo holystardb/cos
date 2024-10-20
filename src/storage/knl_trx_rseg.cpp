@@ -190,7 +190,7 @@ static status_t trx_rseg_create_trx_slot(trx_rseg_t* rseg)
 
     mtr_start(mtr);
 
-    rseg->trx_slots = (void **)ut_malloc_zero(sizeof(void *) * trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
+    rseg->trx_slots = (void **)ut_malloc_zero(sizeof(void*) * trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
 
     for (uint32 i = 0; i < TRX_SLOT_PAGE_COUNT_PER_RSEG; i++) {
         //
@@ -381,12 +381,10 @@ static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg, mtr_t* mtr)
 inline trx_t* trx_rseg_assign_and_alloc_trx(mtr_t* mtr)
 {
     trx_t* trx = NULL;
-    trx_rseg_t* rseg;
-    static uint32  latest_rseg = 0;
-    uint32 index = latest_rseg++;
+    uint64 index = ut_rnd_gen_uint64();
 
     for (uint32 i = 0; i < trx_sys->rseg_count; i++) {
-        rseg = &trx_sys->rseg_array[(index + i) % trx_sys->rseg_count];
+        trx_rseg_t* rseg = &trx_sys->rseg_array[(index + i) % trx_sys->rseg_count];
         trx = trx_rseg_alloc_trx(rseg, mtr);
         if (trx) {
             break;

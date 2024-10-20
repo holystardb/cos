@@ -387,7 +387,7 @@ extern buf_pool_t* buf_pool_get(uint32 id);
 extern buf_pool_t* buf_pool_from_page_id(const page_id_t &page_id);
 extern buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
 extern buf_pool_t* buf_pool_from_block(const buf_block_t *block);
-lsn_t buf_pool_get_oldest_modification(void);
+lsn_t buf_pool_get_recovery_lsn(void);
 
 
 

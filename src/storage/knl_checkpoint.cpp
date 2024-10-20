@@ -5,11 +5,14 @@
 
 checkpoint_t   g_checkpoint = {0};
 
-checkpoint_t* checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
+status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
 {
     checkpoint_t* checkpoint = &g_checkpoint;
 
     memset(checkpoint, 0x00, sizeof(checkpoint_t));
+
+    checkpoint->checkpoint_event = os_event_create(NULL);
+    os_event_set(checkpoint->checkpoint_event);
 
     mutex_create(&checkpoint->mutex);
     checkpoint->group.item_count = 0;
@@ -17,11 +20,10 @@ checkpoint_t* checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
     checkpoint->group.buf = (char *)ut_malloc(checkpoint->group.buf_size);
     if (checkpoint->group.buf == NULL) {
         LOGGER_ERROR(LOGGER, "checkpoint_init: failed to malloc doublewrite memory");
-        return NULL;
+        return CM_ERROR;
     }
     checkpoint->flush_timeout_us = 1000000 * 300; // 300s
-    checkpoint->thread.exited = FALSE;
-
+    
     checkpoint->enable_double_write = TRUE;
     checkpoint->double_write.name = dbwr_file_name;
     checkpoint->double_write.size = dbwr_file_size;
@@ -34,7 +36,7 @@ checkpoint_t* checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
             dbwr_file_name, err_info);
 
         ut_free(checkpoint->group.buf);
-        return NULL;
+        return CM_ERROR;
     }
 
     //
@@ -45,10 +47,10 @@ checkpoint_t* checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
         ut_free(checkpoint->group.buf);
         os_close_file(checkpoint->double_write.handle);
         LOGGER_ERROR(LOGGER, "checkpoint_init: failed to create aio array for doublewrite");
-        return NULL;
+        return CM_ERROR;
     }
 
-    return checkpoint;
+    return CM_SUCCESS;
 }
 
 status_t checkpoint_full_checkpoint()
@@ -98,9 +100,12 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
     page_id_t   page_id;
 
     //
-    const uint32 buf_flush_area  = 64;
-    uint32 low = (block->get_page_no() / buf_flush_area) * buf_flush_area;
-    uint32 high = (block->get_page_no() / buf_flush_area + 1) * buf_flush_area;
+    const uint32 buf_flush_area = 64;
+    uint32 low = ut_uint32_align_down(block->get_page_no(), buf_flush_area);
+    uint32 high = ut_uint32_align_up(block->get_page_no(), buf_flush_area);
+    if (high == 0) {
+        high = buf_flush_area;
+    }
     if (high > fil_space_get_size(block->get_space_id())) {
         high = fil_space_get_size(block->get_space_id());
     }
@@ -157,8 +162,6 @@ static status_t checkpoint_copy_dirty_pages(checkpoint_t* checkpoint, lsn_t leas
 {
     buf_block_t* block;
     uint32 buf_pool_instances = buf_pool_get_instances();
-
-    checkpoint->group.item_count = 0;
 
     // When we traverse all the flush lists
     // we don't want another thread to add a dirty page to any flush list.
@@ -473,22 +476,51 @@ static status_t checkpoint_perform(checkpoint_t* checkpoint)
     status_t err;
     lsn_t least_recovery_point;
 
+    // reset
+    uint32 pre_item_count = 0;
+    checkpoint->group.item_count = 0;
+
     // 1 get checkpoint lsn
     //   Search twice to ensure the minimum value for checkpoint->least_recovery_point
-    buf_pool_get_oldest_modification();
-    least_recovery_point = buf_pool_get_oldest_modification();
-    if (least_recovery_point == 0) {
+    lsn_t write_to_buf_lsn = log_get_writed_to_buffer_lsn();
+    lsn_t flushed_to_disk_lsn = log_get_flushed_to_disk_lsn();
+
+retry_more:
+
+    // double get
+    buf_pool_get_recovery_lsn();
+    least_recovery_point = buf_pool_get_recovery_lsn();
+    if (least_recovery_point == 0 && checkpoint->group.item_count == 0) {
+        if (srv_recovery_on) {
+            return CM_SUCCESS;
+        }
+        if (write_to_buf_lsn != flushed_to_disk_lsn) {
+            return CM_SUCCESS;
+        }
+        // Long time no write operation, refresh the last CHECK POINT
+        if (checkpoint->least_recovery_point < flushed_to_disk_lsn + 1) {
+            log_checkpoint(flushed_to_disk_lsn + 1);
+            checkpoint->least_recovery_point = flushed_to_disk_lsn + 1;
+            LOGGER_INFO(LOGGER,
+                "checkpoint: set checkpoint point, least_recovery_point=%llu",
+                checkpoint->least_recovery_point);
+        }
         return CM_SUCCESS;
     }
-    checkpoint->least_recovery_point = least_recovery_point;
+
+    if (least_recovery_point != 0) {
+        LOGGER_DEBUG(LOGGER,
+            "checkpoint: starting, recovery_lsn from %llu to %llu",
+            checkpoint->least_recovery_point, least_recovery_point);
+    }
 
     // 2 flush redo log to update lrp point.
-    log_write_up_to(checkpoint->least_recovery_point);
+    log_write_up_to(least_recovery_point);
 
     // 3 write and sync pages
     while (TRUE) {
         // 3.1 copy all dirty pages to dirty pages list of checkpoint for all buffer pool
-        err = checkpoint_copy_dirty_pages(checkpoint, checkpoint->least_recovery_point);
+        err = checkpoint_copy_dirty_pages(checkpoint, least_recovery_point);
         CM_RETURN_IF_ERROR(err);
 
         if (checkpoint->group.item_count == 0) {
@@ -496,6 +528,13 @@ static status_t checkpoint_perform(checkpoint_t* checkpoint)
             break;
         }
 
+        if (pre_item_count != checkpoint->group.item_count &&
+            checkpoint->group.item_count < CHECKPOINT_GROUP_MAX_SIZE) {
+            // get more pages
+            pre_item_count = checkpoint->group.item_count;
+            goto retry_more;
+        }
+        
         // 3.2 double write pages to be flushed if need.
         if (checkpoint->enable_double_write && !checkpoint_double_write(checkpoint)) {
             return CM_ERROR;
@@ -508,26 +547,47 @@ static status_t checkpoint_perform(checkpoint_t* checkpoint)
         // 3.4 write and sync pages to disk
         err = checkpoint_write_and_sync_pages(checkpoint);
         CM_RETURN_IF_ERROR(err);
+
+        // reset
+        pre_item_count = 0;
+        checkpoint->group.item_count = 0;
     }
 
     // 3. save checkpoint info
-    log_checkpoint(checkpoint->least_recovery_point);
+    if (!srv_recovery_on) {
+        log_checkpoint(least_recovery_point);
+        checkpoint->least_recovery_point = least_recovery_point;
+    }
 
     return CM_SUCCESS;
 }
 
 void* checkpoint_proc_thread(void *arg)
 {
-    thread_t* thread = (thread_t *)arg;
-    
-    while (!thread->exited) {
-        if (checkpoint_perform(&g_checkpoint) != CM_SUCCESS) {
-            LOGGER_FATAL(LOGGER, "checkpoint: fatal error occurred");
+    checkpoint_t* checkpoint = &g_checkpoint;
+    uint64 signal_count = 0;
+    uint32 timeout_microseconds = 1000000;
+
+    LOGGER_INFO(LOGGER,"checkpoint thread starting ...");
+
+    while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
+        if (checkpoint_perform(checkpoint) != CM_SUCCESS) {
+            LOGGER_FATAL(LOGGER, "checkpoint: fatal error occurred, service exited");
+            ut_error;
         }
-        os_thread_sleep(1000000);
+
+        // wake up by checkpoint thread
+        os_event_wait_time(checkpoint->checkpoint_event, timeout_microseconds, signal_count);
+        signal_count = os_event_reset(checkpoint->checkpoint_event);
     }
 
     return NULL;
 }
 
+inline void checkpoint_wake_up_thread()
+{
+    checkpoint_t* checkpoint = &g_checkpoint;
+
+    os_event_set(checkpoint->checkpoint_event);
+}
 

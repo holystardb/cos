@@ -102,7 +102,7 @@ static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_bl
 
     ut_ad(!block->page.in_flush_list);
     block->page.in_flush_list = TRUE;
-    block->page.recovery_lsn = log_get_flushed_lsn() + 1;
+    block->page.recovery_lsn = log_get_flushed_to_disk_lsn() + 1;
     UT_LIST_ADD_FIRST(list_node_flush, buf_pool->flush_list, block);
 
     buf_pool->stat.flush_list_bytes += UNIV_PAGE_SIZE;
@@ -125,10 +125,11 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
     ut_ad((block->is_resident() && block->get_fix_count() == 0) ||
         (!block->is_resident() && block->get_fix_count() > 0));
     ut_ad(mtr->modifications);
-    
+
     mutex_enter(&block->mutex);
 
-    //ut_ad(!block->is_resident() && block->page.newest_modification <= mtr->end_lsn);
+    // if it is block of transaction slot, because block does not have a rw_lock
+    // block->page.newest_modification is not assigned in order
     if (block->page.newest_modification < mtr->end_lsn) {
         block->page.newest_modification = mtr->end_lsn;
     }
@@ -136,7 +137,10 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
     if (block->page.recovery_lsn == 0) {
         buf_flush_insert_into_flush_list(buf_pool, block);
     } else {
-        ut_ad(block->page.recovery_lsn <= mtr->start_buf_lsn.val.lsn);
+        // In the following two situations, may be block->page.recovery_lsn > mtr->start_buf_lsn.val.lsn
+        //    1) block of transaction slot, because block does not have a rw_lock
+        //    2) A block added multiple times to mtr
+        //ut_ad(block->page.recovery_lsn <= mtr->start_buf_lsn.val.lsn);
     }
 
     mutex_exit(&block->mutex);

@@ -15,40 +15,38 @@
 
 /** io_handler_thread parameters for thread identification */
 static uint32         read_thread_idents[SRV_MAX_READ_IO_THREADS];
+static os_thread_t    read_threads[SRV_MAX_READ_IO_THREADS];
 static os_thread_id_t read_thread_ids[SRV_MAX_READ_IO_THREADS];
 static uint32         write_thread_idents[SRV_MAX_WRITE_IO_THREADS];
+static os_thread_t    write_threads[SRV_MAX_WRITE_IO_THREADS];
 static os_thread_id_t write_thread_ids[SRV_MAX_WRITE_IO_THREADS];
+
+static os_thread_t    checkpoint_thread;
+static os_thread_id_t checkpoint_thread_id;
+
 
 status_t server_read_control_file()
 {
     char      file_name[CM_FILE_PATH_BUF_SIZE];
     db_ctrl_t ctrl_file[3] = {0};
-    uint64    ver_num = 0, idx = 0xFF;
+    uint64    version = 0, version_num = 0, idx = 0xFF;
 
     for (uint32 i = 0; i < 3; i++) {
         sprintf_s(file_name, CM_FILE_PATH_MAX_LEN, "%s%c%s%d", srv_data_home, SRV_PATH_SEPARATOR, "ctrl", i+1);
         if (read_ctrl_file(file_name, &ctrl_file[i]) != CM_SUCCESS) {
+            ctrl_file[i].version = 0;
             ctrl_file[i].ver_num = 0;
             continue;
         }
 
-        if (ver_num < ctrl_file[i].ver_num) {
-            ver_num = ctrl_file[i].ver_num;
+        if (version_num < ctrl_file[i].ver_num) {
+            version_num = ctrl_file[i].ver_num;
             idx = i;
         }
     }
 
     if (idx != 0xFF) {
         srv_ctrl_file = ctrl_file[idx];
-    }
-
-    for (uint32 i = 0; i < 3; i++) {
-        if (ctrl_file[i].user_space_data_files && i != idx) {
-            ut_free(ctrl_file[i].user_space_data_files);
-        }
-        if (ctrl_file[i].user_spaces && i != idx) {
-            ut_free(ctrl_file[i].user_spaces );
-        }
     }
 
     return idx == 0xFF ? CM_ERROR : CM_SUCCESS;
@@ -86,22 +84,30 @@ status_t read_write_aio_init()
     return CM_SUCCESS;
 }
 
-status_t read_write_threads_init()
+status_t read_write_threads_startup()
 {
-    LOGGER_INFO(LOGGER, "create io threads for read and write");
+    LOGGER_INFO(LOGGER, "create io threads: read threads = %u, write threads = %u",
+        srv_read_io_threads, srv_write_io_threads);
 
     /* Create i/o-handler threads: */
     for (uint32 i = 0; i < srv_read_io_threads && i < SRV_MAX_READ_IO_THREADS; ++i) {
         read_thread_idents[i] = i;
-        os_thread_create(read_io_handler_thread, &read_thread_idents[i], &read_thread_ids[i]);
+        read_threads[i] = os_thread_create(read_io_handler_thread, &read_thread_idents[i], &read_thread_ids[i]);
     }
     for (uint32 i = 0; i < srv_write_io_threads && i < SRV_MAX_WRITE_IO_THREADS; ++i) {
         write_thread_idents[i] = i;
-        os_thread_create(write_io_handler_thread, &write_thread_idents[i], &write_thread_ids[i]);
+        write_threads[i] = os_thread_create(write_io_handler_thread, &write_thread_idents[i], &write_thread_ids[i]);
     }
 
     return CM_SUCCESS;
 }
+
+status_t checkpoint_thread_startup()
+{
+    checkpoint_thread = os_thread_create(checkpoint_proc_thread, NULL, &checkpoint_thread_id);
+    return CM_SUCCESS;
+}
+
 
 status_t server_create_data_files()
 {
@@ -146,12 +152,14 @@ status_t memory_pool_create(attr_memory_t* attr)
         attr->plan_memory_cache_size;
     srv_memory_sga = marea_create(total_memory_size, FALSE);
     if (srv_memory_sga == NULL) {
+        LOGGER_ERROR(LOGGER, "Failed to create memory area, size %llu", total_memory_size);
         return CM_ERROR;
     }
 
     max_page_count = attr->common_memory_cache_size / page_size_16K;
     srv_common_mpool = mpool_create(srv_memory_sga, 0, max_page_count, UINT32_UNDEFINED, page_size_16K);
     if (srv_common_mpool == NULL) {
+        LOGGER_ERROR(LOGGER, "Failed to create common memory pool");
         return CM_ERROR;
     }
 
@@ -159,23 +167,27 @@ status_t memory_pool_create(attr_memory_t* attr)
     max_page_count = attr->mtr_memory_cache_size / page_size_16K;
     srv_mtr_memory_pool = mpool_create(srv_memory_sga, initial_page_count, max_page_count, UINT32_UNDEFINED, page_size_16K);
     if (srv_mtr_memory_pool == NULL) {
+        LOGGER_ERROR(LOGGER, "Failed to create mtr memory pool");
         return CM_ERROR;
     }
 
     max_page_count = attr->dictionary_memory_cache_size / page_size_16K;
     srv_dictionary_mem_pool = mpool_create(srv_memory_sga, 0, max_page_count, max_page_count, page_size_16K);
     if (srv_dictionary_mem_pool == NULL) {
+        LOGGER_ERROR(LOGGER, "Failed to create dictionary memory pool");
         return CM_ERROR;
     }
 
     max_page_count = attr->plan_memory_cache_size / page_size_16K;
     srv_plan_mem_pool = mpool_create(srv_memory_sga, 0, max_page_count, max_page_count, page_size_16K);
     if (srv_plan_mem_pool == NULL) {
+        LOGGER_ERROR(LOGGER, "Failed to create plan memory pool");
         return CM_ERROR;
     }
 
     srv_temp_mem_pool = vm_pool_create(attr->temp_memory_cache_size, page_size_128K);
     if (srv_temp_mem_pool == NULL) {
+        LOGGER_ERROR(LOGGER, "Failed to create temporary memory pool");
         return CM_ERROR;
     }
 
@@ -378,7 +390,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     //lock_sys_create(srv_lock_table_size);
 
     // Create i/o-handler threads
-    err = read_write_threads_init();
+    err = read_write_threads_startup();
     CM_RETURN_IF_ERROR(err);
 
     // Creates a session system at a database start
@@ -412,16 +424,25 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     err = server_open_tablespace_data_files();
     CM_RETURN_IF_ERROR(err);
 
+    // checkpoint init
+    err = checkpoint_init(srv_ctrl_file.dbwr.name, srv_ctrl_file.dbwr.max_size);
+    CM_RETURN_IF_ERROR(err);
+    //log_checkpoint(LOG_BLOCK_HDR_SIZE);
+    //log_checkpoint(LOG_BLOCK_HDR_SIZE);
+    // Create checkpoint thread
+    //err = checkpoint_thread_startup();
+    CM_RETURN_IF_ERROR(err);
+
     //
     if (is_create_new_db) {
         // Filespace Header/Extent Descriptor
-        ut_a(srv_ctrl_file.system.size >= 16 * 1024 * FSP_RESERVED_MAX_PAGE_NO);
+        ut_a(srv_ctrl_file.system.size >= 16 * 1024 * FSP_DYNAMIC_FIRST_PAGE_NO);
         err = fsp_init_space(FIL_SYSTEM_SPACE_ID, srv_ctrl_file.system.size / UNIV_PAGE_SIZE);
         CM_RETURN_IF_ERROR(err);
 
         // reserved 16MB for system space
-        err = fsp_system_space_reserve_pages(FSP_RESERVED_MAX_PAGE_NO);
-        CM_RETURN_IF_ERROR(err);
+        //err = fsp_system_space_reserve_pages(FSP_DYNAMIC_FIRST_PAGE_NO);
+        //CM_RETURN_IF_ERROR(err);
 
         err = trx_sys_create_undo_segments(attr->attr_storage.undo_cache_size);
         CM_RETURN_IF_ERROR(err);
@@ -457,9 +478,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     } else {
         // We always try to do a recovery,
         // even if the database had been shut down normally
-        duint64 min_flushed_lsn = ut_duint64_zero, max_flushed_lsn = ut_duint64_zero;
-        err = recovery_from_checkpoint_start(LOG_CHECKPOINT,
-            ut_duint64_max, min_flushed_lsn, max_flushed_lsn);
+        err = recovery_from_checkpoint_start(LOG_CHECKPOINT);
         CM_RETURN_IF_ERROR(err);
 
         
@@ -483,24 +502,8 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
         CM_RETURN_IF_ERROR(err);
     }
 
-    // Makes a checkpoint at a given lsn or later
-    log_make_checkpoint_at(ut_duint64_max);
-
-    //
-    checkpoint_t* checkpoint = checkpoint_init(srv_ctrl_file.dbwr.name, srv_ctrl_file.dbwr.max_size);
-    if (checkpoint == NULL) {
-        return CM_ERROR;
-    }
-    checkpoint->thread.thread = os_thread_create(&checkpoint_proc_thread,
-        &checkpoint->thread, &checkpoint->thread.thread_id);
-
     // Create the thread which watches the timeouts for lock waits and prints monitor info
     //os_thread_create(&srv_lock_timeout_and_monitor_thread, NULL, thread_ids);	
-
-    // Creates the doublewrite buffer at a database start
-    //if (srv_use_doublewrite_buf && trx_doublewrite == NULL) {
-    //    trx_sys_create_doublewrite_buf();
-    //}
 
     //err = dict_create_or_check_foreign_constraint_tables();
     //if (err != CM_SUCCESS) {
@@ -510,6 +513,14 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     // Create the master thread which monitors the database server,
     // and does purge and other utility operations
     //os_thread_create(&srv_master_thread, NULL, thread_ids + 1 + SRV_MAX_N_IO_THREADS);
+
+    // Makes a checkpoint at a given lsn or later
+    log_make_checkpoint_at(ut_duint64_max);
+    LOGGER_INFO(LOGGER,
+        "checkpoint: writed_to_buffer_lsn=%llu, writed_to_file_lsn=%llu, flushed_to_disk_lsn=%llu, "
+        "checkpoint_no=%llu. checkpoint_lsn=%llu",
+        log_get_writed_to_buffer_lsn(), log_get_writed_to_file_lsn(), log_get_flushed_to_disk_lsn(),
+        log_sys->next_checkpoint_no - 1, log_sys->last_checkpoint_lsn);
 
     LOGGER_INFO(LOGGER, "Service started");
 

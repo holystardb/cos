@@ -28,7 +28,7 @@
 #define HAVE_CHARSET_utf8mb4
 #endif
 
-
+uint32 log_level = LOG_LEVEL_ALL;
 
 status_t create_database(char* base_dir)
 {
@@ -39,7 +39,7 @@ status_t create_database(char* base_dir)
 
     // 2.
     char *log_path = "D:\\MyWork\\cos\\data\\";
-    LOGGER.log_init(LOG_DEBUG, log_path, "initdb");
+    LOGGER.log_init(log_level, log_path, "initdb");
 
     // 3.
     char err_file[1024];
@@ -59,7 +59,7 @@ status_t create_database(char* base_dir)
     // 5.
     db_ctrl_createdatabase("cosdb", "utf8mb4_bin");
 
-    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf", 4 * 1024 * 1024, 100 * 1024 * 1024, TRUE);
+    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf", 5 * 1024 * 1024, 100 * 1024 * 1024, TRUE);
 
     db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
     db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
@@ -92,7 +92,7 @@ status_t start_database(char* base_dir)
 
     // 2.
     char *log_path = "D:\\MyWork\\cos\\data\\";
-    LOGGER.log_init(LOG_DEBUG, log_path, "initdb");
+    LOGGER.log_init(log_level, log_path, "initdb");
 
     // 3.
     char err_file[1024];
@@ -121,6 +121,9 @@ int main(int argc, const char *argv[])
     status_t err;
     char*    base_dir = "D:\\MyWork\\cos";
 
+    //log_level = LOG_LEVEL_CRITICAL | LOG_LEVEL_INFO;
+    log_level = LOG_LEVEL_ALL;
+
     cm_timer_t* timer = g_timer();
     cm_start_timer(timer);
 
@@ -130,10 +133,8 @@ int main(int argc, const char *argv[])
         goto err_exit;
     }
 
-    for (uint32 i = 0; i < 10; i++) {
-        os_thread_sleep(1000000);
-        LOGGER.log_file_flush();
-    }
+    os_thread_sleep(1000000);
+    LOGGER.log_file_flush();
     
     dict_table_t* table;
     uint32 status = dict_get_table_from_cache_by_name("SYS_TABLES", &table);

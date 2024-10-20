@@ -34,6 +34,12 @@ recovery and open all tables in RO mode instead of RW mode. We don't
 sync the max trx id to disk either. */
 bool32 srv_read_only_mode = FALSE;
 
+
+// TRUE when applying redo log records during crash recovery; FALSE otherwise.
+// Note that this is FALSE while a background thread is rolling back incomplete transactions.
+bool32 srv_recovery_on = FALSE;
+
+
 bool32 srv_archive_recovery = FALSE;
 
 
@@ -448,7 +454,8 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
     for (uint32 i = 0; i < ctrl->user_space_data_file_count; i++) {
         uint32 node_id = mach_read_from_4(ptr);
         ut_a(node_id != DB_DATA_FILNODE_INALID_ID);
-        ut_a(node_id < DB_SPACE_DATA_FILE_MAX_COUNT);
+        ut_a(node_id >= DB_USER_DATA_FILE_FIRST_NODE_ID && node_id < DB_SPACE_DATA_FILE_MAX_COUNT);
+        node_id -= DB_USER_DATA_FILE_FIRST_NODE_ID;
 
         ctrl->user_space_data_files[node_id].node_id = mach_read_from_4(ptr);
         ptr += 4;
@@ -545,6 +552,9 @@ bool32 db_ctrl_add_system(char* data_file_name, uint64 size, uint64 max_size, bo
 {
     db_data_file_t *file = &srv_ctrl_file.system;
 
+    if (size < FSP_DYNAMIC_FIRST_PAGE_NO * UNIV_PAGE_SIZE) {
+        size = FSP_DYNAMIC_FIRST_PAGE_NO * UNIV_PAGE_SIZE;
+    }
     db_ctrl_set_file(file, DB_SYSTEM_SPACE_ID, DB_SYSTEM_FILNODE_ID, data_file_name, size, max_size, autoextend);
 
     return TRUE;
@@ -924,6 +934,7 @@ bool32 db_ctrl_createdatabase(char* database_name, char* charset_name)
     memset(ctrl_file, 0x00, sizeof(db_ctrl_t));
 
     ctrl_file->version = DB_CTRL_FILE_VERSION;
+    ctrl_file->ver_num = DB_CTRL_FILE_VERSION_NUM;
 
     for (uint32 i = 0; i < DB_SYSTEM_SPACE_MAX_COUNT; i++) {
         ctrl_file->system_spaces[i].space_id = DB_SPACE_INALID_ID;
@@ -960,6 +971,7 @@ void* write_io_handler_thread(void *arg)
     uint32 index = *(uint32 *)arg;
 
     ut_ad(index < srv_write_io_threads);
+    LOGGER_INFO(LOGGER, "write io thread (id = %lu) starting ...", index);
 
     context = os_aio_array_get_nth_context(srv_os_aio_async_write_array, index);
 
@@ -976,6 +988,7 @@ void* read_io_handler_thread(void *arg)
     os_aio_context_t* context;
     uint32 index = *(uint32 *)arg;
 
+    LOGGER_INFO(LOGGER, "read io thread (id = %lu) starting ...", index);
     ut_ad(index < srv_read_io_threads);
 
     context = os_aio_array_get_nth_context(srv_os_aio_async_read_array, index);;

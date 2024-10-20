@@ -28,32 +28,7 @@ static const uint32 TRX_SYS_SPACE = 0;
 /** Page number of the transaction system page */
 #define TRX_SYS_PAGE_NO             FSP_TRX_SYS_PAGE_NO
 
-/** Doublewrite buffer */
 
-/** The offset of the doublewrite buffer header on the trx system header page */
-#define TRX_SYS_DOUBLEWRITE		(UNIV_PAGE_SIZE - 200)
-/*-------------------------------------------------------------*/
-#define TRX_SYS_DOUBLEWRITE_FSEG	0	/*!< fseg header of the fseg containing the doublewrite buffer */
-#define TRX_SYS_DOUBLEWRITE_MAGIC	FSEG_HEADER_SIZE
-/*!< 4-byte magic number which shows if we already have created the doublewrite buffer */
-#define TRX_SYS_DOUBLEWRITE_BLOCK1	(4 + FSEG_HEADER_SIZE)
-/*!< page number of the first page in the first sequence of 64 (= FSP_EXTENT_SIZE) consecutive pages in the doublewrite buffer */
-#define TRX_SYS_DOUBLEWRITE_BLOCK2	(8 + FSEG_HEADER_SIZE)
-/*!< page number of the first page in the second sequence of 64 consecutive pages in the doublewrite buffer */
-#define TRX_SYS_DOUBLEWRITE_REPEAT	12	/*!< we repeat
-TRX_SYS_DOUBLEWRITE_MAGIC,
-TRX_SYS_DOUBLEWRITE_BLOCK1,
-TRX_SYS_DOUBLEWRITE_BLOCK2
-so that if the trx sys header is half-written to disk, we still may be able to recover the information */
-/** If this is not yet set to TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED_N,
-we must reset the doublewrite buffer, because starting from 4.1.x the
-space id of a data page is stored into FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID. */
-#define TRX_SYS_DOUBLEWRITE_SPACE_ID_STORED (24 + FSEG_HEADER_SIZE)
-
-
-/*-------------------------------------------------------------*/
-/* Size of a rollback segment specification slot */
-#define TRX_SYS_RSEG_SLOT_SIZE	8
 
 /** Transaction execution states when trx->state == TRX_STATE_ACTIVE */
 enum trx_que_t {

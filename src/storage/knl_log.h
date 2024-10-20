@@ -19,6 +19,11 @@ extern "C" {
 
 #define OS_FILE_LOG_BLOCK_SIZE    512
 
+// A margin for free space in the log buffer before a log entry is catenated
+#define LOG_BUF_WRITE_MARGIN      (4 * OS_FILE_LOG_BLOCK_SIZE)
+
+
+
 /* The counting of lsn's starts from this value: this must be non-zero */
 #define LOG_START_LSN           ((uint64)(16 * OS_FILE_LOG_BLOCK_SIZE))
 
@@ -26,7 +31,8 @@ extern "C" {
 #define LOG_BLOCK_HDR_NO          0  /* block number which must be > 0 */
 #define LOG_BLOCK_HDR_DATA_LEN    8  /* number of bytes of log written to this block */
 #define LOG_BLOCK_FIRST_REC_GROUP 10 /* offset of the first start of an mtr log record group in this log block */
-#define LOG_BLOCK_HDR_SIZE        12 /* size of the log block header in bytes */
+#define LOG_BLOCK_CHECKPOINT_NO   12
+#define LOG_BLOCK_HDR_SIZE        20 /* size of the log block header in bytes */
 
 #define LOG_BLOCK_FLUSH_BIT_MASK  0x80000000UL  /* mask used to get the highest bit in the preceding field */
 
@@ -108,22 +114,21 @@ typedef enum {
 } LogSlotStatus;
 
 typedef struct st_log_slot {
-    uint64  lsn;
-    uint32  data_len;
-    uint32  status;
+    volatile uint64  lsn;
+    volatile uint32  data_len;
+    volatile uint32  status;
 } log_slot_t;
 
 typedef struct st_log_buf_lsn {
     uint32  data_len;
     union {
-#ifdef __WIN__
-        uint128     value;
-#else
+#ifndef __WIN__
         atomic128_t value;
 #endif
         struct {
-            uint64  lsn;   // log sequence number
-            uint64  slot_index;
+            volatile uint64  lsn;   // log sequence number
+            volatile uint32  slot_index;
+            volatile uint32  block_count;
         };
     } val;
 } log_buf_lsn_t;
@@ -135,25 +140,15 @@ typedef enum {
 } LogGroupStatus;
 
 #define LOG_GROUP_MAX_COUNT       16
+#define LOG_GROUP_INVALID_ID      UINT_MAX32
 typedef struct st_log_group {
+    char*             name;
     uint32            id;
-    char             *name;
+    uint32            status;
     os_file_t         handle;
     uint64            file_size; // individual log file size in bytes, including the log file header
-    uint64            write_offset;
-    uint64            base_lsn;
-    uint32            status;
-
-
-    uint32            state; // LOG_GROUP_OK or LOG_GROUP_CORRUPTED
-    lsn_t             lsn; // lsn used to fix coordinates within the log group
-    lsn_t             lsn_offset; // the offset of the above lsn
-    // used only in recovery:
-    // recovery scan succeeded up to this lsn in this log group
-    lsn_t             scanned_lsn;
-
+    uint64            base_lsn;  // starting lsn of group, the starting postion of third block
     UT_LIST_NODE_T(struct st_log_group) list_node;
-
 } log_group_t;
 
 /** Redo log buffer */
@@ -163,45 +158,52 @@ typedef struct st_log {
     mutex_t           mutex; // mutex protecting the log
     // mutex to serialize access to the flush list when we are putting dirty blocks in the list
     mutex_t           log_flush_order_mutex;
-    log_buf_lsn_t     buf_lsn;
-    uint64            buf_base_lsn;
 
-    byte*             buf_ptr; /* unaligned log buffer */
-    byte*             buf; /*!< log buffer */
-    uint32            buf_size; /*!< log buffer size in bytes */
-    uint32            max_buf_free; /*!< recommended maximum value of buf_free, after which the buffer is flushed */
-    uint32            buf_free; /*!< first free offset within the log buffer */
+    // log buffer
+    byte*             buf_ptr; // unaligned log buffer
+    byte*             buf; // log buffer
+    uint32            buf_size; // log buffer size in bytes
+    uint64            buf_base_lsn; // lsn for buf[0] while service started
 
+    //
     byte*             checkpoint_buf;
 
-
+    //
     uint8             group_count; // number of log file
     uint8             current_write_group;
     uint8             current_flush_group;
     log_group_t       groups[LOG_GROUP_MAX_COUNT];
-    uint64            file_size;
+    UT_LIST_BASE_NODE_T(log_group_t) log_groups;  // base list of groups
+
+    uint64            log_files_total_size;  // total size of all redo files
+
     os_aio_array_t*   aio_array;
     os_aio_context_t* aio_ctx_log_write;
     os_aio_context_t* aio_ctx_checkpoint;
 
+    //
     log_slot_t*       slots;
     volatile uint64   slot_write_pos;
+    log_buf_lsn_t     buf_lsn;
     volatile uint64   writer_writed_lsn;
     volatile uint64   flusher_flushed_lsn;
 
+    //
+    os_event_t        session_wait_events[LOG_SESSION_WAIT_EVENT_COUNT];
+
+    // writer thread and flusher thread
+    volatile bool32   writer_event_is_waitting;
     os_event_t        writer_event;
     os_event_t        flusher_event;
-    os_event_t        session_wait_event[LOG_SESSION_WAIT_EVENT_COUNT];
-
     os_thread_t       writer_thread;
     os_thread_t       flusher_thread;
 
-    //uint64            max_checkpoint_age;
-    uint64            next_checkpoint_no; // next checkpoint number
+
+    //checkpoint
+    volatile uint64   next_checkpoint_no; // next checkpoint number
     volatile uint64   last_checkpoint_lsn; // latest checkpoint lsn
     uint64            next_checkpoint_lsn; // next checkpoint lsn
 
-    UT_LIST_BASE_NODE_T(log_group_t) log_groups;
 
 } log_t;
 
@@ -210,17 +212,29 @@ typedef struct st_log {
 
 extern status_t log_init(uint32 log_buffer_size);
 extern bool32 log_group_add(char *name, uint64 file_size);
+extern inline lsn_t log_group_get_capacity(const log_group_t* group);
 
-extern inline log_buf_lsn_t log_buffer_reserve(uint32 len);
+extern inline void log_buffer_reserve(log_buf_lsn_t* buf_lsn, uint32 len);
 extern inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len);
 extern inline void log_write_complete(log_buf_lsn_t *log_lsn);
-extern inline lsn_t log_get_flushed_lsn();
 extern inline void log_write_up_to(lsn_t lsn);
+
+extern inline lsn_t log_get_flushed_to_disk_lsn();
+extern inline lsn_t log_get_writed_to_file_lsn();
+extern inline lsn_t log_get_writed_to_buffer_lsn();
+extern inline lsn_t log_get_last_checkpoint_lsn();
+
+extern inline uint64 log_block_get_checkpoint_no(const byte* log_block);
+extern inline uint64 log_block_get_hdr_no(const byte* log_block);
+extern inline uint32 log_block_get_data_len(const byte* log_block);
+extern inline uint32 log_block_get_first_rec_group(const byte* log_block);
 
 extern void log_checkpoint(lsn_t checkpoint_lsn);
 extern void log_make_checkpoint_at(duint64 lsn);
 
+extern void log_checkpoint_read(uint32 field);  // in: LOG_CHECKPOINT_1 or LOG_CHECKPOINT_2
 
+extern status_t log_group_file_read(log_group_t* group, byte* buf, uint32 len, uint32 byte_offset);
 
 // Test if flush order mutex is owned.
 #define log_flush_order_mutex_own()   mutex_own(&log_sys->log_flush_order_mutex)

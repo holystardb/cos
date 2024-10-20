@@ -81,8 +81,8 @@ static inline void timer_set_now_scn(cm_timer_t *timer, date_t interval_us)
     }
 
     uint64 usec = (uint64)old_time.tv_usec + interval;
-    old_time.tv_sec += usec / MICROSECS_PER_SECOND;
-    old_time.tv_usec = usec % MICROSECS_PER_SECOND;
+    old_time.tv_sec += (usec / MICROSECS_PER_SECOND);
+    old_time.tv_usec = (usec % MICROSECS_PER_SECOND);
     uint64 interval_scn = CM_TIME_TO_SCN(&old_time, timer->db_init_time);
     atomic64_test_and_set(now_scn, interval_scn);
 }
@@ -92,6 +92,8 @@ static void* timer_proc_thread(void *arg)
     cm_timer_t *timer = (cm_timer_t *)arg;
     date_t start_time = cm_now();
     int16 tz_min;
+
+    LOGGER_INFO(LOGGER, "timer thread starting ...");
 
     sync_time = start_time;
     timer->status = TIMER_STATUS_RUNNING;

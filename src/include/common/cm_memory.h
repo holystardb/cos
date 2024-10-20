@@ -59,10 +59,12 @@ typedef struct st_memory_free_pages {
 struct st_memory_pool {
     UT_LIST_NODE_T(struct st_memory_pool) list_node;
     memory_area_t   *area;
-    mutex_t          mutex;
+
     mutex_t          context_mutex;
     mutex_t          stack_context_mutex;
+    mutex_stats_t    context_mutex_stats;
     mutex_t          free_pages_mutex[MPOOL_FREE_PAGE_LIST_COUNT];
+    mutex_stats_t    free_pages_mutex_stats[MPOOL_FREE_PAGE_LIST_COUNT];
     uint32           page_size;
     uint32           initial_page_count;
     uint32           local_page_count;

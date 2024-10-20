@@ -4,38 +4,26 @@
 #include "cm_thread.h"
 #include "cm_file.h"
 
-const char* g_log_level_desc[] = {
-    "[UNKOWN]",
-    "[FATAL] ",
-    "[ERROR] ",
-    "[WARN]  ",
-    "[NOTICE]",
-    "[INFO]  ",
-    "[DEBUG] ",
-    "[TRACE] "
-};
-
-#define LOG_BUF_SIZE               512
-#define LOG_WRITE_BUFFER_SIZE      1024
-
-
 
 log_info    LOGGER;
 
 log_info::log_info()
-    : log_handle(OS_FILE_INVALID_HANDLE), basic_level(LOG_INFO),
+    : log_handle(OS_FILE_INVALID_HANDLE), log_level(LOG_LEVEL_CRITICAL),
       write_pos(0), write_to_buffer_flag(FALSE), log_file_size(0),
       log_file_create_time(0), batch_flush_flag(FALSE), batch_flush_pos(0)
 {
     write_buffer[0] = '\0';
     log_file_name[0] = '\0';
     log_file_path[0] = '\0';
+
+    is_print_stderr = FALSE;
     mutex_create(&mutex);
 }
 
-bool32 log_info::log_init(log_level_t level, char *log_path, char *file_name, bool32 batch_flush)
+bool32 log_info::log_init(uint32 level, char *log_path, char *file_name, bool32 batch_flush)
+
 {
-    basic_level = level;
+    log_level = level;
 
     if (!log_path || !file_name) {
         return TRUE;
@@ -55,16 +43,16 @@ bool32 log_info::log_init(log_level_t level, char *log_path, char *file_name, bo
 bool32 log_info::create_log_file()
 {
     int          len;
-    char         name[512];
+    char         name[CM_FILE_NAME_BUF_SIZE];
     date_clock_t clock;
 
     current_clock(&clock);
 
     if (log_file_path[strlen(log_file_path) - 1] == SRV_PATH_SEPARATOR) {
-        len = snprintf(name, 512, "%s%s_%d-%02d-%02d.log",
+        len = snprintf(name, CM_FILE_NAME_MAX_LEN, "%s%s_%d-%02d-%02d.log",
             log_file_path, log_file_name, clock.year, clock.month, clock.day);
     } else {
-        len = snprintf(name, 512, "%s%c%s_%d-%02d-%02d.log",
+        len = snprintf(name, CM_FILE_NAME_MAX_LEN, "%s%c%s_%d-%02d-%02d.log",
             log_file_path, SRV_PATH_SEPARATOR, log_file_name, clock.year, clock.month, clock.day);
     }
     name[len] = '\0';
@@ -97,12 +85,12 @@ bool32 log_info::create_log_file()
 #endif
 
     if (log_handle == OS_FILE_INVALID_HANDLE) {
-        char err_info[256];
-        os_file_get_last_error_desc(err_info, 256);
+        char err_info[CM_ERR_MSG_MAX_LEN];
+        os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
         fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%lu] %s, error %s\n",
             clock.year, clock.month, clock.day,
             clock.hour, clock.minute, clock.second,
-            clock.milliseconds, g_log_level_desc[LOG_ERROR], os_thread_get_curr_id(),
+            clock.milliseconds, "[ERROR] ", os_thread_get_curr_id(),
             "can not create log file", err_info);
         fflush(stderr);
         return FALSE;
@@ -133,16 +121,16 @@ bool32 log_info::create_log_file()
     return TRUE;
 }
 
-void log_info::log_to_file(log_level_t log_level, const char *file, uint32 line, const char *fmt, ...)
+void log_info::log_to_file(char* log_level_desc, const char *file, uint32 line, const char *fmt, ...)
 {
     int             len, write_size = 0;
     va_list         ap;
     date_clock_t    clock;
-    char            errbuf[LOG_BUF_SIZE];
+    char            errbuf[LOG_WRITE_BUFFER_SIZE+1];
     bool32          need_retry = TRUE, need_flush = FALSE;
 
     va_start(ap, fmt);
-    len = vsnprintf(errbuf, sizeof(errbuf), fmt, ap);
+    len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
     va_end(ap);
 
@@ -159,10 +147,10 @@ retry:
     mutex_exit(&mutex);
 
     current_clock(&clock);
-    write_pos = snprintf(write_buffer, 512,
+    write_pos = snprintf(write_buffer, LOG_WRITE_BUFFER_SIZE,
         "%d-%02d-%02d %02d:%02d:%02d.%03d %s [%08lu] %s\n",
         clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second,
-        clock.milliseconds, g_log_level_desc[log_level], os_thread_get_curr_id(), errbuf);
+        clock.milliseconds, log_level_desc, os_thread_get_curr_id(), errbuf);
     write_buffer[write_pos] = '\0';
 
     if (log_handle != OS_FILE_INVALID_HANDLE) {
@@ -179,19 +167,23 @@ retry:
             }
             log_file_size = 0;
         }
+
         //
-        fprintf(stderr, "%s", write_buffer);
-        fflush(stderr);
+        if (is_print_stderr) {
+            fprintf(stderr, "%s", write_buffer);
+            fflush(stderr);
+        }
+
         //
         ret = WriteFile(log_handle, write_buffer, (DWORD)write_pos, &write_size, NULL);
         if (ret == 0 || write_pos != write_size) {
-            char err_info[256];
-            os_file_get_last_error_desc(err_info, 256);
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
 
             fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%lu] %s, error %s\n",
                 clock.year, clock.month, clock.day,
                 clock.hour, clock.minute, clock.second,
-                clock.milliseconds, g_log_level_desc[LOG_ERROR], os_thread_get_curr_id(),
+                clock.milliseconds, "[ERROR] ", os_thread_get_curr_id(),
                 "error, can not write data to log file", err_info);
             fflush(stderr);
             goto err_exit;
@@ -199,13 +191,13 @@ retry:
 #else
         ssize_t ret = pwrite64(log_handle, (char *)write_buffer, write_pos, log_file_size);
         if ((uint32)ret != size) {
-            char err_info[256];
-            os_file_get_last_error_desc(err_info, 256);
+            char err_info[CM_ERR_MSG_MAX_LEN];
+            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
 
             fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%lu] %s, error %s\n",
                 clock.year, clock.month, clock.day,
                 clock.hour, clock.minute, clock.second,
-                clock.milliseconds, g_log_level_desc[LOG_ERROR], os_thread_get_curr_id(),
+                clock.milliseconds, "[ERROR] ", os_thread_get_curr_id(),
                 "error, can not write data to log file", err_info);
             fflush(stderr);
             goto err_exit;
@@ -248,7 +240,7 @@ void log_info::log_file_flush()
 void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 {
     int          len;
-    char         name[512];
+    char         name[CM_FILE_NAME_BUF_SIZE];
     date_clock_t clock;
     os_file_t    handle;
     uint32       pos = 0;
@@ -259,11 +251,11 @@ void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 
     current_clock(&clock);
     if (log_file_path[strlen(log_file_path) - 1] == SRV_PATH_SEPARATOR) {
-        len = snprintf(name, 512, "%scoredump_%d-%02d-%02d-%02d-%02d-%02d.log",
+        len = snprintf(name, CM_FILE_NAME_MAX_LEN, "%scoredump_%d-%02d-%02d-%02d-%02d-%02d.log",
             log_file_path, clock.year, clock.month, clock.day,
             clock.hour, clock.minute, clock.second);
     } else {
-        len = snprintf(name, 512, "%s%ccoredump_%d-%02d-%02d-%02d-%02d-%02d.log",
+        len = snprintf(name, CM_FILE_NAME_MAX_LEN, "%s%ccoredump_%d-%02d-%02d-%02d-%02d-%02d.log",
             log_file_path, SRV_PATH_SEPARATOR, clock.year, clock.month, clock.day,
             clock.hour, clock.minute, clock.second);
     }
@@ -309,31 +301,31 @@ void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 }
 
 
-void log_info::log_to_stderr(log_level_t log_level, const char *file, uint32 line, const char *fmt, ...)
+void log_info::log_to_stderr(char* log_level_desc, const char *file, uint32 line, const char *fmt, ...)
 {
     int             len;
     va_list         ap;
     date_clock_t    clock;
-    char            errbuf[LOG_BUF_SIZE];
+    char            errbuf[LOG_WRITE_BUFFER_SIZE];
 
     current_clock(&clock);
 
     va_start(ap, fmt);
 #ifdef __WIN__
-    len = vsnprintf(errbuf, sizeof(errbuf), fmt, ap);
+    len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
     fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%08lu] %s\n",
         clock.year, clock.month, clock.day,
         clock.hour, clock.minute, clock.second,
-        clock.milliseconds, g_log_level_desc[log_level], os_thread_get_curr_id(), errbuf);
+        clock.milliseconds, log_level_desc, os_thread_get_curr_id(), errbuf);
     fflush(stderr);
 #else
-    len = vsnprintf(errbuf, sizeof(errbuf), fmt, ap);
+    len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
     fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%08lu] %s\n",
         clock.year, clock.month, clock.day,
         clock.hour, clock.minute, clock.second,
-        clock.milliseconds, g_log_level_desc[log_level], os_thread_get_curr_id(), errbuf);
+        clock.milliseconds, log_level_desc, os_thread_get_curr_id(), errbuf);
     fflush(stderr);
 #endif
     va_end(ap);

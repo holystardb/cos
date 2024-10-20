@@ -40,13 +40,6 @@ typedef void* os_thread_ret_t;
 #define OS_THREAD_DUMMY_RETURN return(NULL)
 #endif
 
-typedef struct st_thread {
-    os_thread_t     thread;
-    os_thread_id_t  thread_id;
-    volatile bool32 exited;
-} thread_t;
-
-
 inline int os_create_thread_local_key(os_thread_local_key_t *key,            void (*destructor)(void *))
 {
 #ifdef __WIN__

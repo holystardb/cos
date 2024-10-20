@@ -181,33 +181,27 @@ typedef byte fseg_header_t;
 
 /* FSP PAGE TYPE
 =================
-
 */
 
-#define FSP_XDES_OFFSET             0   /* !< extent descriptor */
-#define FSP_FIRST_INODE_PAGE_NO     1   /*!< in every tablespace */
-                                        /* The following pages exist in the system tablespace (space 0). */
-#define FSP_TRX_SYS_PAGE_NO         2   /*!< transaction system header, in tablespace 0 */
-#define FSP_DICT_HDR_PAGE_NO        3   /*!< data dictionary header page, in tablespace 0 */
-#define FSP_IBUF_BITMAP_OFFSET      4   /* !< insert buffer bitmap */
-                                        /* The ibuf bitmap pages are the ones whose page number is the number
-                                           above plus a multiple of XDES_DESCRIBED_PER_PAGE */
-#define FSP_IBUF_HEADER_PAGE_NO     5   /*!< insert buffer header page, in tablespace 0 */
-#define FSP_IBUF_TREE_ROOT_PAGE_NO  6   /*!< insert buffer B-tree root page in tablespace 0 */
-                                        /* The ibuf tree root page number in tablespace 0;
-                                           its fseg inode is on the page number FSP_FIRST_INODE_PAGE_NO */
-#define FSP_FIRST_RSEG_PAGE_NO      32  /*!< first rollback segment page, in tablespace 0 */
-#define FSP_DOUBLE_WRITE_BLOCK1     128
-#define FSP_DOUBLE_WRITE_BLOCK2     192
-#define FSP_RESERVED_MAX_PAGE_NO    255
-#define FSP_DYNAMIC_FIRST_PAGE_NO   256
+#define FSP_XDES_OFFSET             0   // extent descriptor
+#define FSP_FIRST_INODE_PAGE_NO     1   // in every tablespace,
+                                        // The following pages exist in the system tablespace (space 0).
+#define FSP_TRX_SYS_PAGE_NO         2   // transaction system header, in tablespace 0
+#define FSP_DICT_HDR_PAGE_NO        3   // data dictionary header page, in tablespace 0
+#define FSP_IBUF_BITMAP_OFFSET      4   // insert buffer bitmap
+                                        // The ibuf bitmap pages are the ones whose page number is the number
+                                        // above plus a multiple of XDES_DESCRIBED_PER_PAGE
+#define FSP_IBUF_HEADER_PAGE_NO     5   // insert buffer header page, in tablespace 0
+#define FSP_IBUF_TREE_ROOT_PAGE_NO  6   // insert buffer B-tree root page in tablespace 0
+                                        // The ibuf tree root page number in tablespace 0;
+                                        // its fseg inode is on the page number FSP_FIRST_INODE_PAGE_NO
+#define FSP_FIRST_RSEG_PAGE_NO      32  // first rollback segment page, in tablespace 0
+                                        // total = TRX_RSEG_MAX_COUNT(96) * TRX_SLOT_PAGE_COUNT_PER_RSEG(4)
+#define FSP_DYNAMIC_FIRST_PAGE_NO   320
 
 //-----------------------------------------------
 
 #define FSP_INODE_ALLOC_PAGE_COUNT  8
-#define FSP_DOUBLE_WRITE_PAGE_COUNT 64 // 1MB
-
-
 
 
 extern inline uint32 xdes_get_offset(const xdes_t* descr);

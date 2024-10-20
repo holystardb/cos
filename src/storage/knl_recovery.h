@@ -12,66 +12,49 @@
 // Recovery system data structure
 typedef struct st_recovery_sys recovery_sys_t;
 struct st_recovery_sys{
-	mutex_t		mutex;	/* mutex protecting the fields apply_log_recs,
-				n_addrs, and the state field in each recv_addr
-				struct */
-	bool32		apply_log_recs;
-				/* this is TRUE when log rec application to
-				pages is allowed; this flag tells the
-				i/o-handler if it should do log record
-				application */
-	bool32		apply_batch_on;
-				/* this is TRUE when a log rec application
-				batch is running */
-	duint64		lsn;	/* log sequence number */
-	uint32		last_log_buf_size;
-				/* size of the log buffer when the database
-				last time wrote to the log */
-	byte*		last_block;
-				/* possible incomplete last recovered log
-				block */
-	byte*		last_block_buf_start;
-				/* the nonaligned start address of the
-				preceding buffer */
-	byte*		buf;	/* buffer for parsing log records */
-	uint32		len;	/* amount of data in buf */
-    lsn_t		parse_start_lsn;
-				/* this is the lsn from which we were able to
-				start parsing log records and adding them to
-				the hash table; ut_dulint_zero if a suitable
-				start point not found yet */
-	lsn_t		scanned_lsn;
-				/* the log data has been scanned up to this
-				lsn */
-	uint32		scanned_checkpoint_no;
-				/* the log data has been scanned up to this
-				checkpoint number (lowest 4 bytes) */
-	uint32		recovered_offset;
-				/* start offset of non-parsed log records in
-				buf */
-    lsn_t		recovered_lsn;
-				/* the log records have been parsed up to
-				this lsn */
-    lsn_t		limit_lsn;/* recovery should be made at most up to this
-				lsn */
-	log_group_t*	archive_group;
-				/* in archive recovery: the log group whose
-				archive is read */
-	memory_pool_t*	mem_pool;	/* memory heap of log records and file addresses*/
-	//hash_table_t*	addr_hash;/* hash table of file addresses of pages */
-	uint32		n_addrs;/* number of not processed hashed file
-				addresses in the hash table */
+    mutex_t     mutex;
+
+    // recovery buffer
+    byte*       recovered_buf; // buffer for parsing log records
+    uint32      recovered_buf_size;
+    uint32      recovered_buf_data_len; // amount of data in buf
+    uint32      recovered_buf_offset;// start offset of non-parsed log records in buf
+    lsn_t       recovered_buf_lsn; // lsn of recovered_buf[0]
+
+    // last checkpoint point
+    uint64      checkpoint_no;
+    lsn_t       checkpoint_lsn;
+    uint32      checkpoint_group_id;
+    uint32      checkpoint_group_offset;
+    lsn_t       archived_lsn;
+
+    //
+    byte*       log_block;
+    uint32      log_block_read_offset;
+    uint32      log_block_first_rec_offset;
+    lsn_t       log_block_lsn;
+
+    byte*       last_log_block;
+    uint32      last_log_block_writed_offset;
+
+    byte        log_rec_buf[UNIV_PAGE_SIZE];
+    byte*       log_rec;
+    lsn_t       log_rec_lsn;
+    uint32      log_rec_len;    // rec length
+    uint32      log_rec_offset; // amount of data in log_rec_buf
+    // 
+    lsn_t       base_lsn;  //
+    bool32      is_first_rec;
+    bool32      is_read_log_done;
+    lsn_t		recovered_lsn;   // the log records have been parsed up to this lsn
+    lsn_t		limit_lsn;       // recovery should be made at most up to this lsn
+    uint32      cur_group_id;
+    uint32      cur_group_offset;
+    uint64      last_hdr_no;
+    uint64      last_checkpoint_no;
+    memory_pool_t* mem_pool;
+
 };
-
-extern recovery_sys_t*      recovery_sys;
-
-
-
-
-
-
-
-
 
 
 // Values used as flags
@@ -115,13 +98,8 @@ extern inline bool32 mlog_replay_nbytes(mlog_reader_t* record);
 
 
 
-
-extern status_t recovery_from_checkpoint_start(
-    uint32   type,       // in: LOG_CHECKPOINT or LOG_ARCHIVE
-    duint64  limit_lsn,  // in: recover up to this lsn if possible
-    duint64  min_flushed_lsn,  // in: min flushed lsn from data files
-    duint64  max_flushed_lsn); // in: max flushed lsn from data files
-
+// type: LOG_CHECKPOINT or LOG_ARCHIVE
+extern status_t recovery_from_checkpoint_start(uint32 type);
 extern status_t recovery_from_checkpoint_finish();
 
 #endif  /* _KNL_RECOVERY_H */

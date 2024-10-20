@@ -13,7 +13,7 @@ duint64 ut_duint64_max = {0xFFFFFFFF, 0xFFFFFFFF};
 ***********************************************************************************************/
 
 /* out: logarithm in the base 2, rounded upward */
-uint32 ut_2_log(uint32 n) /* in: number != 0 */
+inline uint32 ut_2_log(uint32 n) /* in: number != 0 */
 {
     uint32 res;
     res = 0;
@@ -30,14 +30,14 @@ uint32 ut_2_log(uint32 n) /* in: number != 0 */
     return(res + 1);
 }
 
-uint32 ut_2_exp(uint32 n)
+inline uint32 ut_2_exp(uint32 n)
 {
     return(1 << n);
 }
 
 /** Calculates fast the number rounded up to the nearest power of 2.
  @return first power of 2 which is >= n */
-uint64 ut_2_power_up(uint64 n) /*!< in: number != 0 */
+inline uint64 ut_2_power_up(uint64 n) /*!< in: number != 0 */
 {
     uint64 res = 1;
 
@@ -59,75 +59,70 @@ uint64 ut_2_power_up(uint64 n) /*!< in: number != 0 */
 /************************************************************
 The following function calculates the value of an integer n rounded
 to the least product of align_no which is >= n. align_no has to be a power of 2. */
-uint32 ut_calc_align(
+inline uint32 ut_uint32_align_up(
     uint32 n,            /* in: number to be rounded */
     uint32 align_no)      /* in: align by this number */
 {
     ut_ad(align_no > 0);
-    ut_ad(((align_no - 1) & align_no) == 0);
+    ut_ad(ut_is_2pow(align_no));
 
     return((n + align_no - 1) & ~(align_no - 1));
-}
-
-/*************************************************************
-The following function rounds up a pointer to the nearest aligned address. */
-void* ut_align(
-    void* ptr,            /* in: pointer */
-    uint32 align_no)          /* in: align by this number */
-{
-    ut_ad(align_no > 0);
-    ut_ad(((align_no - 1) & align_no) == 0);
-    ut_ad(ptr);
-
-    //ut_ad(sizeof(void*) == sizeof(uint32));
-
-    return((void*)((((uint64)ptr) + align_no - 1) & ~((uint64)(align_no - 1))));
-}
-
-uint32 ut_align_offset(
-    const void* ptr,       /*!< in: pointer */
-    uint32      align_no)  /*!< in: align by this number */
-{
-    ut_ad(align_no > 0);
-    ut_ad(((align_no - 1) & align_no) == 0);
-    ut_ad(ptr);
-
-    //ut_ad(sizeof(void*) == sizeof(uint32));
-
-    return (((uint64)ptr) & (align_no - 1));
 }
 
 /************************************************************
 The following function calculates the value of an integer n rounded
 to the biggest product of align_no which is <= n. align_no has to be a power of 2. */
-uint32 ut_calc_align_down(
+inline uint32 ut_uint32_align_down(
     uint32 n,              /* in: number to be rounded */
     uint32 align_no)       /* in: align by this number */
 {
     ut_ad(align_no > 0);
-    ut_ad(((align_no - 1) & align_no) == 0);
+    ut_ad(ut_is_2pow(align_no));
 
     return(n & ~(align_no - 1));
 }
 
+
 /*************************************************************
-The following function rounds down a pointer to the nearest aligned address. */
-void* ut_align_down(
+The following function rounds up a pointer to the nearest aligned address. */
+inline void* ut_align_up(
     void* ptr,            /* in: pointer */
     uint32 align_no)          /* in: align by this number */
 {
     ut_ad(align_no > 0);
-    ut_ad(((align_no - 1) & align_no) == 0);
+    ut_ad(ut_is_2pow(align_no));
     ut_ad(ptr);
 
-    //ut_ad(sizeof(void*) == sizeof(uint32));
+    return((void*)((((uint64)ptr) + align_no - 1) & ~((uint64)(align_no - 1))));
+}
+
+inline uint32 ut_align_offset(
+    const void* ptr,       /*!< in: pointer */
+    uint32      align_no)  /*!< in: align by this number */
+{
+    ut_ad(align_no > 0);
+    ut_ad(ut_is_2pow(align_no));
+    ut_ad(ptr);
+
+    return (((uint64)ptr) & (align_no - 1));
+}
+
+/*************************************************************
+The following function rounds down a pointer to the nearest aligned address. */
+inline void* ut_align_down(
+    void* ptr,            /* in: pointer */
+    uint32 align_no)          /* in: align by this number */
+{
+    ut_ad(align_no > 0);
+    ut_ad(ut_is_2pow(align_no));
+    ut_ad(ptr);
 
     return((void*)((((uint64)ptr)) & ~((uint64)(align_no - 1))));
 }
 
 //Rounds a 64-bit integer downward to a multiple of a power of 2.
 //return: rounded value
-uint64 ut_uint64_align_down(
+inline uint64 ut_uint64_align_down(
     uint64 n, //in: number to be rounded
     uint32 align_no) //in: align by this number which must be a power of 2
 {
@@ -139,7 +134,7 @@ uint64 ut_uint64_align_down(
 
 //Rounds ib_uint64_t upward to a multiple of a power of 2.
 //return: rounded value
-uint64 ut_uint64_align_up(
+inline uint64 ut_uint64_align_up(
     uint64 n, //in: number to be rounded
     uint32 align_no) //in: align by this number which must be a power of 2
 {
@@ -153,7 +148,7 @@ uint64 ut_uint64_align_up(
 
 // Gets the nth bit of a uint8. */
 // out: TRUE if nth bit is 1; 0th bit is defined to be the least significant
-bool32 ut_bit8_get_nth(
+inline bool32 ut_bit8_get_nth(
     uint8 a,    /* in: uint8 */
     uint32 n)    /* in: nth bit requested */
 {
@@ -165,7 +160,7 @@ bool32 ut_bit8_get_nth(
 
 // Sets the nth bit of a uint8. */
 // out: the uint32 with the bit set as requested */
-uint8 ut_bit8_set_nth(
+inline uint8 ut_bit8_set_nth(
     uint8 a,    /* in: uint8 */
     uint32 n,    /* in: nth bit requested */
     bool32 val)    /* in: value for the bit to set */
@@ -182,7 +177,7 @@ uint8 ut_bit8_set_nth(
 
 // Gets the nth bit of a uint32. */
 // out: TRUE if nth bit is 1; 0th bit is defined to be the least significant
-bool32 ut_bit32_get_nth(
+inline bool32 ut_bit32_get_nth(
     uint32 a,    /* in: uint32 */
     uint32 n)    /* in: nth bit requested */
 {
@@ -194,7 +189,7 @@ bool32 ut_bit32_get_nth(
 
 // Sets the nth bit of a uint32. */
 // out: the uint32 with the bit set as requested */
-uint32 ut_bit32_set_nth(
+inline uint32 ut_bit32_set_nth(
     uint32 a,    /* in: uint32 */
     uint32 n,    /* in: nth bit requested */
     bool32 val)    /* in: value for the bit to set */
@@ -211,7 +206,7 @@ uint32 ut_bit32_set_nth(
 
 // Gets the nth bit of a uint64. */
 // out: TRUE if nth bit is 1; 0th bit is defined to be the least significant
-bool32 ut_bit64_get_nth(
+inline bool32 ut_bit64_get_nth(
     uint64 a,    /* in: uint64 */
     uint32 n)    /* in: nth bit requested */
 {
@@ -223,7 +218,7 @@ bool32 ut_bit64_get_nth(
 
 // Sets the nth bit of a uint64. */
 // out: the uint32 with the bit set as requested */
-uint64 ut_bit64_set_nth(
+inline uint64 ut_bit64_set_nth(
     uint64 a,    /* in: uint64 */
     uint32 n,    /* in: nth bit requested */
     bool32 val)    /* in: value for the bit to set */
@@ -238,7 +233,7 @@ uint64 ut_bit64_set_nth(
     }
 }
 
-uint32 ut_raw_to_hex(
+inline uint32 ut_raw_to_hex(
     const void* raw,        /*!< in: raw data */
     uint32      raw_size,   /*!< in: "raw" length in bytes */
     char*       hex,        /*!< out: hex string */
@@ -731,7 +726,7 @@ inline duint64 ut_ull_create(
 }
 
 // out: -1 if a < b, 0 if a == b, 1 if a > b
-inline int ut_duint64_cmp(duint64 a, duint64 b)
+inline int32 ut_duint64_cmp(duint64 a, duint64 b)
 {
     if (a.high > b.high) {
         return(1);

@@ -60,14 +60,14 @@ extern "C" {
 #define _atoi64(val)        strtoll(val, NULL, 10)
 #endif
 
-extern uint32 ut_raw_to_hex(
+extern inline uint32 ut_raw_to_hex(
     const void* raw,        /*!< in: raw data */
     uint32      raw_size,   /*!< in: "raw" length in bytes */
     char*       hex,        /*!< out: hex string */
     uint32      hex_size);  /*!< in: "hex" size in bytes */
 
-extern uint32 ut_2_log(uint32 n);
-extern uint32 ut_2_exp(uint32 n);
+extern inline uint32 ut_2_log(uint32 n);
+extern inline uint32 ut_2_exp(uint32 n);
 
 
 /** Determines if a number is zero or a power of two.
@@ -84,7 +84,7 @@ extern uint32 ut_2_exp(uint32 n);
 
 /** Calculates fast the number rounded up to the nearest power of 2.
  @return first power of 2 which is >= n */
-uint64 ut_2_power_up(uint64 n); /*!< in: number != 0 */
+uint64 inline ut_2_power_up(uint64 n); /*!< in: number != 0 */
 
 /** Calculates fast the remainder of n/m when m is a power of two.
     @param n in: numerator
@@ -97,58 +97,58 @@ uint64 ut_2_power_up(uint64 n); /*!< in: number != 0 */
 *                                      align                                                   *
 ***********************************************************************************************/
 
-extern uint32 ut_calc_align(
+extern inline uint32 ut_uint32_align_up(
     uint32 n,            /* in: number to be rounded */
     uint32 align_no);    /* in: align by this number */
 
-extern void* ut_align(
-    void* ptr,            /* in: pointer */
-    uint32 align_no);     /* in: align by this number */
-
-extern uint32 ut_align_offset(
-    const void* ptr,       /*!< in: pointer */
-    uint32      align_no); /*!< in: align by this number */
-
-extern uint32 ut_calc_align_down(
+extern inline uint32 ut_uint32_align_down(
     uint32 n,              /* in: number to be rounded */
     uint32 align_no);       /* in: align by this number */
 
-extern void* ut_align_down(
+extern inline void* ut_align_up(
     void* ptr,            /* in: pointer */
     uint32 align_no);     /* in: align by this number */
 
-extern uint64 ut_uint64_align_down(
+extern inline uint32 ut_align_offset(
+    const void* ptr,       /*!< in: pointer */
+    uint32      align_no); /*!< in: align by this number */
+
+extern inline void* ut_align_down(
+    void* ptr,            /* in: pointer */
+    uint32 align_no);     /* in: align by this number */
+
+extern inline uint64 ut_uint64_align_down(
     uint64 n, //in: number to be rounded
     uint32 align_no); //in: align by this number which must be a power of 2
 
-extern uint64 ut_uint64_align_up(
+extern inline uint64 ut_uint64_align_up(
     uint64 n, //in: number to be rounded
     uint32 align_no); //in: align by this number which must be a power of 2
 
 
-extern bool32 ut_bit8_get_nth(
+extern inline bool32 ut_bit8_get_nth(
     uint8 a,    /* in: uint8 */
     uint32 n);   /* in: nth bit requested */
 
-extern uint8 ut_bit8_set_nth(
+extern inline uint8 ut_bit8_set_nth(
     uint8 a,    /* in: uint8 */
     uint32 n,    /* in: nth bit requested */
     bool32 val); /* in: value for the bit to set */
 
-extern bool32 ut_bit32_get_nth(
+extern inline bool32 ut_bit32_get_nth(
     uint32 a,    /* in: uint32 */
     uint32 n);   /* in: nth bit requested */
 
-extern uint32 ut_bit32_set_nth(
+extern inline uint32 ut_bit32_set_nth(
     uint32 a,    /* in: uint32 */
     uint32 n,    /* in: nth bit requested */
     bool32 val); /* in: value for the bit to set */
 
-extern bool32 ut_bit64_get_nth(
+extern inline bool32 ut_bit64_get_nth(
     uint64 a,    /* in: uint64 */
     uint32 n);   /* in: nth bit requested */
 
-extern uint64 ut_bit64_set_nth(
+extern inline uint64 ut_bit64_set_nth(
     uint64 a,    /* in: uint64 */
     uint32 n,    /* in: nth bit requested */
     bool32 val); /* in: value for the bit to set */
@@ -410,7 +410,7 @@ extern inline duint64 ut_ull_create(
 
 // Compares two dulints
 // out: -1 if a < b, 0 if a == b, 1 if a > b
-extern inline int ut_duint64_cmp(duint64 a, duint64 b);
+extern inline int32 ut_duint64_cmp(duint64 a, duint64 b);
 
 // Calculates the max of two dulints
 // out: max(a, b)
@@ -436,6 +436,11 @@ extern inline uint32 ut_duint64_get_high(duint64 d)
 extern inline uint32 ut_duint64_get_low(duint64 d)
 {
     return d.low;
+}
+
+extern inline uint64 ut_duint64_to_uint64(duint64 d)
+{
+    return ((uint64)d.high << 32) + d.low;
 }
 
 

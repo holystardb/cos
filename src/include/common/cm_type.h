@@ -270,7 +270,7 @@ typedef unsigned char*          PUCHAR;
 #define os_file_t                           HANDLE
 #define OS_FILE_INVALID_HANDLE              INVALID_HANDLE_VALUE
 #else
-typedef int                                 os_file_t;
+typedef int32                               os_file_t;
 #define OS_FILE_INVALID_HANDLE              -1
 #endif
 
@@ -286,18 +286,6 @@ typedef int                                 os_file_t;
 
 #define CM_ERR_MSG_MAX_LEN                  1023
 
-
-typedef enum
-{
-    LOG_UNKOWN   = 0,
-    LOG_FATAL    = 1,
-    LOG_ERROR    = 2,
-    LOG_WARN     = 3,
-    LOG_NOTICE   = 4,
-    LOG_INFO     = 5,
-    LOG_DEBUG    = 6,
-    LOG_TRACE    = 7,
-} log_level_t;
 
 /** Shutdown state */
 typedef enum shutdown_state_enum {

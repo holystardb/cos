@@ -162,10 +162,80 @@ inline bool32 atomic32_compare_and_swap(atomic32_t *ptr, int32 oldval, int32 new
     return __atomic_compare_exchange(ptr, &oldval, &newval, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) == oldval ? TRUE : FALSE;
 }
 
+typedef union {
+    uint128   u128;
+    uint64    u64[2];
+    uint32    u32[4];
+} duint128;
+
+// Exclusive load/store 2 uint64_t variables to fullfil 128bit atomic compare and swap
+static inline int128 __excl_compare_and_swap_u128(atomic128_t *ptr, duint128 oldval, duint128 newval)
+{
+    uint64 tmp, ret;
+    duint128 old;
+
+    asm volatile("1:     ldxp    %0, %1, %4\n"
+                 "       eor     %2, %0, %5\n"
+                 "       eor     %3, %1, %6\n"
+                 "       orr     %2, %3, %2\n"
+                 "       cbnz    %2, 2f\n"
+                 "       stlxp   %w2, %7, %8, %4\n"
+                 "       cbnz    %w2, 1b\n"
+                 "       b 3f\n"
+                 "2:"
+                 "       stlxp   %w2, %0, %1, %4\n"
+                 "       cbnz    %w2, 1b\n"
+                 "3:"
+                 "       dmb ish\n"
+                 : "=&r"(old.u64[0]), "=&r"(old.u64[1]), "=&r"(ret), "=&r"(tmp), 
+                   "+Q"(*ptr)
+                 : "r"(oldval.u64[0]), "r"(oldval.u64[1]), "r"(newval.u64[0]), "r"(newval.u64[1])
+                 : "memory");
+    return old.u128;
+}
+
+
+/*
+ * using CASP instinct to atomically compare and swap 2 uint64_t variables to fullfil
+ * 128bit atomic compare and swap
+ * */
+static inline uint128 __lse_compare_and_swap_u128(atomic128_t *ptr, duint128 oldval, duint128 newval)
+{                                                                               \
+    duint128 old;                                                               \
+    register unsigned long x0 asm ("x0") = oldval.u64[0];                       \
+    register unsigned long x1 asm ("x1") = oldval.u64[1];                       \
+    register unsigned long x2 asm ("x2") = newval.u64[0];                       \
+    register unsigned long x3 asm ("x3") = newval.u64[1];                       \
+                                                                                \
+    asm volatile(".arch_extension lse\n"                                        \
+    "   caspal    %[old_low], %[old_high], %[new_low], %[new_high], %[v]\n"     \
+    : [old_low] "+&r" (x0), [old_high] "+&r" (x1),                              \
+      [v] "+Q" (*(ptr))                                                         \
+    : [new_low] "r" (x2), [new_high] "r" (x3)                                   \
+    : "x30", "memory");                                                         \
+                                                                                \
+    old.u64[0] = x0;                                                            \
+    old.u64[1] = x1;                                                            \
+    return old.u128;
+}
+
+inline int128 atomic128_compare_and_swap(atomic128_t *ptr, duint128 oldval, duint128 newval)
+{
+#ifdef __ARM_LSE
+    return __lse_compare_and_swap_u128(ptr, oldval, newval);
+#else
+    return __excl_compare_and_swap_u128(ptr, oldval, newval);
+#endif
+}
 
 
 #else
 
+inline int128 atomic128_get(atomic128_t *ptr)
+{
+    int128 oldval = 0, newval = 0;
+    return __sync_val_compare_and_swap(ptr, oldval, newval);
+}
 
 inline bool32 atomic128_compare_and_swap(atomic128_t *ptr, int128 oldval, int128 newval)
 {

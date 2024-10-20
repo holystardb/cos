@@ -5,7 +5,7 @@
 #include "cm_dbug.h"
 
 /** Default number of slots to use in counter_t */
-#define IB_N_SLOTS 64
+#define IB_N_SLOTS     64
 
 
 /** Class for using fuzzy counters.

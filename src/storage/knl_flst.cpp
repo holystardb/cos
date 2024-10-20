@@ -109,8 +109,7 @@ fil_addr_t flst_get_prev_addr(
 }
 
 
-/********************************************************************//**
-Adds a node to an empty list. */
+// Adds a node to an empty list
 static void flst_add_to_empty(
 	flst_base_node_t*	base,	/*!< in: pointer to base node of empty list */
 	flst_node_t*		node,	/*!< in: node to add */
@@ -141,91 +140,83 @@ static void flst_add_to_empty(
 	mlog_write_uint32(base + FLST_LEN, len + 1, MLOG_4BYTES, mtr);
 }
 
-/********************************************************************//**
-Adds a node as the last node in a list. */
+// Adds a node as the last node in a list
 void flst_add_last(
-	flst_base_node_t*	base,	/*!< in: pointer to base node of list */
-	flst_node_t*		node,	/*!< in: node to add */
-	mtr_t*			mtr)	/*!< in: mini-transaction handle */
+    flst_base_node_t* base, // in: pointer to base node of list
+    flst_node_t* node, // in: node to add
+    mtr_t* mtr) // in: mini-transaction handle
 {
-	uint32		space;
-	fil_addr_t	node_addr;
-	uint32		len;
-	fil_addr_t	last_addr;
+    uint32 space_id;
+    fil_addr_t node_addr;
+    uint32 len;
+    fil_addr_t last_addr;
 
-	ut_ad(mtr && base && node);
-	ut_ad(base != node);
-	//ut_ad(mtr_memo_contains_page_flagged(mtr, base, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
-	//ut_ad(mtr_memo_contains_page_flagged(mtr, node, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
-	len = flst_get_len(base);
-	last_addr = flst_get_last(base, mtr);
+    ut_ad(mtr && base && node);
+    ut_ad(base != node);
+    //ut_ad(mtr_memo_contains_page_flagged(mtr, base, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
+    //ut_ad(mtr_memo_contains_page_flagged(mtr, node, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
+    len = flst_get_len(base);
+    last_addr = flst_get_last(base, mtr);
 
-	buf_ptr_get_fsp_addr(node, &space, &node_addr);
+    buf_ptr_get_fsp_addr(node, &space_id, &node_addr);
 
-	/* If the list is not empty, call flst_insert_after */
-	if (len != 0) {
-		flst_node_t*	last_node;
-
-		if (last_addr.page == node_addr.page) {
-			last_node = page_align(node) + last_addr.boffset;
-		} else {
-			//bool			found;
-			//const page_size_t&	page_size = fil_space_get_page_size(space, &found);
-			//ut_ad(found);
+    // If the list is not empty, call flst_insert_after
+    if (len != 0) {
+        flst_node_t* last_node;
+        if (last_addr.page == node_addr.page) {
+            last_node = page_align(node) + last_addr.boffset;
+        } else {
             page_size_t page_size(0);
-			last_node = fut_get_ptr(space, page_size, last_addr, RW_X_LATCH, mtr, NULL);
-		}
-
-		flst_insert_after(base, last_node, node, mtr);
-	} else {
-		/* else call flst_add_to_empty */
-		flst_add_to_empty(base, node, mtr);
-	}
+            last_node = fut_get_ptr(space_id, page_size, last_addr, RW_X_LATCH, mtr, NULL);
+        }
+        flst_insert_after(base, last_node, node, mtr);
+    } else {
+        // else call flst_add_to_empty
+        flst_add_to_empty(base, node, mtr);
+    }
 }
 
-/********************************************************************//**
-Adds a node as the first node in a list. */
+// Adds a node as the first node in a list
 void flst_add_first(
-	flst_base_node_t*	base,	/*!< in: pointer to base node of list */
-	flst_node_t*		node,	/*!< in: node to add */
-	mtr_t*			mtr)	/*!< in: mini-transaction handle */
+    flst_base_node_t* base, // in: pointer to base node of list
+    flst_node_t* node, // in: node to add
+    mtr_t* mtr) // in: mini-transaction handle
 {
-	uint32		space;
-	fil_addr_t	node_addr;
-	uint32		len;
-	fil_addr_t	first_addr;
-	flst_node_t*	first_node;
+    uint32		space;
+    fil_addr_t	node_addr;
+    uint32		len;
+    fil_addr_t	first_addr;
+    flst_node_t*	first_node;
 
-	ut_ad(mtr && base && node);
-	ut_ad(base != node);
-	//ut_ad(mtr_memo_contains_page_flagged(mtr, base, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
-	//ut_ad(mtr_memo_contains_page_flagged(mtr, node, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
-	len = flst_get_len(base);
-	first_addr = flst_get_first(base, mtr);
+    ut_ad(mtr && base && node);
+    ut_ad(base != node);
+    //ut_ad(mtr_memo_contains_page_flagged(mtr, base, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
+    //ut_ad(mtr_memo_contains_page_flagged(mtr, node, MTR_MEMO_PAGE_X_FIX | MTR_MEMO_PAGE_SX_FIX));
+    len = flst_get_len(base);
+    first_addr = flst_get_first(base, mtr);
 
-	buf_ptr_get_fsp_addr(node, &space, &node_addr);
+    buf_ptr_get_fsp_addr(node, &space, &node_addr);
 
-	/* If the list is not empty, call flst_insert_before */
-	if (len != 0) {
-		if (first_addr.page == node_addr.page) {
-			first_node = page_align(node) + first_addr.boffset;
-		} else {
-			//bool			found;
-			//const page_size_t&	page_size = fil_space_get_page_size(space, &found);
-			//ut_ad(found);
+    // If the list is not empty, call flst_insert_before
+    if (len != 0) {
+        if (first_addr.page == node_addr.page) {
+            first_node = page_align(node) + first_addr.boffset;
+        } else {
+            //bool			found;
+            //const page_size_t&	page_size = fil_space_get_page_size(space, &found);
+            //ut_ad(found);
             page_size_t page_size(0);
-			first_node = fut_get_ptr(space, page_size, first_addr, RW_X_LATCH, mtr, NULL);
-		}
+            first_node = fut_get_ptr(space, page_size, first_addr, RW_X_LATCH, mtr, NULL);
+        }
 
-		flst_insert_before(base, node, first_node, mtr);
-	} else {
-		/* else call flst_add_to_empty */
-		flst_add_to_empty(base, node, mtr);
-	}
+        flst_insert_before(base, node, first_node, mtr);
+    } else {
+        // else call flst_add_to_empty
+        flst_add_to_empty(base, node, mtr);
+    }
 }
 
-/********************************************************************//**
-Inserts a node after another in a list. */
+// Inserts a node after another in a list.
 void flst_insert_after(
 	flst_base_node_t*	base,	/*!< in: pointer to base node of list */
 	flst_node_t*		node1,	/*!< in: node to insert after */

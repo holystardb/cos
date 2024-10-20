@@ -78,13 +78,10 @@ typedef struct st_spin_lock {
 } spinlock_t;
 
 typedef struct st_spinlock_stats {
-    typedef counter_t<uint64, IB_N_SLOTS> uint64_counter_t;
     // number of spin thread yield
-    uint64_counter_t     spin_thread_yield_count;
+    uint64 spin_thread_yield_count;
     // number of spin loop rounds
-    uint64_counter_t     spin_round_count;
-    // number of fail
-    uint64_counter_t     spin_fail_count;
+    uint64 spin_round_count;
 } spinlock_stats_t;
 
 #define SPIN_ROUND_COUNT          30
@@ -137,8 +134,8 @@ lock_loop:
         ut_ad(lock->thread_id = os_thread_get_curr_id());
 #endif
         if (stats) {
-            stats->spin_round_count.add(spin_round_count);
-            stats->spin_thread_yield_count.add(thread_yield_count);
+            stats->spin_round_count += spin_round_count;
+            stats->spin_thread_yield_count += thread_yield_count;
         }
         return;
     }

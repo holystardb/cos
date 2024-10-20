@@ -108,9 +108,10 @@ struct st_trx_rseg {
 };
 
 
-#define TRX_RSEG_MAX_COUNT                96    // 96 * 4 pages = 6MB
+#define TRX_RSEG_MAX_COUNT                64    // 64 * 4 pages = 4MB
 #define TRX_RSEG_MIN_COUNT                4     // 4  * 4 pages = 256KB
 #define TRX_RSEG_DEFAULT_COUNT            32    // 32 * 4 pages = 2MB
+
 #define TRX_RSEG_UNDO_PAGE_MAX_COUNT      16384 // 256GB
 
 // The transaction system central memory data structure

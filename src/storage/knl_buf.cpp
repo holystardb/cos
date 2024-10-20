@@ -967,12 +967,11 @@ inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state)
     buf_page_set_state(&block->page, state);
 }
 
-/**********************************************************************//**
-Gets the space id, page offset, and byte offset within page of a
-pointer pointing to a buffer frame containing a file page. */
-void buf_ptr_get_fsp_addr(const void *ptr, /*!< in: pointer to a buffer frame */
-    uint32 *space,  /*!< out: space id */
-    fil_addr_t *addr) /*!< out: page offset and byte offset */
+// Gets the space id, page offset,
+// and byte offset within page of a pointer pointing to a buffer frame containing a file page.
+void buf_ptr_get_fsp_addr(const void *ptr, // in: pointer to a buffer frame
+    uint32 *space,  // out: space id
+    fil_addr_t *addr) // out: page offset and byte offset
 {
     const page_t *page = (const page_t*) ut_align_down((void *)ptr, UNIV_PAGE_SIZE);
 
@@ -1194,7 +1193,7 @@ static bool32 buf_pool_fill_block(buf_pool_t *buf_pool, uint64 mem_size)
      * we may allocate one fewer block than requested.
      * When it is bigger, we may allocate more blocks than requested.
      */
-    frame = (byte *)ut_align(buf_pool->mem, UNIV_PAGE_SIZE);
+    frame = (byte *)ut_align_up(buf_pool->mem, UNIV_PAGE_SIZE);
     buf_pool->size = buf_pool->mem_size / UNIV_PAGE_SIZE - (frame != buf_pool->mem);
 
     /* Subtract the space needed for block descriptors. */
@@ -1437,15 +1436,13 @@ buf_pool_t* buf_pool_get(uint32 id)
 }
 
 
-/********************************************************************//**
-Gets the smallest oldest_modification lsn for any page in the pool. Returns
-zero if all modified pages have been flushed to disk.
-@return oldest modification in pool, zero if none */
-lsn_t buf_pool_get_oldest_modification(void)
+// Gets recovery lsn for any page in the pool.
+// Returns zero if all modified pages have been flushed to disk.
+lsn_t buf_pool_get_recovery_lsn(void)
 {
     buf_block_t* block;
     lsn_t       lsn = 0;
-    lsn_t       oldest_lsn = 0;
+    lsn_t       recovery_lsn = 0;
     buf_pool_t* buf_pool;
 
     // When we traverse all the flush lists
@@ -1465,14 +1462,14 @@ lsn_t buf_pool_get_oldest_modification(void)
 
         mutex_exit(&buf_pool->flush_list_mutex);
 
-        if (oldest_lsn == 0 || oldest_lsn > lsn) {
-            oldest_lsn = lsn;
+        if (recovery_lsn == 0 || recovery_lsn > lsn) {
+            recovery_lsn = lsn;
         }
     }
 
     //log_flush_order_mutex_exit();
 
-    return oldest_lsn;
+    return recovery_lsn;
 }
 
 // Invalidates file pages in one buffer pool instance

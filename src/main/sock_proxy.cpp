@@ -1282,7 +1282,7 @@ static void reload_config()
     g_socks_mgr.poll_timeout_sec = get_private_profile_int("general", "poll_timeout", 10, g_config_file);
 
     srv_create_auth_md5();
-    LOGGER.log_init((log_level_t)g_socks_mgr.log_level, NULL, NULL);
+    LOGGER.log_init(g_socks_mgr.log_level, NULL, NULL);
 }
 
 static bool32 load_config(int argc, char **argv)
@@ -1319,7 +1319,7 @@ static bool32 load_config(int argc, char **argv)
     srv_create_auth_md5();
     
     get_app_path(path);
-    LOGGER.log_init((log_level_t)g_socks_mgr.log_level, path, "socks");
+    LOGGER.log_init(g_socks_mgr.log_level, path, "socks");
 
     return TRUE;
 }

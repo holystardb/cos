@@ -25,12 +25,12 @@ typedef struct st_checkpoint_group {
     checkpoint_sort_item_t items[CHECKPOINT_GROUP_MAX_SIZE];
 } checkpoint_group_t;
 
-typedef struct st_checkpoint_double_write {
+typedef struct st_checkpoint_dbwr {
     os_file_t       handle;
     uint32          size;
     char*           name;
     os_aio_array_t* aio_array;
-} checkpoint_double_write_t;
+} checkpoint_dbwr_t;
 
 
 typedef struct st_checkpoint_stat {
@@ -53,8 +53,6 @@ typedef struct st_checkpoint_stat {
 } checkpoint_stat_t;
 
 typedef struct st_checkpoint {
-    thread_t      thread;
-
     uint64        flush_timeout_us;
 
     lsn_t         least_recovery_point;
@@ -65,9 +63,10 @@ typedef struct st_checkpoint {
 
     checkpoint_stat_t    stat;
 
-    mutex_t              mutex;
+    mutex_t            mutex;
+    os_event_t         checkpoint_event;
 
-    checkpoint_double_write_t  double_write;
+    checkpoint_dbwr_t  double_write;
 } checkpoint_t;
 
 
@@ -75,10 +74,13 @@ typedef struct st_checkpoint {
 
 //-----------------------------------------------------------------
 
-extern checkpoint_t* checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size);
+extern status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size);
 extern void* checkpoint_proc_thread(void *arg);
+extern inline void checkpoint_wake_up_thread();
+
 extern status_t ckpt_increment_checkpoint();
 extern status_t ckpt_full_checkpoint();
+
 //-----------------------------------------------------------------
 
 

@@ -754,7 +754,6 @@ bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *ac
         } else {
             node_size_increase = free_cur_node;
         }
-        size_increase -= node_size_increase;
 
         bool32 ret = fil_space_extend_node(node, page_hwm, node_size_increase, &node_actual_size);
         if (!ret) {
@@ -762,6 +761,7 @@ bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *ac
         }
         page_hwm = 0;
         *actual_size += node_actual_size;
+        size_increase -= node_actual_size;
 
         node = UT_LIST_GET_NEXT(chain_list_node, node);
     }

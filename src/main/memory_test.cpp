@@ -255,7 +255,7 @@ void do_test_free_page()
 int main_100(int argc, char *argv[])
 {
     char *log_path = "D:\\MyWork\\cos\\data\\";
-    LOGGER.log_init(LOG_INFO, log_path, "memory_test");
+    LOGGER.log_init(LOG_LEVEL_ALL, log_path, "memory_test");
     //LOGGER.log_init(LOG_INFO, NULL, "memory_test");
     LOGGER_WARN(LOGGER, "WARN: This is memory test");
     LOGGER_DEBUG(LOGGER, "DEBUG: This is memory test");

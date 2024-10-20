@@ -256,13 +256,13 @@ static void sync_array_wait_event(sync_array_t *arr, sync_cell_t*& cell)
 
     cell->waiting = TRUE;
 
-    /* We use simple enter to the mutex below, because if we cannot acquire it at once,
-    mutex_enter would call recursively sync_array routines, leading to trouble.
-    rw_lock_debug_mutex freezes the debug lists. */
+    // We use simple enter to the mutex below, because if we cannot acquire it at once,
+    // mutex_enter would call recursively sync_array routines, leading to trouble.
+    // rw_lock_debug_mutex freezes the debug lists.
 
     rw_lock_debug_mutex_enter();
     if (TRUE == sync_array_detect_deadlock(arr, cell, cell, 0)) {
-        fputs("########################################\nDeadlock Detected!", stderr);
+        LOGGER_FATAL(LOGGER, "Deadlock Detected!");
         ut_error;
     }
     rw_lock_debug_mutex_exit();
@@ -299,6 +299,34 @@ uint32 rw_lock_get_writer(const rw_lock_t *lock)
 	}
 
 }
+
+
+static uint32 rw_lock_get_debug_print(char* err_msg, uint32 err_msg_pos, rw_lock_debug_t* info)
+{
+    uint32 rwt;
+
+    rwt = info->lock_type;
+
+    err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
+        "Locked: thread %lu file %s line %lu  ",
+        (ulong) info->thread_id, info->file_name, (ulong) info->line);
+    if (rwt == RW_LOCK_SHARED) {
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "S-LOCK");
+    } else if (rwt == RW_LOCK_EXCLUSIVE) {
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "X-LOCK");
+    } else if (rwt == RW_LOCK_WAIT_EXCLUSIVE) {
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "WAIT X-LOCK");
+    } else {
+        ut_error;
+    }
+    if (info->pass != 0) {
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, " pass value %lu", (ulong) info->pass);
+    }
+    err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "%c", '\n');
+
+    return err_msg_pos;
+}
+
 
 void rw_lock_debug_print(FILE *f, rw_lock_debug_t *info)
 {
@@ -342,6 +370,60 @@ static void sync_array_object_signalled()
     ++sg_count;
 }
 
+
+static uint32 sync_array_get_cell_print(char* err_msg, uint32 err_msg_pos, sync_cell_t *cell)
+{
+    rw_lock_t *rwlock;
+    uint32     type;
+    uint32     writer;
+
+    type = cell->request_type;
+
+    err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
+        "--Thread %lu has waited at %s line %lu for %.2f seconds the semaphore:\n",
+        (ulong)cell->thread_id,  cell->file, (ulong) cell->line, difftime(time(NULL), cell->reservation_time));
+
+    if (type == RW_LOCK_EXCLUSIVE || type == RW_LOCK_WAIT_EXCLUSIVE || type == RW_LOCK_SHARED) {
+
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
+            type == RW_LOCK_EXCLUSIVE ? "X-lock on" :
+                (type == RW_LOCK_WAIT_EXCLUSIVE ? "X-lock (wait_ex) on" : "S-lock on"));
+
+        rwlock = cell->wait_object.lock;
+
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
+            " RW-latch at %p created in file %s line %lu\n",
+            (void*) rwlock, rwlock->cfile_name, (ulong) rwlock->cline);
+
+        writer = rw_lock_get_writer(rwlock);
+        if (writer != RW_LOCK_NOT_LOCKED) {
+            err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
+                "a writer (thread id %lu) has reserved it in mode %s",
+                (ulong)rwlock->writer_thread,
+                writer == RW_LOCK_EXCLUSIVE ? " exclusive\n" : " wait exclusive\n");
+        }
+
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
+            "number of readers %d, waiters flag %d, lock_word: %lx\n"
+            "Last time read locked in file %s line %lu\n"
+            "Last time write locked in file %s line %lu\n",
+            rw_lock_get_reader_count(rwlock),
+            rwlock->waiters,
+            (ulong)(rwlock->lock_word),
+            rwlock->last_s_file_name, (ulong)(rwlock->last_s_line),
+            rwlock->last_x_file_name, (ulong)(rwlock->last_x_line));
+    } else {
+        ut_error;
+    }
+
+    if (!cell->waiting) {
+        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "wait has ended\n");
+    }
+
+    return err_msg_pos;
+}
+
+
 static void sync_array_cell_print(FILE *file, sync_cell_t *cell)
 {
     rw_lock_t *rwlock;
@@ -351,7 +433,7 @@ static void sync_array_cell_print(FILE *file, sync_cell_t *cell)
     type = cell->request_type;
 
     fprintf(file, "--Thread %lu has waited at %s line %lu for %.2f seconds the semaphore:\n",
-        (ulong) cell->thread_id,  cell->file, (ulong) cell->line, difftime(time(NULL), cell->reservation_time));
+        (ulong)cell->thread_id,  cell->file, (ulong) cell->line, difftime(time(NULL), cell->reservation_time));
 
     if (type == RW_LOCK_EXCLUSIVE || type == RW_LOCK_WAIT_EXCLUSIVE || type == RW_LOCK_SHARED) {
 
@@ -395,19 +477,20 @@ static sync_cell_t* sync_array_find_thread(
     for (uint32 i = 0; i < arr->n_cells; i++) {
         cell = sync_array_get_nth_cell(arr, i);
         if (cell->wait_object.lock) {
-            LOGGER_DEBUG(LOGGER, "sync_array_find_thread: i %lu  arr %p thread %llu cell %p rw lock %p\n",
+            LOGGER_TRACE(LOGGER, "sync_array_find_thread: i %lu  arr %p thread %llu cell %p rw lock %p",
                 i, arr, cell->thread_id, cell, cell->wait_object.lock);
         }
         if (cell->wait_object.lock != NULL && os_thread_eq(cell->thread_id, thread)) {
-            LOGGER_DEBUG(LOGGER, "sync_array_find_thread: arr %p thread %lu cell %p rw lock %p\n",
+            LOGGER_TRACE(LOGGER, "sync_array_find_thread: found a cell, arr %p thread %lu cell %p rw lock %p",
                 arr, thread, cell, cell->wait_object.lock);
-            return(cell); /* Found */
+            return cell; // Found
         }
     }
 
-    LOGGER_DEBUG(LOGGER, "sync_array_find_thread: arr %p thread %lu not found cell\n", arr, thread);
+    LOGGER_TRACE(LOGGER, "sync_array_find_thread: arr %p thread %lu not found cell", arr, thread);
 
-    return NULL; /* Not found */
+    // Not found
+    return NULL;
 }
 
 static bool32 sync_array_deadlock_step(
@@ -420,28 +503,33 @@ static bool32 sync_array_deadlock_step(
     sync_cell_t *new_cell;
 
     if (pass != 0) {
-        /* If pass != 0, then we do not know which threads are
-        responsible of releasing the lock, and no deadlock can be detected. */
-        return(FALSE);
+        // If pass != 0, then we do not know which threads are responsible of releasing the lock,
+        // and no deadlock can be detected.
+        return FALSE;
     }
 
     new_cell = sync_array_find_thread(arr, thread);
     if (new_cell == start) {
-        /* Deadlock */
-        fputs("########################################\n"
-              "DEADLOCK of threads detected!\n", stderr);
-        return(TRUE);
+        // Deadlock
+        LOGGER_DEBUG(LOGGER, "DEADLOCK of threads detected, arr %p thread %lu cell %p rw lock %p",
+            arr, thread, new_cell, new_cell->wait_object.lock, os_thread_get_curr_id());
+        return TRUE;
     } else if (new_cell) {
-        return(sync_array_detect_deadlock(arr, start, new_cell, depth + 1));
+        return sync_array_detect_deadlock(arr, start, new_cell, depth + 1);
     }
-    return(FALSE);
+    return FALSE;
 }
 
 void sync_array_report_error(rw_lock_t *lock, rw_lock_debug_t *debug, sync_cell_t *cell)
 {
-    fprintf(stderr, "rw-lock %p ", (void*) lock);
-    sync_array_cell_print(stderr, cell);
-    rw_lock_debug_print(stderr, debug);
+    char err_msg[CM_ERR_MSG_MAX_LEN];
+    uint32 err_msg_pos;
+
+    err_msg_pos = snprintf(err_msg, CM_ERR_MSG_MAX_LEN, "rw-lock %p ", (void*)lock);
+    err_msg_pos = sync_array_get_cell_print(err_msg, err_msg_pos, cell);
+    err_msg_pos = rw_lock_get_debug_print(err_msg, err_msg_pos, debug);
+    err_msg[err_msg_pos] = '\0';
+    LOGGER_ERROR(LOGGER, err_msg);
 }
 
 static bool32 sync_array_detect_deadlock(
@@ -465,10 +553,10 @@ static bool32 sync_array_detect_deadlock(
     depth++;
 
     if (!cell->waiting) {
-        return(FALSE); /* No deadlock here */
+        return(FALSE); // No deadlock here
     }
 
-    LOGGER_DEBUG(LOGGER, "sync_array_detect_deadlock: arr %p cell %p rwlock %p thread %lu\n",
+    LOGGER_TRACE(LOGGER, "sync_array_detect_deadlock: arr %p cell %p rwlock %p thread %lu\n",
         arr, cell, cell->wait_object.lock, os_thread_get_curr_id());
 
     switch (cell->request_type) {
@@ -479,7 +567,7 @@ static bool32 sync_array_detect_deadlock(
              debug != NULL;
              debug = UT_LIST_GET_NEXT(list_node, debug)) {
 
-            LOGGER_DEBUG(LOGGER, "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
+            LOGGER_TRACE(LOGGER, "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
                 arr, debug->lock, debug->thread_id);
 
             thread = debug->thread_id;
@@ -491,13 +579,14 @@ static bool32 sync_array_detect_deadlock(
                 }
                 /* fall through */
             case RW_LOCK_SHARED:
-                /* The (wait) x-lock request can block infinitely only if someone (can be also cell thread) is holding s-lock,
-                or someone (cannot be cell thread) (wait) x-lock or sx-lock, and he is blocked by start thread */
+                // The (wait) x-lock request can block infinitely
+                // only if someone (can be also cell thread) is holding s-lock,
+                // or someone (cannot be cell thread) (wait) x-lock or sx-lock,
+                // and he is blocked by start thread
                 ret = sync_array_deadlock_step(arr, start, thread, debug->pass, depth);
                 if (ret) {
                     sync_array_report_error(lock, debug, cell);
-                    rw_lock_debug_print(stderr, debug);
-                    return(TRUE);
+                    return TRUE;
                 }
             }
         }
@@ -510,27 +599,29 @@ static bool32 sync_array_detect_deadlock(
              debug != 0;
              debug = UT_LIST_GET_NEXT(list_node, debug)) {
 
-            LOGGER_DEBUG(LOGGER, "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
+            LOGGER_TRACE(LOGGER, "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
                 arr, debug->lock, debug->thread_id);
 
             thread = debug->thread_id;
             if (debug->lock_type == RW_LOCK_EXCLUSIVE || debug->lock_type == RW_LOCK_WAIT_EXCLUSIVE) {
-                /* The s-lock request can block infinitely only if someone (can also be cell thread) is holding (wait) x-lock,
-                and he is blocked by start thread */
+                // The s-lock request can block infinitely
+                // only if someone (can also be cell thread) is holding (wait) x-lock,
+                // and he is blocked by start thread
                 ret = sync_array_deadlock_step(arr, start, thread, debug->pass, depth);
                 if (ret) {
                     sync_array_report_error(lock, debug, cell);
-                    return(TRUE);
+                    return TRUE;
                 }
             }
         }
-        return(false);
+        return FALSE;
 
     default:
         ut_error;
     }
 
-    return(TRUE);	/* Execution never reaches this line: for compiler fooling only */
+    // Execution never reaches this line: for compiler fooling only
+    return TRUE;
 }
 
 static void sync_array_print_info(FILE *file, sync_array_t *arr)

@@ -86,6 +86,7 @@ extern os_aio_array_t* srv_os_aio_sync_array;
 
 #define DB_CTRL_FILE_MAX_COUNT          3
 #define DB_CTRL_FILE_VERSION            1
+#define DB_CTRL_FILE_VERSION_NUM        1
 
 #define DB_REDO_FILE_MAX_COUNT          16
 #define DB_UNDO_FILE_MAX_COUNT          16
@@ -162,6 +163,8 @@ typedef struct st_db_ctrl {
     db_space_t      system_spaces[DB_SYSTEM_SPACE_MAX_COUNT];
     db_space_t      user_spaces[DB_USER_SPACE_MAX_COUNT];
     db_data_file_t* user_space_data_files;
+    //byte            checkpoint1[OS_FILE_LOG_BLOCK_SIZE];
+    //byte            checkpoint2[OS_FILE_LOG_BLOCK_SIZE];
 } db_ctrl_t;
 
 typedef struct st_db_charset_info {
@@ -316,6 +319,8 @@ extern srv_stats_t  srv_stats;
 extern bool32 recv_no_log_write;
 
 extern bool32 srv_read_only_mode;
+
+extern bool32 srv_recovery_on;
 extern bool32 srv_archive_recovery;
 
 extern db_ctrl_t        srv_ctrl_file;

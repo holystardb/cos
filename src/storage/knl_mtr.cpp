@@ -579,33 +579,30 @@ static inline void mtr_log_reserve_and_write(mtr_t *mtr)
     ut_ad(!srv_read_only_mode);
 
     dyn_array_t* mlog = &(mtr->log);
-    dyn_block_t* first_block = dyn_array_get_first_block(mlog);
-    byte* first_data = dyn_block_get_data(first_block);
 
+    // set rec flag
+    dyn_block_t* first_block = dyn_array_get_first_block(mlog);
     if (mtr->n_log_recs > 1) {
         mlog_catenate_uint32(mtr, MLOG_MULTI_REC_END, MLOG_1BYTE);
     } else {
-        *first_data = (byte)((uint32)*first_data | MLOG_SINGLE_REC_FLAG);
+        byte* mlog_id = dyn_block_get_data(first_block) + 4 /* reserved 4bytes for length */;
+        *mlog_id = *mlog_id | MLOG_SINGLE_REC_FLAG;
     }
 
-    // If the queue was empty: we're the leader for this batch
-    //bool32 leader= mtr_queue.append(mtr);
-
-    /*
-      If the queue was not empty, we're a follower and wait for the
-      leader to process the queue. If we were holding a mutex, we have
-      to release it before going to sleep.
-    */
-    //if (!leader) {
-        //os_event_wait(os_event_t event, uint64 reset_sig_count);
-    //}
-
+    // alloc from log buffer
     uint32 data_size = dyn_array_get_data_size(mlog);
-    mtr->start_buf_lsn = log_buffer_reserve(data_size);
+    ut_ad(data_size > 2);
+    ut_a(data_size <= UINT_MAX16);
+    log_buffer_reserve(&mtr->start_buf_lsn, data_size);
     mtr->end_lsn = mtr->start_buf_lsn.val.lsn + mtr->start_buf_lsn.data_len;
 
+    // length for log
+    mach_write_to_2(dyn_block_get_data(first_block), data_size - 2);
+
+    // add dirtied pages to flush list
     mtr_add_dirtied_pages_to_flush_list(mtr);
 
+    // copy data to log buffer
     if (mtr->log_mode == MTR_LOG_ALL) {
         uint64 start_lsn = mtr->start_buf_lsn.val.lsn;
         for (dyn_block_t* block = first_block;
@@ -651,23 +648,6 @@ inline byte* mlog_write_initial_log_record_fast(
     page = (const byte*) ut_align_down((void *)ptr, UNIV_PAGE_SIZE);
     space = mach_read_from_4(page + FIL_PAGE_SPACE);
     offset = mach_read_from_4(page + FIL_PAGE_OFFSET);
-
-    /* check whether the page is in the doublewrite buffer;
-       the doublewrite buffer is located in pages [FSP_DOUBLE_WRITE_BLOCK1, FSP_DOUBLE_WRITE_BLOCK1 + 2MB) in the system tablespace */
-    if (space == FIL_SYSTEM_SPACE_ID && offset >= FSP_DOUBLE_WRITE_BLOCK1 && offset < (FSP_DOUBLE_WRITE_BLOCK1 + 2 * FSP_EXTENT_SIZE)) {
-        //if (buf_dblwr_being_created) {
-            /* Do nothing: we only come to this branch in an InnoDB database creation.
-               We do not redo log anything for the doublewrite buffer pages. */
-            return(log_ptr);
-        //} else {
-        //    fprintf(stderr,
-        //        "Error: trying to redo log a record of type "
-        //        "%d on page %lu of space %lu in the doublewrite buffer, continuing anyway.\n"
-        //        "Please post a bug report to bugs.mysql.com.\n",
-        //        type, offset, space);
-        //    ut_ad(0);
-        //}
-    }
 
     mach_write_to_1(log_ptr, type);
     log_ptr++;
@@ -990,13 +970,13 @@ inline mtr_t* mtr_start(mtr_t *mtr)
 {
     dyn_array_create(&(mtr->memo), mtr_memory_pool);
     dyn_array_create(&(mtr->log), mtr_memory_pool);
+    mtr->log.first_block.used = 2; // reserved 2 bytes for length
 
     mtr->log_mode = MTR_LOG_ALL;
     mtr->modifications = FALSE;
     mtr->n_log_recs = 0;
     mtr->inside_ibuf = FALSE;
     mtr->made_dirty = FALSE;
-    //mtr->n_freed_pages = 0;
 
     ut_d(mtr->state = MTR_ACTIVE);
     ut_d(mtr->magic_n = MTR_MAGIC_N);
