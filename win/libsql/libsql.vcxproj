@@ -72,7 +72,7 @@
     <IncludePath>..\..\src\include\common;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>../../src/include/common;../../src/include/vio;../../src/include/sql;$(IncludePath)</IncludePath>
+    <IncludePath>..\src\include\securec;..\..\src\include\common;..\..\src\include\vio;..\..\src\include\sql;$(IncludePath)</IncludePath>
     <OutDir>$(SolutionDir)..\lib\</OutDir>
     <LibraryPath>..\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>

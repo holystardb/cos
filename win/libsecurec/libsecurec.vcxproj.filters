@@ -1,0 +1,54 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\..\src\securec\fscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\fwscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\gets_s.cpp" />
+    <ClCompile Include="..\..\src\securec\memcpy_s.cpp" />
+    <ClCompile Include="..\..\src\securec\memmove_s.cpp" />
+    <ClCompile Include="..\..\src\securec\memset_s.cpp" />
+    <ClCompile Include="..\..\src\securec\scanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\securecutil.cpp" />
+    <ClCompile Include="..\..\src\securec\secureinput_a.cpp" />
+    <ClCompile Include="..\..\src\securec\secureinput_w.cpp" />
+    <ClCompile Include="..\..\src\securec\secureprintoutput_a.cpp" />
+    <ClCompile Include="..\..\src\securec\secureprintoutput_w.cpp" />
+    <ClCompile Include="..\..\src\securec\snprintf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\sprintf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\sscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\strcat_s.cpp" />
+    <ClCompile Include="..\..\src\securec\strcpy_s.cpp" />
+    <ClCompile Include="..\..\src\securec\strncat_s.cpp" />
+    <ClCompile Include="..\..\src\securec\strncpy_s.cpp" />
+    <ClCompile Include="..\..\src\securec\strtok_s.cpp" />
+    <ClCompile Include="..\..\src\securec\swprintf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\swscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vfscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vfwscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vsnprintf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vsprintf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vsscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vswprintf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vswscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\vwscanf_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wcscat_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wcscpy_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wcsncat_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wcsncpy_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wcstok_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wmemcpy_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wmemmove_s.cpp" />
+    <ClCompile Include="..\..\src\securec\wscanf_s.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\src\securec\input.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\securec\secinput.h" />
+    <ClInclude Include="..\..\src\securec\securecutil.h" />
+    <ClInclude Include="..\..\src\securec\secureprintoutput.h" />
+    <ClInclude Include="..\..\src\include\securec\securec.h" />
+    <ClInclude Include="..\..\src\include\securec\securectype.h" />
+  </ItemGroup>
+</Project>

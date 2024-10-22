@@ -1,14 +1,21 @@
+//sss
 /* common errors: 0 - 99 */  
 0, Normal, no error reported
 
 
 /* OS errors: 100 - 199 */
 100, Failed to allocate %llu bytes for %s
-101, 
+101, %s have reach the memory limit, memory capacity = %llu bytes
 102, 
-103, Count of vm_open exceeds the maximum %u
-104, Session stack overflow
-105, api has thrown an error %d for system call
+103, Session stack overflow
+
+// ERR_ALLOC_MEMORY_CONTEXT
+104, %s fail to create memory context
+
+110, Count of vm_open exceeds the maximum %u
+111,
+120,
+121, api has thrown an error %d for system call
 
 
 /* invalid configuration errors: 200 - 299 */
@@ -22,7 +29,65 @@
 /* transaction & XA & lock Errors: 600 - 699 */
 
 
+/* meta data error: 800 - 899 */
+
+//ERR_TABLESPACE_EXISTS = 800
+800,
+//ERR_TABLESPACE_DELETED
+801,
+//ERR_TABLESPACE_NOT_FOUND
+802,
+//ERR_TABLE_EXISTS,
+803, Table %s already exist
+//ERR_TABLE_OR_VIEW_NOT_FOUND,
+804, Table or view %s.%s does not exist
+//ERR_TABLE_IS_BEING_USED,
+805,
+//ERR_TABLE_CHANGED
+806, Some part of table dictionary has changed
+//[ERR_COLUMN_COUNT_REACH_LIMIT]
+807, Column count exceeded the limit %d
+//[ERR_COLUMN_NOT_EXIST]
+808, Column %s.%s does not exist
+//[ERR_COLUMN_ALREADY_EXIST]
+809, Column %s.%s already exist
+//[ERR_COLUMN_ALREADY_INDEXED]
+810, The column has been indexed
+
+
+//ERR_DUPLICATE_KEY,
+//ERR_FOREIGN_DUPLICATE_KEY
+//ERR_CLUSTER_NOT_FOUND,
+//ERR_CANNOT_ADD_CONSTRAINT
+//ERR_CANNOT_DROP_CONSTRAINT
+//ERR_NO_REFERENCED_ROW
+//ERR_ROW_IS_REFERENCED
+
+
+
+
+//[ERR_USER_NOT_EXIST] 
+820, User %s does not exist
+//[ERR_ROLE_NOT_EXIST]
+821, Role %s does not exist
+
+//[ERR_FUNCTION_NOT_EXIST]
+822, Function %s does not exist
+
 /* PL/SQL Error: 1200 - 1299 */
+
+
+//ERR_TYPE_DATETIME_OVERFLOW
+1250, DATETIME out of range, it must be between %04d-01-01 00:00:00 and %04d-12-31 23:59:59
+//ERR_TYPE_TIMESTAMP_OVERFLOW
+1251, TIMESTAMP out of range, it must be between %04d-01-01 00:00:00.000000 and %04d-12-31 23:59:59.999999
+
+//[ERR_TEXT_FORMAT_ERROR]
+1252, Invalid format of %s
+
+
+
+
 
 /* job error , 1300 - 1399 */
 
@@ -34,6 +99,7 @@
 1502, Size of variant data is too large, size=%llu
 1503, 
 1504, Fatal error, Out of undo segment tablespace
+
 
 
 /* user define errors: 5000 - 9999 */

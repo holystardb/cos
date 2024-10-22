@@ -129,7 +129,7 @@
     <OutDir>$(SolutionDir)..\lib\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>..\..\src\include\strings;..\..\src\include\common;$(IncludePath)</IncludePath>
+    <IncludePath>..\..\src\include\securec;..\..\src\include\strings;..\..\src\include\common;$(IncludePath)</IncludePath>
     <OutDir>$(SolutionDir)..\lib\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">

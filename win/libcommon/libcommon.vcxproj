@@ -20,10 +20,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\include\common\cm_atomic.h" />
+    <ClInclude Include="..\..\src\include\common\cm_attribute.h" />
     <ClInclude Include="..\..\src\include\common\cm_base64.h" />
     <ClInclude Include="..\..\src\include\common\cm_biqueue.h" />
     <ClInclude Include="..\..\src\include\common\cm_config.h" />
     <ClInclude Include="..\..\src\include\common\cm_counter.h" />
+    <ClInclude Include="..\..\src\include\common\cm_date.h" />
     <ClInclude Include="..\..\src\include\common\cm_datetime.h" />
     <ClInclude Include="..\..\src\include\common\cm_dbug.h" />
     <ClInclude Include="..\..\src\include\common\cm_encrypt.h" />
@@ -32,6 +34,7 @@
     <ClInclude Include="..\..\src\include\common\cm_getopt.h" />
     <ClInclude Include="..\..\src\include\common\cm_hashtable.h" />
     <ClInclude Include="..\..\src\include\common\cm_list.h" />
+    <ClInclude Include="..\..\src\include\common\cm_locale.h" />
     <ClInclude Include="..\..\src\include\common\cm_log.h" />
     <ClInclude Include="..\..\src\include\common\cm_md5.h" />
     <ClInclude Include="..\..\src\include\common\cm_memory.h" />
@@ -40,9 +43,13 @@
     <ClInclude Include="..\..\src\include\common\cm_random.h" />
     <ClInclude Include="..\..\src\include\common\cm_rbt.h" />
     <ClInclude Include="..\..\src\include\common\cm_rwlock.h" />
+    <ClInclude Include="..\..\src\include\common\cm_stack.h" />
+    <ClInclude Include="..\..\src\include\common\cm_string.h" />
+    <ClInclude Include="..\..\src\include\common\cm_text.h" />
     <ClInclude Include="..\..\src\include\common\cm_thread.h" />
     <ClInclude Include="..\..\src\include\common\cm_thread_group.h" />
     <ClInclude Include="..\..\src\include\common\cm_thread_pool.h" />
+    <ClInclude Include="..\..\src\include\common\cm_timer.h" />
     <ClInclude Include="..\..\src\include\common\cm_timewheel.h" />
     <ClInclude Include="..\..\src\include\common\cm_type.h" />
     <ClInclude Include="..\..\src\include\common\cm_util.h" />
@@ -52,6 +59,7 @@
     <ClCompile Include="..\..\src\common\cm_base64.cpp" />
     <ClCompile Include="..\..\src\common\cm_biqueue.cpp" />
     <ClCompile Include="..\..\src\common\cm_config.cpp" />
+    <ClCompile Include="..\..\src\common\cm_date.cpp" />
     <ClCompile Include="..\..\src\common\cm_datetime.cpp" />
     <ClCompile Include="..\..\src\common\cm_dbug.cpp" />
     <ClCompile Include="..\..\src\common\cm_encrypt.cpp" />
@@ -67,10 +75,13 @@
     <ClCompile Include="..\..\src\common\cm_random.cpp" />
     <ClCompile Include="..\..\src\common\cm_rbt.cpp" />
     <ClCompile Include="..\..\src\common\cm_rwlock.cpp" />
+    <ClCompile Include="..\..\src\common\cm_text.cpp" />
     <ClCompile Include="..\..\src\common\cm_thread.cpp" />
     <ClCompile Include="..\..\src\common\cm_thread_group.cpp" />
     <ClCompile Include="..\..\src\common\cm_thread_pool.cpp" />
+    <ClCompile Include="..\..\src\common\cm_timer.cpp" />
     <ClCompile Include="..\..\src\common\cm_timewheel.cpp" />
+    <ClCompile Include="..\..\src\common\cm_timezone.cpp" />
     <ClCompile Include="..\..\src\common\cm_util.cpp" />
     <ClCompile Include="..\..\src\common\cm_virtual_mem.cpp" />
   </ItemGroup>
@@ -128,7 +139,7 @@
     <IncludePath>..\..\src\include\common;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>..\..\src\include\common;..\..\third_lib\openssl-1.1.1\include;$(IncludePath)</IncludePath>
+    <IncludePath>..\..\src\include\securec;..\..\src\include\strings;..\..\src\include\common;..\..\third_lib\openssl-1.1.1\include;$(IncludePath)</IncludePath>
     <OutDir>$(SolutionDir)..\lib\</OutDir>
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>

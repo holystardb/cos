@@ -1,0 +1,100 @@
+使用create database命令手工创建Oracle数据库
+
+1. 设置环境变量ORACLE_SID
+export ORACLE_SID=mdb
+
+2. 创建数据库初始化参数
+cd $ORACLE_HOME/dbs
+
+cat >> init${ORACLE_SID}.ora <<-EOF
+db_name='mdb'
+memory_target=8G
+processes = 1500
+audit_file_dest='/u01/app/oracle/admin/mdb/adump'
+audit_trail ='db'
+db_block_size=8192
+db_domain=''
+db_recovery_file_dest='/oradata/fast_recovery_area'
+db_recovery_file_dest_size=2G
+diagnostic_dest='/u01/app/oracle/'
+dispatchers='(PROTOCOL=TCP) (SERVICE=ORCLXDB)'
+open_cursors=300 
+remote_login_passwordfile='EXCLUSIVE'
+undo_tablespace='UNDOTBS'
+control_files = ('/oradata/datafiles/mdb/control01.ctl')
+
+EOF
+
+3. 创建必要的文件目录
+3.1 创建数据文件目录
+# 审计文件目录
+mkdir -p /u01/app/oracle/admin/mdb/adump
+
+# 数据库闪回恢复区目录
+mkdir -p /oradata/fast_recovery_area
+
+# 数据库数据文件目录
+mkdir -p /oradata/datafiles/mdb/
+
+# 数据库日志文件目录
+mkdir -p /u01/app/oracle/diag/
+
+4. 启动数据库实例
+sqlplus / as sysdba <<EOF
+startup nomount
+EOF
+5. 创建数据库服务器参数文件spfile
+sqlplus / as sysdba <<EOF
+create spfile from pfile;
+EOF
+
+6. 执行create database命令
+CREATE DATABASE mdb
+   USER SYS IDENTIFIED BY Mdb123$678
+   USER SYSTEM IDENTIFIED BY Mdb123$678
+   LOGFILE GROUP 1 ('/oradata/datafiles/mdb/redo01a.log') SIZE 200M BLOCKSIZE 512,
+           GROUP 2 ('/oradata/datafiles/mdb/redo02a.log') SIZE 200M BLOCKSIZE 512,
+           GROUP 3 ('/oradata/datafiles/mdb/redo03a.log') SIZE 200M BLOCKSIZE 512
+   MAXLOGHISTORY 1
+   MAXLOGFILES 16
+   MAXLOGMEMBERS 3
+   MAXDATAFILES 1024
+   CHARACTER SET AL32UTF8
+   NATIONAL CHARACTER SET AL16UTF16
+   EXTENT MANAGEMENT LOCAL
+   DATAFILE '/oradata/datafiles/mdb/system01.dbf'
+     SIZE 700M REUSE AUTOEXTEND ON NEXT 10240K MAXSIZE UNLIMITED
+   SYSAUX DATAFILE '/oradata/datafiles/mdb/sysaux01.dbf'
+     SIZE 550M REUSE AUTOEXTEND ON NEXT 10240K MAXSIZE UNLIMITED
+   DEFAULT TABLESPACE users
+      DATAFILE '/oradata/datafiles/mdb/users01.dbf'
+      SIZE 500M REUSE AUTOEXTEND ON MAXSIZE UNLIMITED
+   DEFAULT TEMPORARY TABLESPACE temp
+      TEMPFILE '/oradata/datafiles/mdb//temp01.dbf'
+      SIZE 20M REUSE AUTOEXTEND ON NEXT 640K MAXSIZE UNLIMITED
+   UNDO TABLESPACE undotbs
+      DATAFILE '/oradata/datafiles/mdb/undotbs01.dbf'
+      SIZE 200M REUSE AUTOEXTEND ON NEXT 5120K MAXSIZE UNLIMITED
+   USER_DATA TABLESPACE usertbs
+      DATAFILE '/oradata/datafiles/mdb/usertbs01.dbf'
+      SIZE 200M REUSE AUTOEXTEND ON MAXSIZE UNLIMITED;
+      
+7. 根据需要创建其他的表空间
+CREATE TABLESPACE apps LOGGING 
+     DATAFILE '/oradata/datafiles/mdb/apps01.dbf' 
+     SIZE 500M REUSE AUTOEXTEND ON NEXT  1280K MAXSIZE UNLIMITED 
+     EXTENT MANAGEMENT LOCAL;
+     
+-- create a tablespace for indexes, separate from user tablespace (optional)
+CREATE TABLESPACE indx_tbs LOGGING 
+     DATAFILE '/oradata/datafiles/mdb/indx01.dbf' 
+     SIZE 100M REUSE AUTOEXTEND ON NEXT  1280K MAXSIZE UNLIMITED 
+     EXTENT MANAGEMENT LOCAL;
+     
+8. 执行脚本创建数据字典视图
+sqlplus / as sysdba
+@?/rdbms/admin/catalog.sql
+@?/rdbms/admin/catproc.sql
+@?/rdbms/admin/utlrp.sql
+sqlplus / as sysdba
+@?/sqlplus/admin/pupbld.sql

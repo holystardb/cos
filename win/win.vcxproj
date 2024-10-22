@@ -87,7 +87,7 @@
     <LibraryPath>D:\MyWork\cos\win\Debug;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>..\src\include\common;..\src\include\vio;..\src\include\strings;..\src\sql\include;..\src\storage\include;..\third_lib\openssl-1.1.1\include;$(IncludePath)</IncludePath>
+    <IncludePath>..\src\include\securec;..\src\include\common;..\src\include\vio;..\src\include\strings;..\src\sql\include;..\src\storage;..\src\storage\include;..\third_lib\openssl-1.1.1\include;$(IncludePath)</IncludePath>
     <ReferencePath>$(ReferencePath)</ReferencePath>
     <LibraryPath>..\third_lib\openssl-1.1.1\win_lib;..\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
@@ -113,9 +113,10 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <StructMemberAlignment>Default</StructMemberAlignment>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>libcommon.lib;libvio.lib;libstrings.lib;libcrypto.lib;libsql.lib;libstorage.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libsecurec.lib;libcommon.lib;libvio.lib;libstrings.lib;libcrypto.lib;libsql.lib;libstorage.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
