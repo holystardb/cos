@@ -255,25 +255,25 @@ void do_test_free_page()
 int main_100(int argc, char *argv[])
 {
     char *log_path = "D:\\MyWork\\cos\\data\\";
-    LOGGER.log_init(LOG_LEVEL_ALL, log_path, "memory_test");
+    //LOGGER.log_init(LOG_LEVEL_ALL, log_path, "memory_test");
     //LOGGER.log_init(LOG_INFO, NULL, "memory_test");
-    LOGGER_WARN(LOGGER, "WARN: This is memory test");
-    LOGGER_DEBUG(LOGGER, "DEBUG: This is memory test");
+    //LOGGER_WARN(LOGGER, "WARN: This is memory test");
+    //LOGGER_DEBUG(LOGGER, "DEBUG: This is memory test");
 
     //DBUG_INIT(log_path, "memory_dbug", 1);
-    DBUG_INIT(NULL, "memory_dbug", 1);
-    DBUG_ENTER("main");
-    DBUG_PRINT("%s", "do vm_memory test");
-    DBUG_PRINT("%s", "-------------------------------------------");
+    //DBUG_INIT(NULL, "memory_dbug", 1);
+    //DBUG_ENTER("main");
+    //DBUG_PRINT("%s", "do vm_memory test");
+    //DBUG_PRINT("%s", "-------------------------------------------");
     //ut_a(0);
-    ut_error;
+    //ut_error;
     //
     test_memory();
 
     //
     test_vm_memory();
 
-    DBUG_END();
+    //DBUG_END();
 
     return 0;
 }

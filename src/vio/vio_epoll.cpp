@@ -75,7 +75,7 @@ static int epoll_ctl_add(epfd_entry_t* epfd_entry, my_socket fd, struct epoll_ev
     spin_unlock(&epfd_entry->fd_entry_rbt_lock);
 
     if (rbt_node == NULL) {
-        LOGGER_ERROR(LOGGER, "epoll_ctl_add: error for malloc fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_ctl_add: error for malloc fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
         return -1;
     }
 
@@ -96,7 +96,7 @@ static int epoll_ctl_mod(epfd_entry_t* epfd_entry, my_socket fd, struct epoll_ev
     spin_unlock(&epfd_entry->fd_entry_rbt_lock);
 
     if (fd_entry == NULL) {
-        LOGGER_ERROR(LOGGER, "epoll_ctl_mod: error for find fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_ctl_mod: error for find fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
         return -1;
     }
 
@@ -122,7 +122,7 @@ static int epoll_ctl_del(epfd_entry_t* epfd_entry, my_socket fd, struct epoll_ev
     spin_unlock(&epfd_entry->fd_entry_rbt_lock);
 
     if (!deleted) {
-        LOGGER_ERROR(LOGGER, "epoll_ctl_del: error for free fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_ctl_del: error for free fd_entry, epoll fd %d, fd_entry %d", epfd_entry->epfd, fd);
         return -1;
     }
 
@@ -136,7 +136,7 @@ int epoll_ctl(int epfd, int op, my_socket fd, struct epoll_event *event)
 
     node = biqueue_get_node(g_epfd_pool.epfd_entry_pool, epfd);
     if (node == NULL) {
-        LOGGER_ERROR(LOGGER, "epoll_ctl: error for get epfd_entry, epoll fd %d, fd %d", epfd, fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_ctl: error for get epfd_entry, epoll fd %d, fd %d", epfd, fd);
         return -1;
     }
     entry = OBJECT_OF_QUEUE_NODE(epfd_entry_t, node, queue_node);
@@ -158,7 +158,7 @@ int epoll_ctl(int epfd, int op, my_socket fd, struct epoll_event *event)
             return epoll_ctl_del(entry, fd, event);
         default:
         {
-            LOGGER_ERROR(LOGGER, "epoll_ctl: invalid op, epoll fd %d, fd %d op %d", epfd, fd, op);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_ctl: invalid op, epoll fd %d, fd %d op %d", epfd, fd, op);
             return -1;
         }
     }
@@ -181,7 +181,7 @@ int epoll_create1(int flags)
 
     node = biqueue_alloc(g_epfd_pool.epfd_entry_pool); 
     if (node == NULL) {
-        LOGGER_ERROR(LOGGER, "epoll_create1: error for malloc epoll_entry");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_create1: error for malloc epoll_entry");
         return -1;
     }
 
@@ -202,7 +202,7 @@ static int epoll_wait_fd(int epfd, int maxevents, uint32 *loop, fd_entry_t *fds[
 
     queue_node = biqueue_get_node(g_epfd_pool.epfd_entry_pool, epfd);
     if (queue_node == NULL) {
-        LOGGER_ERROR(LOGGER, "epoll_ctl: error for get epfd_entry, epoll fd %d", epfd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_EPOLL, "epoll_ctl: error for get epfd_entry, epoll fd %d", epfd);
         return -1;
     }
     epfd_entry = OBJECT_OF_QUEUE_NODE(epfd_entry_t, queue_node, queue_node);

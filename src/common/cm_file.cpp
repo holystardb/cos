@@ -1209,7 +1209,7 @@ void os_aio_array_free(os_aio_array_t* array)
         }
 
 #ifdef __WIN__
-        free(ctx->handles);
+        ut_free(ctx->handles);
 #else
         aio_setup_func(ctx->io_context);
         ut_free(ctx->io_context);

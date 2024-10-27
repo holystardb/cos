@@ -67,6 +67,7 @@ typedef struct st_dyn_array{
 #define MTR_COMMITTING         56456
 #define MTR_COMMITTED          34676
 
+#define MTR_LOG_LEN_SIZE       2
 
 /* Types for the mlock objects to store in the mtr memo;
    NOTE that the first 3 values must be RW_S_LATCH, RW_X_LATCH, RW_NO_LATCH */

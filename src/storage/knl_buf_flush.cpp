@@ -109,7 +109,7 @@ static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_bl
 
     mutex_exit(&buf_pool->flush_list_mutex);
 
-    LOGGER_DEBUG(LOGGER,
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_BUFFERPOOL,
         "buf_flush_insert_into_flush_list: block (space id = %lu, page no = %lu) newest_modification = %llu recovery_lsn = %llu",
         block->page.id.space_id(), block->page.id.page_no(), block->page.newest_modification, block->page.recovery_lsn);
 }

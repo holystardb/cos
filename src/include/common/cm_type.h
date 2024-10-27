@@ -252,6 +252,14 @@ typedef unsigned char*          PUCHAR;
 #define MAX_BIGINT_WIDTH        20    /**< Max width for a LONGLONG */
 #define MAX_CHAR_WIDTH          255   /**< Max length for a CHAR colum */
 
+//
+#define BITS_PER_BYTE           8
+#define BITS_PER_INT8           8
+#define BITS_PER_INT16          16
+#define BITS_PER_INT32          32
+#define BITS_PER_INT64          64
+
+
 
 // Definition of the null string (a null pointer of type char *), used in some of our string handling code.
 // New code should use nullptr instead.

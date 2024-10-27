@@ -19,7 +19,7 @@ status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
     checkpoint->group.buf_size = CHECKPOINT_GROUP_MAX_SIZE * UNIV_PAGE_SIZE;
     checkpoint->group.buf = (char *)ut_malloc(checkpoint->group.buf_size);
     if (checkpoint->group.buf == NULL) {
-        LOGGER_ERROR(LOGGER, "checkpoint_init: failed to malloc doublewrite memory");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint_init: failed to malloc doublewrite memory");
         return CM_ERROR;
     }
     checkpoint->flush_timeout_us = 1000000 * 300; // 300s
@@ -31,7 +31,7 @@ status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
     if (!os_open_file(dbwr_file_name, OS_FILE_OPEN, OS_FILE_AIO, &checkpoint->double_write.handle)) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_init: failed to open doublewrite file, name %s, error desc %s",
             dbwr_file_name, err_info);
 
@@ -46,7 +46,7 @@ status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
     if (checkpoint->double_write.aio_array == NULL) {
         ut_free(checkpoint->group.buf);
         os_close_file(checkpoint->double_write.handle);
-        LOGGER_ERROR(LOGGER, "checkpoint_init: failed to create aio array for doublewrite");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint_init: failed to create aio array for doublewrite");
         return CM_ERROR;
     }
 
@@ -151,7 +151,7 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
         // 5 unpin block
         buf_page_unfix(bpage);
 
-        LOGGER_DEBUG(LOGGER,
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_copy_item_and_neighbors: block (space id %lu, page no %lu)",
             page_id.space_id(), page_id.page_no());
     }
@@ -244,7 +244,7 @@ static status_t checkpoint_flush_callback(int32 code, os_aio_slot_t* slot)
     if (code != OS_FILE_IO_COMPLETION) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_error_desc_by_err(code, err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_FATAL(LOGGER,
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_flush: fatal error occurred, error = %d err desc = %s, service exited",
             slot->ret, err_info);
         ut_error;
@@ -273,7 +273,7 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
             checkpoint->group.buf + page_size.physical() * item->buf_id,
             checkpoint_flush_callback, item);
         if (err != CM_SUCCESS) {
-            LOGGER_FATAL(LOGGER,
+            LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT,
                 "checkpoint_flush: fatal error occurred for fil_write, service exited");
             ut_error;
         }
@@ -296,7 +296,7 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
     }
 
     if (count != end - begin) {
-        LOGGER_FATAL(LOGGER,
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_flush: fatal error occurred, timeout(%llu milliseconds) and service exited",
             checkpoint->flush_timeout_us / MICROSECS_PER_MILLISEC);
         ut_error;
@@ -347,7 +347,7 @@ static status_t checkpoint_sync_pages(checkpoint_t* checkpoint, uint32 begin, ui
 
     // 3. flush fil_node
     if (!fil_system_flush_filnodes()) {
-        LOGGER_FATAL(LOGGER, "checkpoint_sync_pages: fatal error occurred, service exited");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint_sync_pages: fatal error occurred, service exited");
         ut_error;
     }
 
@@ -382,7 +382,7 @@ static bool32 checkpoint_double_write(checkpoint_t* checkpoint)
     if (aio_slot == NULL) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_double_write: fail to write file, name %s error %s",
             checkpoint->double_write.name, err_info);
         goto err_exit;
@@ -394,18 +394,18 @@ static bool32 checkpoint_double_write(checkpoint_t* checkpoint)
     case OS_FILE_IO_COMPLETION:
         break;
     case OS_FILE_IO_TIMEOUT:
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_double_write: IO timeout for writing file, name %s timeout %u seconds",
             checkpoint->double_write.name, checkpoint->flush_timeout_us / MICROSECS_PER_SECOND);
         goto err_exit;
     case OS_FILE_DISK_FULL:
-        LOGGER_ERROR(LOGGER, "checkpoint_double_write: disk is full");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint_double_write: disk is full");
         ret = FALSE;
         break;
     default:
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_error_desc_by_err(err, err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_double_write: fail to write file, name = %s error = %s",
             checkpoint->double_write.name, err_info);
         goto err_exit;
@@ -414,7 +414,7 @@ static bool32 checkpoint_double_write(checkpoint_t* checkpoint)
     if (!os_fsync_file(checkpoint->double_write.handle)) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_double_write: fail to sync file, name = %s error = %s",
             checkpoint->double_write.name, err_info);
         goto err_exit;
@@ -428,7 +428,7 @@ static bool32 checkpoint_double_write(checkpoint_t* checkpoint)
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "checkpoint_double_write: fatal error occurred, service exited");
+    LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint_double_write: fatal error occurred, service exited");
     ut_error;
 
     return FALSE;
@@ -501,7 +501,7 @@ retry_more:
         if (checkpoint->least_recovery_point < flushed_to_disk_lsn + 1) {
             log_checkpoint(flushed_to_disk_lsn + 1);
             checkpoint->least_recovery_point = flushed_to_disk_lsn + 1;
-            LOGGER_INFO(LOGGER,
+            LOGGER_INFO(LOGGER, LOG_MODULE_CHECKPOINT,
                 "checkpoint: set checkpoint point, least_recovery_point=%llu",
                 checkpoint->least_recovery_point);
         }
@@ -509,7 +509,7 @@ retry_more:
     }
 
     if (least_recovery_point != 0) {
-        LOGGER_DEBUG(LOGGER,
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint: starting, recovery_lsn from %llu to %llu",
             checkpoint->least_recovery_point, least_recovery_point);
     }
@@ -568,11 +568,11 @@ void* checkpoint_proc_thread(void *arg)
     uint64 signal_count = 0;
     uint32 timeout_microseconds = 1000000;
 
-    LOGGER_INFO(LOGGER,"checkpoint thread starting ...");
+    LOGGER_INFO(LOGGER, LOG_MODULE_CHECKPOINT,"checkpoint thread starting ...");
 
     while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
         if (checkpoint_perform(checkpoint) != CM_SUCCESS) {
-            LOGGER_FATAL(LOGGER, "checkpoint: fatal error occurred, service exited");
+            LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint: fatal error occurred, service exited");
             ut_error;
         }
 

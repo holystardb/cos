@@ -22,15 +22,15 @@ typedef struct
     uint32            head;
     uint32            tail;
     uint32            free;
-    uint32           *addr;
-    spinlock_t        lock;
     uint32            count;
+    spinlock_t        lock;
+    uint32*           addr;
 } queue_t;
 
 queue_t* queue_init(uint32 count);
-uint32 queue_push(queue_t *queue);
-void queue_pop(queue_t *queue, uint32 index);
-void queue_free(queue_t *queue);
+uint32 queue_push(queue_t* queue);
+void queue_pop(queue_t* queue, uint32 index);
+void queue_free(queue_t* queue);
 
 
 
@@ -39,8 +39,8 @@ void queue_free(queue_t *queue);
  *                            dynamic queue                        *
  ******************************************************************/
 
-typedef void* (*dyn_queue_next_node_func) (void *current);
-typedef void** (*dyn_queue_next_node_address_func) (void *current);
+typedef void* (*dyn_queue_next_node_func) (void* current);
+typedef void** (*dyn_queue_next_node_address_func) (void* current);
 
 class dyn_queue 
 {
@@ -65,18 +65,18 @@ public:
     }
 
     /** Append a linked list of threads to the queue */
-    bool32 append(void *first);
+    void append(void* first);
 
     // Fetch the entire queue for a stage.
     // This will fetch the entire queue in one go.
-    void *fetch_and_empty();
+    void* fetch_and_empty();
 
     void* pop_front();
 
 private:
 
     //Pointer to the first thread in the queue, or NULL if the queue is empty.
-    void *m_first;
+    void* m_first;
 
     /**
        Pointer to the location holding the end of the queue.
@@ -84,7 +84,7 @@ private:
        This is either @c &first, or a pointer to the @c next_to_node of
        the last thread that is enqueued.
     */
-    void **m_last;
+    void** m_last;
 
     /** Lock for protecting the queue. */
     mutex_t m_lock;

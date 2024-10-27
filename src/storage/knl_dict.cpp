@@ -253,7 +253,7 @@ status_t dict_create()
     status_t err;
     mtr_t mtr;
 
-    LOGGER_INFO(LOGGER, "create dictionary");
+    LOGGER_INFO(LOGGER, LOG_MODULE_DICTIONARY, "create dictionary");
 
     mtr_start(&mtr);
     err = dict_hdr_create(&mtr);
@@ -478,6 +478,7 @@ status_t dict_mem_table_add_col(
     col->name = (char *)dict_cache_alloc_memory(table->id, table->mem_stack_ctx, strlen(name) + 1);
     if (col->name == NULL) {
         CM_SET_ERROR(ERR_ALLOC_MEMORY, sizeof(dict_table_t), "creating table");
+        return CM_ERROR;
     }
     memcpy(col->name, name, strlen(name) + 1);
     col->mtype = mtype;

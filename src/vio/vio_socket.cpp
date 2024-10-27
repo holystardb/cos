@@ -12,7 +12,7 @@ int vio_socket_init()
     struct WSAData wd;
     uint16 version = MAKEWORD(1, 1);
     if (WSAStartup(version, &wd) != 0) {
-        LOGGER_ERROR(LOGGER, "error for WSAStartup, errno=%d", socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "error for WSAStartup, errno=%d", socket_errno);
         return -1;
     }
 #endif
@@ -46,11 +46,11 @@ int vio_set_blocking(my_socket sock_fd, bool32 non_block, bool32 no_delay)
         int nodelay = 1;
         ulong arg = non_block ? 1 : 0;
         if (ioctlsocket(sock_fd, FIONBIO, &arg)) {
-            LOGGER_ERROR(LOGGER, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
             return -1;
         }
         if (setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay))) {
-            LOGGER_ERROR(LOGGER, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
             return -1;
         }
     }
@@ -60,7 +60,7 @@ int vio_set_blocking(my_socket sock_fd, bool32 non_block, bool32 no_delay)
         int nodelay = 1;
 
         if ((flags= fcntl(sock_fd, F_GETFL, NULL)) < 0) {
-            LOGGER_ERROR(LOGGER, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
             return -1;
         }
 
@@ -70,11 +70,11 @@ int vio_set_blocking(my_socket sock_fd, bool32 non_block, bool32 no_delay)
           flags &= ~O_NONBLOCK;
     
         if (fcntl(sock_fd, F_SETFL, flags) == -1) {
-            LOGGER_ERROR(LOGGER, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
             return -1;
         }
         if (setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, (void*)&nodelay, sizeof(nodelay)))  {
-            LOGGER_ERROR(LOGGER, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_set_blocking: sock fd %d, error %d", sock_fd, socket_errno);
             return -1;
         }
     }
@@ -181,7 +181,7 @@ int vio_ip4_to_sockaddr(const char* host, uint16 port, struct sockaddr_in* socka
         (inet_pton(AF_INET, host, &sockaddr->sin_addr.s_addr) != 1))
 #endif
     {
-        LOGGER_ERROR(LOGGER, "vio_ip4_to_sockaddr: error for convert %s to sockaddr, error=%d", host, socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_ip4_to_sockaddr: error for convert %s to sockaddr, error=%d", host, socket_errno);
         return VIO_ERROR;
     }
 
@@ -211,17 +211,17 @@ static int vio_connect_poll(Vio* vio, int timeout_ms)
     ret = vio_socket_poll(&fds, 1, timeout_ms);
     if (ret == 0) {
         vio->error_no = SOCKET_ETIMEDOUT;
-        LOGGER_ERROR(LOGGER, "vio_connect_by_addr: timeout for connect");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_by_addr: timeout for connect");
         goto err_exit;
     }
     if (ret <= 0) {
         vio->error_no = socket_errno;
-        LOGGER_ERROR(LOGGER, "vio_connect_by_addr: error for vio_socket_poll, error %d", socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_by_addr: error for vio_socket_poll, error %d", socket_errno);
         goto err_exit;
     }
     if (fds.revents & (POLLERR | POLLHUP)) {
         vio->error_no = socket_errno;
-        LOGGER_ERROR(LOGGER, "vio_connect_by_addr: can not connect to server, error %d", socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_by_addr: can not connect to server, error %d", socket_errno);
         goto err_exit;
     }
 
@@ -258,12 +258,12 @@ int vio_connect_async(Vio* vio, const char* host, uint16 port, const char* bind_
         
         vio->sock_fd = vio_create_socket(domain, SOCK_STREAM, 0);
         if (INVALID_SOCKET == vio->sock_fd) {
-            LOGGER_ERROR(LOGGER, "vio_connect_async: can not create socket");
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_async: can not create socket");
             return VIO_ERROR;
         }
         if (bind(vio->sock_fd, (struct sockaddr *)&vio->local, vio->local_len) != 0) {
             vio_close_socket(vio);
-            LOGGER_ERROR(LOGGER, "vio_connect_async: can not bind ipaddress(%s)", bind_host);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_async: can not bind ipaddress(%s)", bind_host);
             return VIO_ERROR;
         }
     }
@@ -276,7 +276,7 @@ int vio_connect_async(Vio* vio, const char* host, uint16 port, const char* bind_
     if (INVALID_SOCKET == vio->sock_fd) {
         vio->sock_fd = vio_create_socket(domain, SOCK_STREAM, 0);
         if (INVALID_SOCKET == vio->sock_fd) {
-            LOGGER_ERROR(LOGGER, "vio_connect_async: can not create socket");
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_async: can not create socket");
             return VIO_ERROR;
         }
     }
@@ -291,7 +291,7 @@ int vio_connect_async(Vio* vio, const char* host, uint16 port, const char* bind_
             vio->error_no = 0;
         } else {
             vio_close_socket(vio);
-            LOGGER_ERROR(LOGGER, "vio_connect_async: can not connect to server(%s:%d), error %d",
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_async: can not connect to server(%s:%d), error %d",
                 host, port, vio->error_no);
             return VIO_ERROR;
         }
@@ -317,7 +317,7 @@ int vio_connect_by_addr_async(Vio* vio, struct sockaddr_in *addr, socklen_t len)
     
     vio->sock_fd = vio_create_socket(AF_INET, SOCK_STREAM, 0);
     if (INVALID_SOCKET == vio->sock_fd) {
-        LOGGER_ERROR(LOGGER, "vio_connect_by_addr_async: can not create socket");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_by_addr_async: can not create socket");
         return VIO_ERROR;
     }
     vio_set_blocking(vio->sock_fd, TRUE, TRUE);
@@ -329,7 +329,7 @@ int vio_connect_by_addr_async(Vio* vio, struct sockaddr_in *addr, socklen_t len)
             vio->error_no == SOCKET_EWOULDBLOCK) {
             vio->error_no = 0;
         } else {
-            LOGGER_ERROR(LOGGER, "vio_connect_by_addr_async: can not connect to server, error %d", vio->error_no);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_connect_by_addr_async: can not connect to server, error %d", vio->error_no);
             vio_close_socket(vio);
             return VIO_ERROR;
         }
@@ -345,12 +345,12 @@ int vio_check_connection_status(Vio* vio)
     err_len = sizeof(err);
     if (getsockopt(vio->sock_fd, SOL_SOCKET, SO_ERROR, (char *)&err, (socklen_t*)&err_len) == -1) {
         vio->error_no = socket_errno;
-        LOGGER_ERROR(LOGGER, "vio_check_connection_status: error for getsockopt, error %d", socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_check_connection_status: error for getsockopt, error %d", socket_errno);
         goto err_exit;
     }
     if (err != 0) {//check the SO_ERROR state
         vio->error_no = err;
-        LOGGER_ERROR(LOGGER, "vio_check_connection_status: SO_ERROR, error %d", err);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_check_connection_status: SO_ERROR, error %d", err);
         goto err_exit;
     }
 
@@ -394,7 +394,7 @@ my_socket vio_socket_listen(  const char* host, uint16 port)
     
     sock_fd = vio_create_socket(domain, SOCK_STREAM, 0);
     if (INVALID_SOCKET == sock_fd) {
-        LOGGER_ERROR(LOGGER, "vio_socket_listen: can not create socket, errno %d", socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_listen: can not create socket, errno %d", socket_errno);
         return INVALID_SOCKET;
     }
     
@@ -405,7 +405,7 @@ my_socket vio_socket_listen(  const char* host, uint16 port)
 
     backlog = 5;
     if (listen(sock_fd, backlog) < 0) {
-        LOGGER_ERROR(LOGGER, "vio_socket_listen: can not listen on host(%s:%d), errno %d", host, port, socket_errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_listen: can not listen on host(%s:%d), errno %d", host, port, socket_errno);
         close_socket(sock_fd);
         return INVALID_SOCKET;
     }
@@ -550,7 +550,7 @@ int vio_socket_write(Vio* vio, const char* buf, uint32 size)
     {
         vio->error_no = socket_errno;
         if (vio->error_no != SOCKET_EWOULDBLOCK && vio->error_no != SOCKET_EAGAIN && vio->error_no != SOCKET_EINTR) {
-            LOGGER_ERROR(LOGGER, "vio_socket_write: fd %d errno %d", vio->sock_fd, vio->error_no);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_write: fd %d errno %d", vio->sock_fd, vio->error_no);
             break;
         }
         if (vio->write_timeout == 0) {
@@ -561,7 +561,7 @@ int vio_socket_write(Vio* vio, const char* buf, uint32 size)
             continue;
         }
         /* Wait for the output buffer to become writable.*/
-        LOGGER_DEBUG(LOGGER, "vio_socket_read: wait for write, vio fd %d", vio->sock_fd);
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_read: wait for write, vio fd %d", vio->sock_fd);
         if (VIO_ERROR == vio_io_wait(vio, VIO_IO_EVENT_WRITE, vio->write_timeout)) {
             break;
         }
@@ -637,7 +637,7 @@ int vio_socket_read(Vio* vio, const char* buf, uint32 size)
     {
         vio->error_no = socket_errno;
         if (vio->error_no != SOCKET_EWOULDBLOCK && vio->error_no != SOCKET_EAGAIN && vio->error_no != SOCKET_EINTR) {
-            LOGGER_ERROR(LOGGER, "vio_socket_read: fd %d errno %d", vio->sock_fd, vio->error_no);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_read: fd %d errno %d", vio->sock_fd, vio->error_no);
             break;
         }
         if (vio->read_timeout == 0) {
@@ -648,7 +648,7 @@ int vio_socket_read(Vio* vio, const char* buf, uint32 size)
             continue;
         }
         /* Wait for the output buffer to become readable.*/
-        LOGGER_DEBUG(LOGGER, "vio_socket_read: wait for read, vio fd %d", vio->sock_fd);
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_read: wait for read, vio fd %d", vio->sock_fd);
         if (VIO_ERROR == vio_io_wait(vio, VIO_IO_EVENT_READ, vio->read_timeout)) {
             break;
         }
@@ -666,7 +666,7 @@ int vio_read(Vio* vio, const char* buf, uint32 buf_size)
         if (recvcnt == VIO_ERROR) {
             if (retry_count < vio->retry_count && vio_should_retry(vio)) {
                 retry_count++;
-                LOGGER_ERROR(LOGGER, "vio_socket_read: retry read, fd %d retry %d", vio->sock_fd, retry_count);
+                LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_read: retry read, fd %d retry %d", vio->sock_fd, retry_count);
                 continue;
             }
             return (VIO_CLOSE == SOCKET_ECONNRESET) ? VIO_CLOSE : VIO_ERROR;;
@@ -693,7 +693,7 @@ retry_read:
         }
         if (retry_count < vio->retry_count && vio_should_retry(vio)) {
             retry_count++;
-            LOGGER_ERROR(LOGGER, "vio_socket_read: retry read, fd %d retry %d", vio->sock_fd, retry_count);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_SOCKET, "vio_socket_read: retry read, fd %d retry %d", vio->sock_fd, retry_count);
             goto retry_read;
         }
         return VIO_ERROR;

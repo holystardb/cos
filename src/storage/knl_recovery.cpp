@@ -85,7 +85,7 @@ static status_t recv_find_max_checkpoint(uint32* max_field) // out: LOG_CHECKPOI
         // Check the consistency of the checkpoint info
         fold = ut_fold_binary(buf, LOG_CHECKPOINT_CHECKSUM_1);
         if ((fold & 0xFFFFFFFF) != mach_read_from_4(buf + LOG_CHECKPOINT_CHECKSUM_1)) {
-            LOGGER_ERROR(LOGGER, 
+            LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
                 "Checkpoint is invalid at %lu, calc checksum %lu, checksum1 = %lu\n",
                 field, fold & 0xFFFFFFFF, mach_read_from_4(buf + LOG_CHECKPOINT_CHECKSUM_1));
             goto not_consistent;
@@ -93,7 +93,7 @@ static status_t recv_find_max_checkpoint(uint32* max_field) // out: LOG_CHECKPOI
 
         fold = ut_fold_binary(buf + LOG_CHECKPOINT_LSN, LOG_CHECKPOINT_CHECKSUM_2 - LOG_CHECKPOINT_LSN);
         if ((fold & 0xFFFFFFFF) != mach_read_from_4(buf + LOG_CHECKPOINT_CHECKSUM_2)) {
-            LOGGER_ERROR(LOGGER, 
+            LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
                 "Checkpoint is invalid at %lu, calc checksum %lu, checksum2 %lu\n",
                 field, fold & 0xFFFFFFFF, mach_read_from_4(buf + LOG_CHECKPOINT_CHECKSUM_2));
             goto not_consistent;
@@ -104,7 +104,7 @@ static status_t recv_find_max_checkpoint(uint32* max_field) // out: LOG_CHECKPOI
         group_write_offset = mach_read_from_4(buf + LOG_CHECKPOINT_OFFSET_HIGH32);
         checkpoint_no = mach_read_from_8(buf + LOG_CHECKPOINT_NO);
 
-        LOGGER_INFO(LOGGER,
+        LOGGER_INFO(LOGGER, LOG_MODULE_RECOVERY,
             "Checkpoint point (lsn %llu, checkpoint no %llu) found in group (id %lu, offset %lu)",
             lsn, checkpoint_no, group_id, group_write_offset);
 
@@ -178,7 +178,7 @@ static status_t recovery_read_log_blocks(recovery_sys_t* recv_sys)
             recv_sys->recovered_buf_data_len = i + log_block_get_data_len(recv_sys->last_log_block);
             recv_sys->limit_lsn = recv_sys->recovered_buf_lsn + recv_sys->recovered_buf_data_len;
             recv_sys->is_read_log_done = TRUE;
-            break;
+            return CM_SUCCESS;
         }
 
         recv_sys->last_hdr_no = hdr_no;
@@ -199,7 +199,7 @@ static inline uint32 recovery_parse_next_log_rec_size(recovery_sys_t* recv_sys)
     ut_ad(recv_sys->log_block);
 
     remain_len = LOG_BLOCK_REMAIN_DATA_LEN(recv_sys);
-    if (remain_len < 4) {
+    if (remain_len < MTR_LOG_LEN_SIZE) {
         //
         ut_ad(recv_sys->recovered_buf_data_len >=
             recv_sys->log_block - recv_sys->recovered_buf + OS_FILE_LOG_BLOCK_SIZE + OS_FILE_LOG_BLOCK_SIZE);
@@ -208,13 +208,13 @@ static inline uint32 recovery_parse_next_log_rec_size(recovery_sys_t* recv_sys)
         memcpy(buf, LOG_BLOCK_GET_DATA(recv_sys), remain_len);
         memcpy(buf + remain_len,
             recv_sys->log_block + OS_FILE_LOG_BLOCK_SIZE + LOG_BLOCK_HDR_SIZE,
-            4 - remain_len);
+            MTR_LOG_LEN_SIZE - remain_len);
         log_rec = buf;
     } else {
         log_rec = LOG_BLOCK_GET_DATA(recv_sys);
     }
 
-    return mach_read_from_4(log_rec);
+    return mach_read_from_2(log_rec);
 }
 
 
@@ -265,7 +265,7 @@ retry_copy_remain:
         recv_sys->recovered_buf_offset += OS_FILE_LOG_BLOCK_SIZE;
 
         recv_sys->log_block_first_rec_offset = log_block_get_first_rec_group(recv_sys->log_block);
-        recv_sys->log_block_read_offset = recv_sys->cur_group_offset % OS_FILE_LOG_BLOCK_SIZE;
+        recv_sys->log_block_read_offset = recv_sys->log_block_first_rec_offset;
         recv_sys->log_block_lsn =
             recv_sys->checkpoint_lsn -
             (recv_sys->checkpoint_group_offset - recv_sys->cur_group_offset);
@@ -286,7 +286,7 @@ retry_copy_remain:
 
     // a new log_rec
     if (recv_sys->log_rec_len == 0) {
-        recv_sys->log_rec_len = recovery_parse_next_log_rec_size(recv_sys);
+        recv_sys->log_rec_len = recovery_parse_next_log_rec_size(recv_sys) + MTR_LOG_LEN_SIZE;
         ut_ad(recv_sys->log_rec_len > 0);
         recv_sys->log_rec_offset = 0;
         recv_sys->log_rec_lsn = recv_sys->log_block_lsn + recv_sys->log_block_read_offset;
@@ -320,7 +320,6 @@ retry_copy_remain:
 
     //
     recv_sys->log_rec = recv_sys->log_rec_buf;
-    recv_sys->log_rec_lsn = 0;
 
     return CM_SUCCESS;
 }

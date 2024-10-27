@@ -14,7 +14,8 @@ static void reactor_set_timer(reactor_t *reactor, reactor_data_t *timer, uint32 
 {
     uint32 ticks, rotation, ts;
 
-    LOGGER_DEBUG(LOGGER, "reactor_set_timer: epoll_fd %d fd=%d", reactor->epoll_fd_with_timeout, timer->fd);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR,
+        "reactor_set_timer: epoll_fd %d fd=%d", reactor->epoll_fd_with_timeout, timer->fd);
     
     if (timer->timeout_100ms > 0) {
         OS_ASSERT(timer->timeout_100ms == 0);
@@ -27,8 +28,10 @@ static void reactor_set_timer(reactor_t *reactor, reactor_data_t *timer, uint32 
         ticks = count100ms / REACTOR_TIME_WHEEL_SI;
     }
     /*计算待插入的定时器z在时间轮转动多少圈后被触发*/
+    // Calculate how many times the timer to be inserted is triggered after the time wheel rotates
     rotation = ticks / REACTOR_TIME_WHEEL_N;
     /*计算待插入的定时器应该被插入哪个槽中*/
+    // Calculate which slot the timer to be inserted into
     ts = (reactor->cur_slot + (ticks % REACTOR_TIME_WHEEL_N)) % REACTOR_TIME_WHEEL_N;
     /* 创建新的定时器, 他在时间轮转动rotation圈滞后被触发，且位于第ts个槽上 */
     timer->rotation = rotation;
@@ -49,7 +52,7 @@ static void reactor_del_timer(reactor_t *reactor, reactor_data_t *timer)
 {
     uint32 ts;
 
-    LOGGER_DEBUG(LOGGER, "reactor_del_timer: epoll_fd %d fd=%d", reactor->epoll_fd_with_timeout, timer->fd);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_del_timer: epoll_fd %d fd=%d", reactor->epoll_fd_with_timeout, timer->fd);
     
     if (timer->timeout_100ms == 0) {
         OS_ASSERT(timer->timeout_100ms > 0);
@@ -163,7 +166,7 @@ static int reactor_add(reactor_t *reactor, my_socket fd, epoll_data_t *data, uin
     struct epoll_event  ev;
     reactor_data_t     *r_data;
 
-    LOGGER_DEBUG(LOGGER, "reactor_add: epoll_fd %d fd %d", reactor->epoll_fd_with_timeout, fd);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_add: epoll_fd %d fd %d", reactor->epoll_fd_with_timeout, fd);
 
     spin_lock(&reactor->lock, NULL);
     r_data = alloc_reactor_data(reactor, fd);
@@ -212,7 +215,7 @@ int reactor_del(reactor_t *reactor, my_socket fd)
 {
     reactor_data_t     *r_data;
     
-    LOGGER_DEBUG(LOGGER, "reactor_del: epoll_fd %d fd %d", reactor->epoll_fd_with_timeout, fd);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_del: epoll_fd %d fd %d", reactor->epoll_fd_with_timeout, fd);
 
     if (epoll_ctl(reactor->epoll_fd_with_timeout, EPOLL_CTL_DEL, fd, NULL) != 0) {
         return -1;
@@ -228,7 +231,7 @@ int reactor_del(reactor_t *reactor, my_socket fd)
         spin_unlock(&reactor->lock);
     } else {
         spin_unlock(&reactor->lock);
-        LOGGER_ERROR(LOGGER, "reactor_del: epoll_fd %d can not found fd %d", reactor->epoll_fd_with_timeout, fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_del: epoll_fd %d can not found fd %d", reactor->epoll_fd_with_timeout, fd);
     }
     
     return 0;
@@ -239,13 +242,13 @@ static int reactor_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *d
     struct epoll_event  ev;
     reactor_data_t     *r_data;
 
-    LOGGER_DEBUG(LOGGER, "reactor_mod: epoll_fd %d fd %d", reactor->epoll_fd_with_timeout, fd);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_mod: epoll_fd %d fd %d", reactor->epoll_fd_with_timeout, fd);
 
     spin_lock(&reactor->lock, NULL);
     r_data = get_reactor_data(reactor, fd);
     spin_unlock(&reactor->lock);
     if (r_data == NULL) {
-        LOGGER_ERROR(LOGGER, "reactor_mod: epoll_fd %d can not found fd %d", reactor->epoll_fd_with_timeout, fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_mod: epoll_fd %d can not found fd %d", reactor->epoll_fd_with_timeout, fd);
         return -1;
     }
     r_data->data = *data;
@@ -426,19 +429,19 @@ static void reactor_handle_accept(reactor_pool_t* pool, my_socket listen_fd)
         if (INVALID_SOCKET == accept_fd) {
             int error_no = socket_errno;
             if (error_no != SOCKET_EINTR && error_no != SOCKET_EAGAIN && error_no != SOCKET_EWOULDBLOCK) {
-                LOGGER_ERROR(LOGGER, "reactor_handle_accept: error for accept, error %d", error_no);
+                LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_accept: error for accept, error %d", error_no);
             }
             return;
         }
 
         if (vio_getnameinfo(&in_addr, ip_addr, sizeof(ip_addr), NULL, 0, NI_NUMERICHOST)) {
-            LOGGER_ERROR(LOGGER, "reactor_handle_accept: fails to print out IP-address, fd %d", accept_fd);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_accept: fails to print out IP-address, fd %d", accept_fd);
             close_socket(accept_fd);
             continue;
         }
     
         if (-1 == vio_set_blocking(accept_fd, TRUE, TRUE)) {
-            LOGGER_ERROR(LOGGER, "reactor_handle_accept: error for vio_set_blocking, fd %d", accept_fd);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_accept: error for vio_set_blocking, fd %d", accept_fd);
             close_socket(accept_fd);
             continue;
         }
@@ -449,7 +452,7 @@ static void reactor_handle_accept(reactor_pool_t* pool, my_socket listen_fd)
         //
         reactor = get_roubin_reactor(pool);
         if (FALSE == pool->acpt_func(reactor, listen_fd, accept_fd)) {
-            LOGGER_ERROR(LOGGER, "reactor_handle_accept: socket(fd %d) is closed", accept_fd);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_accept: socket(fd %d) is closed", accept_fd);
             close_socket(accept_fd);
         }
     }
@@ -542,7 +545,7 @@ static void reactor_handle_events_with_timeout(reactor_t *reactor)
     while (r_data != NULL) {
         events[0].events = EPOLLTIMEOUT;
         events[0].data = r_data->data;
-        LOGGER_DEBUG(LOGGER, "reactor_handle_events: timeout, reactor epoll_fd %d fd %d",
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_events: timeout, reactor epoll_fd %d fd %d",
             reactor->epoll_fd_with_timeout, r_data->fd);
         reactor->func(r_data->fd, &events[0]);
         r_data = r_data->next;
@@ -551,7 +554,7 @@ static void reactor_handle_events_with_timeout(reactor_t *reactor)
     //
     nfds = epoll_wait(reactor->epoll_fd_with_timeout, events, EPOLL_MAX_EVENTS, EPOLL_WAIT_TIMEOUT);
     if (nfds == -1) {
-        LOGGER_ERROR(LOGGER, "reactor_handle_events: error for epoll_wait, reactor epoll_fd = %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_events: error for epoll_wait, reactor epoll_fd = %d",
             reactor->epoll_fd_with_timeout);
         return;
     }
@@ -564,7 +567,7 @@ static void reactor_handle_events_with_timeout(reactor_t *reactor)
     for (loop = 0; loop < nfds; ++loop) {
         r_data = (reactor_data_t *)events[loop].data.ptr;
         if (r_data->timeout_100ms > 0) {
-            LOGGER_DEBUG(LOGGER, "reactor_handle_events: delete timer, reactor epoll_fd %d fd %d",
+            LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_events: delete timer, reactor epoll_fd %d fd %d",
                 reactor->epoll_fd_with_timeout, r_data->fd);
             reactor_del_timer(reactor, r_data);
         }
@@ -585,7 +588,7 @@ static void reactor_handle_events(reactor_t *reactor)
     
     nfds = epoll_wait(reactor->epoll_fd_without_timeout, events, EPOLL_MAX_EVENTS, EPOLL_WAIT_TIMEOUT);
     if (nfds == -1) {
-        LOGGER_ERROR(LOGGER, "reactor_handle_events: error for epoll_wait, reactor epoll_fd = %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_REACTOR, "reactor_handle_events: error for epoll_wait, reactor epoll_fd = %d",
             reactor->epoll_fd_without_timeout);
         return;
     }

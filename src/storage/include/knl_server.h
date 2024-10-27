@@ -213,10 +213,9 @@ typedef struct st_srv_stats {
     typedef counter_t<uint64, 1> lsn_ctr_1_t;
 
 
-    /** Count the amount of data written in total (in bytes) */
-    uint64_ctr_1_t      data_written;
+
     /** Number of the log write requests done */
-    uint64_ctr_1_t      log_write_requests;
+    uint64_ctr_64_t     log_write_requests;
     /** Number of physical writes to the log performed */
     uint64_ctr_1_t      log_writes;
     /** Amount of data padded for log write ahead */
@@ -254,7 +253,10 @@ typedef struct st_srv_stats {
     /** Number of buffer pool reads that led to the reading of a disk page */
     uint64_ctr_1_t      buf_pool_reads;
     /** Number of data read in total (in bytes) */
-    uint64_ctr_1_t      data_read;
+    uint64_ctr_64_t     data_read;
+    /** Count the amount of data written in total (in bytes) */
+    uint64_ctr_64_t     data_written;
+
     /** Wait time of database locks */
     uint64_ctr_1_t      n_lock_wait_time;
     /** Number of database lock waits */

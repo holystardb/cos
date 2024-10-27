@@ -49,7 +49,7 @@ bool32 buf_flush_ready_for_replace(buf_page_t *bpage)
                 buf_page_get_io_fix(bpage) == BUF_IO_NONE);
     }
 
-    LOGGER_ERROR(LOGGER,
+    LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
         "Buffer block %lu state %lu in the LRU list!",
         bpage, bpage->state);
 
@@ -107,12 +107,12 @@ static bool32 buf_LRU_block_remove_hashed(buf_page_t *bpage, bool zip, bool igno
 
     hashed_bpage = buf_page_hash_get_low(buf_pool, bpage->id);
     if (bpage != hashed_bpage) {
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
             "Page(space %lu page %lu) not found in the hash table",
             bpage->id.space_id(), bpage->id.page_no());
 
         if (hashed_bpage) {
-            LOGGER_ERROR(LOGGER,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
                 "In hash table we find block %p of space %lu page %lu which is not %p",
                 hashed_bpage, bpage->id.space_id(), bpage->id.page_no(), bpage);
         }
@@ -548,7 +548,7 @@ loop:
     }
 
     if (n_iterations > 20) {
-        LOGGER_WARN(LOGGER,
+        LOGGER_WARN(LOGGER, LOG_MODULE_BUFFERPOOL,
             "Difficult to find free blocks in the buffer pool(%lu search iterations), "
             "%lu failed attempts to flush a page! "
             "It is also possible that in your fsync is very slow.",

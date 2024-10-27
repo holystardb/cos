@@ -47,7 +47,7 @@ bool32 fil_system_init(memory_pool_t *mem_pool, uint32 max_n_open)
     fil_system->mem_pool = mem_pool;
     fil_system->mem_context = mcontext_create(mem_pool);
     if (fil_system->mem_context == NULL) {
-        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create memory context");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_system_init: failed to create memory context");
         goto err_exit;
     }
 
@@ -57,12 +57,12 @@ bool32 fil_system_init(memory_pool_t *mem_pool, uint32 max_n_open)
 
     fil_system->space_id_hash =  HASH_TABLE_CREATE(USER_SPACE_MAX_COUNT, HASH_TABLE_SYNC_RW_LOCK, 4096);
     if (fil_system->space_id_hash == NULL) {
-        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create spaces hashtable");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_system_init: failed to create spaces hashtable");
         goto err_exit;
     }
     fil_system->name_hash = HASH_TABLE_CREATE(USER_SPACE_MAX_COUNT, HASH_TABLE_SYNC_RW_LOCK, 4096);
     if (fil_system->name_hash == NULL) {
-        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create name hashtable");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_system_init: failed to create name hashtable");
         goto err_exit;
     }
 
@@ -71,7 +71,7 @@ bool32 fil_system_init(memory_pool_t *mem_pool, uint32 max_n_open)
     fil_system->aio_array = os_aio_array_create(fil_system->aio_pending_count_per_context,
                                                 fil_system->aio_context_count);
     if (fil_system->aio_array == NULL) {
-        LOGGER_ERROR(LOGGER, "fil_system_init: failed to create aio array");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_system_init: failed to create aio array");
         goto err_exit;
     }
 
@@ -167,7 +167,7 @@ bool32 fil_system_flush_filnodes()
         if (!os_fsync_file(node->handle)) {
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-            LOGGER_ERROR(LOGGER,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_flush_space_filnodes: fail to flush file, name %s error %s",
                 node->name, err_info);
 
@@ -384,11 +384,11 @@ bool32 fil_node_open(fil_space_t *space, fil_node_t *node)
     while (fil_system->open_pending_num + UT_LIST_GET_LEN(fil_system->fil_node_lru) + 1 >= fil_system->max_n_open) {
         last_node = UT_LIST_GET_LAST(fil_system->fil_node_lru);
         if (last_node == NULL) {
-            fprintf(stderr,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                     "Error: cannot close any file to open another for i/o\n"
                     "Pending i/o's on %lu files exist\n",
                     fil_system->open_pending_num);
-            ut_a(0);
+            ut_error;
         }
         handle = last_node->handle;
         last_node->handle = OS_FILE_INVALID_HANDLE;
@@ -397,11 +397,11 @@ bool32 fil_node_open(fil_space_t *space, fil_node_t *node)
         spin_unlock(&fil_system->mutex);
 
         if (!os_close_file(handle)) {
-            fprintf(stderr,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                     "Error: cannot close any file to open another for i/o\n"
                     "Pending i/o's on %lu files exist\n",
                     fil_system->open_pending_num);
-            ut_a(0);
+            ut_error;
         }
 
         spin_lock(&fil_system->mutex, NULL);
@@ -502,7 +502,7 @@ static status_t fil_space_extend_node_callback(int32 code, os_aio_slot_t* slot)
     default:
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_error_desc_by_err(code, err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_FATAL(LOGGER,
+        LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_space_extend_node: fatal error occurred, node %s error = %d err desc = %s, service exited",
             node_extend->node->name, slot->ret, err_info);
         ut_error;
@@ -550,7 +550,7 @@ static bool32 fil_space_extend_node(fil_node_t* node,
         status_t err = fil_write(FALSE, page_id, page_size, page_size.physical(),
             (void *)buf, fil_space_extend_node_callback, &node_extend);
         if (err != CM_SUCCESS) {
-            LOGGER_FATAL(LOGGER, "fil_space_extend: fail to write file, name %s", node->name);
+            LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: fail to write file, name %s", node->name);
             goto err_exit;
         }
     }
@@ -562,7 +562,7 @@ static bool32 fil_space_extend_node(fil_node_t* node,
         wait_loop++;
     }
     if (wait_loop == wait_count) {
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_space_extend: IO timeout for writing file, name %s timeout %u seconds",
             node->name, timeout_seconds);
         goto err_exit;
@@ -573,11 +573,11 @@ static bool32 fil_space_extend_node(fil_node_t* node,
         int32 err = os_file_get_last_error();
         if (err == OS_FILE_DISK_FULL) {
             node_extend.is_disk_full = TRUE;
-            LOGGER_ERROR(LOGGER, "fil_space_extend: disk is full, name %s", node->name);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: disk is full, name %s", node->name);
         } else {
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-            LOGGER_FATAL(LOGGER,
+            LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_space_extend: fail to sync file, name = %s error = %s",
                 node->name, err_info);
             goto err_exit;
@@ -592,7 +592,7 @@ static bool32 fil_space_extend_node(fil_node_t* node,
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "fil_space_extend: A fatal error occurred, service exited.");
+    LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: A fatal error occurred, service exited.");
     ut_error;
 
     return FALSE;
@@ -644,7 +644,7 @@ static bool32 fil_space_extend_node1(fil_space_t *space,
                                    (void *)buf, UNIV_PAGE_SIZE, offset) == NULL) {
                 char err_info[CM_ERR_MSG_MAX_LEN];
                 os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-                LOGGER_FATAL(LOGGER,
+                LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
                     "fil_space_extend: fail to write file, name %s error %s",
                     node->name, err_info);
                 goto err_exit;
@@ -661,18 +661,18 @@ static bool32 fil_space_extend_node1(fil_space_t *space,
             case OS_FILE_IO_COMPLETION:
                 break;
             case OS_FILE_DISK_FULL:
-                LOGGER_DEBUG(LOGGER, "fil_space_extend: disk is full, name %s", node->name);
+                LOGGER_DEBUG(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: disk is full, name %s", node->name);
                 is_disk_full = TRUE;
                 break;
             case OS_FILE_IO_TIMEOUT:
-                LOGGER_ERROR(LOGGER,
+                LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                     "fil_space_extend: IO timeout for writing file, name %s timeout %u seconds",
                     node->name, timeout_seconds);
                 goto err_exit;
             default:
                 char err_info[CM_ERR_MSG_MAX_LEN];
                 os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-                LOGGER_ERROR(LOGGER,
+                LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                     "fil_space_extend: failed to write file, name %s error %s",
                     node->name, err_info);
                 goto err_exit;
@@ -691,11 +691,11 @@ static bool32 fil_space_extend_node1(fil_space_t *space,
         int32 err = os_file_get_last_error();
         if (err == OS_FILE_DISK_FULL) {
             is_disk_full = TRUE;
-            LOGGER_ERROR(LOGGER, "fil_space_extend: disk is full, name %s", node->name);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: disk is full, name %s", node->name);
         } else {
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-            LOGGER_FATAL(LOGGER,
+            LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_space_extend: fail to sync file, name = %s error = %s",
                 node->name, err_info);
             goto err_exit;
@@ -715,7 +715,7 @@ static bool32 fil_space_extend_node1(fil_space_t *space,
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "fil_space_extend: A fatal error occurred, service exited.");
+    LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: A fatal error occurred, service exited.");
     ut_error;
 
     return FALSE;
@@ -883,7 +883,7 @@ static bool32 fil_node_close_file(fil_node_t *node)
     if (!os_fsync_file(node->handle)) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_node_close_file: failed to sync filnode, err desc = %s",
             err_info);
         return FALSE;
@@ -891,7 +891,7 @@ static bool32 fil_node_close_file(fil_node_t *node)
     if (!os_close_file(node->handle)) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_node_close_file: failed to close filnode, err desc = %s",
             err_info);
         return FALSE;
@@ -914,7 +914,7 @@ static inline bool32 fil_node_open_file(fil_node_t *node)
     if (UNLIKELY(!ret)) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_node_open_file: failed to open file, name = %s err desc = %s",
             node->name, err_info);
     }
@@ -948,7 +948,7 @@ static inline bool32 fil_try_to_close_file_in_LRU()
     mutex_exit(&(fil_system->lru_mutex));
 
     if (node == NULL) {
-        LOGGER_DEBUG(LOGGER,
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_try_to_close_file_in_LRU: cannot close any file to open another for i/o, "
                 "pending i/o's on %lu files exist\n",
                 fil_system->open_pending_num);
@@ -956,9 +956,9 @@ static inline bool32 fil_try_to_close_file_in_LRU()
     }
 
     if (LIKELY(fil_node_close_file(node))) {
-        LOGGER_DEBUG(LOGGER, "fil_try_to_close_file_in_LRU: close file %s", node->name);
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_TABLESPACE, "fil_try_to_close_file_in_LRU: close file %s", node->name);
     } else {
-        LOGGER_FATAL(LOGGER, "fil_try_to_close_file_in_LRU: fatal error occurred, service exited");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_try_to_close_file_in_LRU: fatal error occurred, service exited");
         ut_error;
     }
 
@@ -1012,7 +1012,7 @@ open_retry:
     // check number of open files
     atomic32_t open_pending_num = atomic32_inc(&fil_system->open_pending_num);
     if (open_pending_num > fil_system->max_n_open) {
-        LOGGER_INFO(LOGGER,
+        LOGGER_INFO(LOGGER, LOG_MODULE_TABLESPACE,
             "Warning: open files %u exceeds the limit %u",
             open_pending_num, fil_system->max_n_open);
 
@@ -1088,7 +1088,7 @@ inline fil_node_t* fil_node_get_by_page_id(fil_space_t* space, const page_id_t &
     node = UT_LIST_GET_FIRST(space->fil_nodes);
     for (;;) {
         if (node == NULL) {
-            LOGGER_DEBUG(LOGGER,
+            LOGGER_DEBUG(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_node_get_by_page_id: failed to find fil_node (space id = %lu page no = %lu)",
                 page_id.space_id(), page_id.page_no());
             return NULL;
@@ -1145,7 +1145,7 @@ inline status_t fil_io(
     for (;;) {
         if (node == NULL) {
             rw_lock_s_unlock(&space->rw_lock);
-            LOGGER_ERROR(LOGGER,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_io: failed to find fil_node (io type = %s space id = %lu page no = %lu)",
                 type == OS_FILE_READ ? "read" : "write", page_id.space_id(), page_id.page_no());
             goto err_exit;
@@ -1161,7 +1161,7 @@ inline status_t fil_io(
     // Open file if closed
     if (!fil_node_prepare_for_io(node)) {
         rw_lock_s_unlock(&space->rw_lock);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_io: failed to %s i/o to tablespace space_id %lu, page_no %lu",
             type == OS_FILE_READ ? "read" : "write",
             node->name, page_id.space_id(), page_id.page_no());
@@ -1196,7 +1196,7 @@ inline status_t fil_io(
     if (tmp_slot == NULL) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_io: failed to do %s i/o from %s data file, space id %lu, page no %lu, error %s",
             type == OS_FILE_READ ? "read" : "write",
             node->name, page_id.space_id(), page_id.page_no(), err_info);
@@ -1210,7 +1210,7 @@ inline status_t fil_io(
         case OS_FILE_IO_COMPLETION:
             break;
         case OS_FILE_IO_TIMEOUT:
-            LOGGER_ERROR(LOGGER,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_io: timeout(%lu seconds) for do %s i/o from %s data file, space id %lu, page no %lu",
                 type == OS_FILE_READ ? "read" : "write",
                 io_timeout, node->name, page_id.space_id(), page_id.page_no());
@@ -1218,7 +1218,7 @@ inline status_t fil_io(
         default:
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_error_desc_by_err(ret, err_info, CM_ERR_MSG_MAX_LEN);
-            LOGGER_ERROR(LOGGER,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_io: failed to do %s i/o from %s data file, space id %lu, page no %lu, error %s",
                 type == OS_FILE_READ ? "read" : "write",
                 node->name, page_id.space_id(), page_id.page_no(), err_info);
@@ -1233,7 +1233,7 @@ inline status_t fil_io(
 
 err_exit:
 
-    LOGGER_FATAL(LOGGER, "fil_io: fatal error occurred, service exited");
+    LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_io: fatal error occurred, service exited");
     ut_error;
 
     return CM_ERROR;

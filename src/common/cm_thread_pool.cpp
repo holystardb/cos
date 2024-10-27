@@ -13,7 +13,7 @@ thread_pool_t* thread_pool_create(memory_pool_t *mem_pool, uint16 thread_count)
     thread_pool_t   *thread_pool;
     uint32           task_count_pre_worker = 8;
 
-    thread_pool = (thread_pool_t *)malloc(ut_align8(sizeof(thread_pool_t)) +
+    thread_pool = (thread_pool_t *)ut_malloc_zero(ut_align8(sizeof(thread_pool_t)) +
         ut_align8(sizeof(thread_worker_t)) * thread_count +
         ut_align8(sizeof(thread_task_t)) * task_count_pre_worker * thread_count);
     if (thread_pool == NULL) {

@@ -64,7 +64,7 @@ void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, co
     len += vsnprintf(buf + len, DEBUG_MSG_BUF - len, format, args);
     va_end(args);
 
-    LOGGER_DEBUG(DBUG_LOGGER, "%s", buf);
+    LOGGER_DEBUG(DBUG_LOGGER, LOG_MODULE_DBUG, "%s", buf);
 }
 
 void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, char *func)
@@ -84,7 +84,7 @@ void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, ch
     _stack_frame_->func = func;
     snprintf(buf, DEBUG_MSG_BUF, "[%s : %d] enter %s", filename, _line_, func);
 
-    LOGGER_DEBUG(DBUG_LOGGER, "%s", buf);
+    LOGGER_DEBUG(DBUG_LOGGER, LOG_MODULE_DBUG, "%s", buf);
 }
 
 void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_)
@@ -103,7 +103,7 @@ void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_)
 
     snprintf(buf, DEBUG_MSG_BUF, "[%s : %d] leave %s", filename, _line_, _stack_frame_->func);
 
-    LOGGER_DEBUG(DBUG_LOGGER, "%s", buf);
+    LOGGER_DEBUG(DBUG_LOGGER, LOG_MODULE_DBUG, "%s", buf);
 }
 
 void dbug_print_stacktrace()

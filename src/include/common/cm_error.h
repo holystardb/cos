@@ -167,12 +167,12 @@ extern THREAD_LOCAL error_info_t       g_tls_error;
 extern THREAD_LOCAL errinfo_stack_t    g_tls_errinfo_stack;
 
 
-#define CM_THROW_ERROR(err_no, ...)                                   \
-    do {                                                              \
-        g_tls_error.code = err_no;                                    \
-        g_tls_error.loc.line = 0;                                     \
-        g_tls_error.loc.column = 0;                                   \
-        LOGGER_ERROR(LOGGER, g_error_desc[err_no], ##__VA_ARGS__);    \
+#define CM_THROW_ERROR(err_no, module_id, ...)                                   \
+    do {                                                                         \
+        g_tls_error.code = err_no;                                               \
+        g_tls_error.loc.line = 0;                                                \
+        g_tls_error.loc.column = 0;                                              \
+        LOGGER_ERROR(LOGGER, module_id, g_error_desc[err_no], ##__VA_ARGS__);    \
     } while (0)
 
 extern inline void set_stack_error_message(const char *fmt, ...)

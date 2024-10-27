@@ -26,7 +26,7 @@ retry:
             for (; ptr > src && my_isspace(cs, *ptr); ptr--);
             if (!(*ptr == '/' && *(ptr - 1) == '*')) {
                 *ret_ptr = '\0';
-                LOGGER_FATAL(LOGGER, "Invalid errmsg file: %s, context = %s", errmsg_file, src);
+                LOGGER_FATAL(LOGGER, LOG_MODULE_COMMON, "Invalid errmsg file: %s, context = %s", errmsg_file, src);
                 ut_error;
             }
         }
@@ -69,7 +69,7 @@ static bool32 error_message_append(CHARSET_INFO *cs, char* err_msg, char* end, c
 
         ptr = remove_annotation_or_space(cs, ptr+1, end, errmsg_file);
         g_error_desc[err_no] = ptr;
-        LOGGER_DEBUG(LOGGER, "error_message_append: err code = %d err desc = %s", err_no, g_error_desc[err_no]);
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_COMMON, "error_message_append: err code = %d err desc = %s", err_no, g_error_desc[err_no]);
     }
 
     return TRUE;
@@ -87,7 +87,7 @@ bool32 error_message_init(char* errmsg_file)
 #endif
 
     if (ret == FALSE) {
-        LOGGER_ERROR(LOGGER, "Failed to open errmsg file: %s", errmsg_file);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to open errmsg file: %s", errmsg_file);
         return FALSE;
     }
 
@@ -97,7 +97,7 @@ bool32 error_message_init(char* errmsg_file)
     ret = os_pread_file(file, 0, buf, size, &read_bytes);
     if (!ret || read_bytes == 0) {
         os_close_file(file);
-        LOGGER_FATAL(LOGGER, "Invalid errmsg file: %s", errmsg_file);
+        LOGGER_FATAL(LOGGER, LOG_MODULE_COMMON, "Invalid errmsg file: %s", errmsg_file);
         return FALSE;
     }
 
@@ -108,7 +108,7 @@ bool32 error_message_init(char* errmsg_file)
         *ret_ptr = '\0';
         if (error_message_append(cs, ptr, ret_ptr - 1, errmsg_file) == FALSE) {
             os_close_file(file);
-            LOGGER_FATAL(LOGGER, "Invalid errmsg file: %s, context = %s", errmsg_file, ptr);
+            LOGGER_FATAL(LOGGER, LOG_MODULE_COMMON, "Invalid errmsg file: %s, context = %s", errmsg_file, ptr);
             return FALSE;
         }
         ptr = remove_annotation_or_space(cs, ret_ptr + 1, buf + read_bytes, errmsg_file);
@@ -116,7 +116,7 @@ bool32 error_message_init(char* errmsg_file)
     if (ptr && ptr - buf < read_bytes) {
         if (error_message_append(cs, ptr, buf + read_bytes, errmsg_file) == FALSE) {
             os_close_file(file);
-            LOGGER_FATAL(LOGGER, "Invalid errmsg file: %s, context = %s", errmsg_file, ptr);
+            LOGGER_FATAL(LOGGER, LOG_MODULE_COMMON, "Invalid errmsg file: %s, context = %s", errmsg_file, ptr);
             return FALSE;
         }
     }

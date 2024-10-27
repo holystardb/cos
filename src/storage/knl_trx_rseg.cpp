@@ -239,13 +239,13 @@ static status_t trx_rseg_create_trx_slot(trx_rseg_t* rseg)
 static status_t trx_sys_calc_page_count_per_rseg(uint64 undo_cache_size)
 {
     if (trx_sys->rseg_count < TRX_RSEG_MIN_COUNT || trx_sys->rseg_count > TRX_RSEG_MAX_COUNT) {
-        LOGGER_INFO(LOGGER, "Error, invalid undo segment, count = %d", trx_sys->rseg_count);
+        LOGGER_INFO(LOGGER, LOG_MODULE_ROLLSEGMENT, "Error, invalid undo segment, count = %d", trx_sys->rseg_count);
         return CM_ERROR;
     }
 
     trx_undo_page_count_per_rseg = undo_cache_size / UNIV_PAGE_SIZE / trx_sys->rseg_count;
     if (trx_undo_page_count_per_rseg == 0) {
-        LOGGER_INFO(LOGGER, "Error, invalid undo segment, size = %llu", undo_cache_size);
+        LOGGER_INFO(LOGGER, LOG_MODULE_ROLLSEGMENT, "Error, invalid undo segment, size = %llu", undo_cache_size);
         return CM_ERROR;
     }
 
@@ -257,7 +257,7 @@ status_t trx_sys_create_undo_segments(uint64 undo_cache_size)
 {
     status_t err;
 
-    LOGGER_INFO(LOGGER, "transaction rollback segment initialize");
+    LOGGER_INFO(LOGGER, LOG_MODULE_ROLLSEGMENT, "transaction rollback segment initialize");
 
     err = trx_sys_calc_page_count_per_rseg(undo_cache_size);
     CM_RETURN_IF_ERROR(err);

@@ -892,7 +892,7 @@ void* os_mem_alloc_large(uint64* n)
     size = *n = ut_2pow_round(*n + (system_info.dwPageSize - 1), (uint64)system_info.dwPageSize);
     ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!ptr) {
-        LOGGER_ERROR(LOGGER, "VirtualAlloc(%lld bytes) failed; Windows error %d", size, GetLastError());
+        LOGGER_ERROR(LOGGER, LOG_MODULE_MEMORY, "VirtualAlloc(%lld bytes) failed; Windows error %d", size, GetLastError());
     }
 #else
     size = getpagesize();
@@ -901,7 +901,7 @@ void* os_mem_alloc_large(uint64* n)
     size = *n = ut_2pow_round(*n + (size - 1), size);
     ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | OS_MAP_ANON, -1, 0);
     if (unlikely(ptr == (void *)-1)) {
-        log_stderr(LOG_ERROR, "mmap(%lld bytes) failed; errno %d", size, errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_MEMORY, "mmap(%lld bytes) failed; errno %d", size, errno);
         ptr = NULL;
     }
 #endif
@@ -914,11 +914,11 @@ void os_mem_free_large(void* ptr, uint64 size)
 #ifdef __WIN__
     /* When RELEASE memory, the size parameter must be 0. Do not use MEM_RELEASE with MEM_DECOMMIT. */
     if (!VirtualFree(ptr, 0, MEM_RELEASE)) {
-        LOGGER_ERROR(LOGGER, "VirtualFree(%p %lld bytes) failed; Windows error %d", ptr, size, GetLastError());
+        LOGGER_ERROR(LOGGER, LOG_MODULE_MEMORY, "VirtualFree(%p %lld bytes) failed; Windows error %d", ptr, size, GetLastError());
     }
 #else
     if (munmap(ptr, size)) {
-        log_stderr(LOG_ERROR, "munmap(%p %lld bytes) failed; errno %d", ptr, size, errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_MEMORY, "munmap(%p %lld bytes) failed; errno %d", ptr, size, errno);
     }
 #endif
 }
@@ -929,7 +929,7 @@ bool32 madvise_dont_dump(char* mem_ptr, uint64 mem_size)
 
 #else
     if (madvise(mem_ptr, mem_size, MADV_DONTDUMP)) {
-        log_stderr(LOG_ERROR, "MADV_DONTDUMP(%p %lld) error %s", mem, mem_size, strerror(errno));
+        LOGGER_ERROR(LOGGER, LOG_MODULE_MEMORY, "MADV_DONTDUMP(%p %lld) error %s", mem, mem_size, strerror(errno));
         return FALSE;
     }
 #endif
@@ -942,7 +942,7 @@ bool32 madvise_dump(char* mem_ptr, uint64 mem_size)
     
 #else
     if (madvise(mem_ptr, mem_size, MADV_DODUMP)) {
-        log_stderr(LOG_ERROR, "MADV_DODUMP(%p %lld) error %s", mem, mem_size, strerror(errno));
+        LOGGER_ERROR(LOGGER, LOG_MODULE_MEMORY, "MADV_DODUMP(%p %lld) error %s", mem, mem_size, strerror(errno));
         return FALSE;
     }
 #endif

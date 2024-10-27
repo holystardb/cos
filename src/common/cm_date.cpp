@@ -918,7 +918,7 @@ date_t cm_encode_ora_date(uint8 *ora_date)
 }
 
 #define CM_SET_DATETIME_FMT_ERROR \
-    CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, "datetime")
+    CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, LOG_MODULE_DATETIME, "datetime")
 
 /*
  * Fetch the double-quote-text item from format text, and extract the text into extra
@@ -1265,17 +1265,17 @@ status_t cm_verify_date_fmt(const text_t *fmt)
 
     while (fmt_text.len > 0) {
         if (cm_fetch_format_item(&fmt_text, &fmt_item, &fmt_extra, FALSE) != CM_SUCCESS) {
-            CM_THROW_ERROR(ERR_UNRECOGNIZED_FORMAT_ERROR);
+            //CM_THROW_ERROR(ERR_UNRECOGNIZED_FORMAT_ERROR);
             return CM_ERROR;
         }
 
         if (!fmt_item->reversible || !fmt_item->dt_used) {
-            CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, "date");
+            //CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, "date");
             return CM_ERROR;
         }
 
         if ((mask & fmt_item->fmask) != 0) {
-            CM_THROW_ERROR(ERR_MUTIPLE_FORMAT_ERROR);
+            //CM_THROW_ERROR(ERR_MUTIPLE_FORMAT_ERROR);
             return CM_ERROR;
         }
         mask |= fmt_item->fmask;
@@ -1293,17 +1293,17 @@ status_t cm_verify_timestamp_fmt(const text_t *fmt)
 
     while (fmt_text.len > 0) {
         if (cm_fetch_format_item(&fmt_text, &fmt_item, &fmt_extra, FALSE) != CM_SUCCESS) {
-            CM_THROW_ERROR(ERR_UNRECOGNIZED_FORMAT_ERROR);
+            CM_THROW_ERROR(ERR_UNRECOGNIZED_FORMAT_ERROR, LOG_MODULE_DATETIME);
             return CM_ERROR;
         }
 
         if (!fmt_item->reversible) {
-            CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, "timestamp");
+            CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, LOG_MODULE_DATETIME, "timestamp");
             return CM_ERROR;
         }
 
         if ((mask & fmt_item->fmask) != 0) {
-            CM_THROW_ERROR(ERR_MUTIPLE_FORMAT_ERROR);
+            CM_THROW_ERROR(ERR_MUTIPLE_FORMAT_ERROR, LOG_MODULE_DATETIME);
             return CM_ERROR;
         }
         mask |= fmt_item->fmask;
@@ -2015,7 +2015,7 @@ status_t cm_text2date(const text_t *text, const text_t *fmt, date_t *date)
 
     // check again
     if (!CM_IS_VALID_TIMESTAMP(*date)) {
-        CM_THROW_ERROR(ERR_TYPE_OVERFLOW, "DATETIME");
+        CM_THROW_ERROR(ERR_TYPE_OVERFLOW, LOG_MODULE_DATETIME, "DATETIME");
         return CM_ERROR;
     }
 
@@ -2027,7 +2027,7 @@ status_t cm_str2time(char *date, const text_t *fmt, time_t *time_stamp)
     text_t date_text;
     date_t date_stamp;
     if (strlen(date) == 0) {
-        CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, "date");
+        CM_THROW_ERROR(ERR_TEXT_FORMAT_ERROR, LOG_MODULE_DATETIME, "date");
         return CM_ERROR;
     }
 
@@ -2071,7 +2071,7 @@ status_t cm_text2date_fixed(const text_t *text, const text_t *fmt, date_t *date)
 
     // check again
     if (!CM_IS_VALID_TIMESTAMP(*date)) {
-        CM_THROW_ERROR(ERR_TYPE_OVERFLOW, "DATETIME");
+        CM_THROW_ERROR(ERR_TYPE_OVERFLOW, LOG_MODULE_DATETIME, "DATETIME");
         return CM_ERROR;
     }
 

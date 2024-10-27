@@ -1,4 +1,5 @@
 #include "cm_queue.h"
+#include "cm_memory.h"
 
 /*******************************************************************
  *                            number queue                         *
@@ -12,12 +13,12 @@ queue_t* queue_init(uint32 count)
     if (0 == count || QUEUE_MAX_SIZE < count)
         return NULL;
 
-    queue = (queue_t *)malloc(sizeof(queue_t) + sizeof(uint32) * count);
-    
+    queue = (queue_t *)ut_malloc_zero(sizeof(queue_t) + sizeof(uint32) * count);
+
     queue->head = 0;
     queue->tail = count - 1;
     queue->free = count;
-    
+
     queue->addr = (uint32 *)((char *)queue + sizeof(queue_t));
     for(index = 0; index < count; index++) {
         queue->addr[index] = index + 1;
@@ -29,12 +30,12 @@ queue_t* queue_init(uint32 count)
     return queue;
 }
 
-uint32 queue_push(queue_t *queue)
+uint32 queue_push(queue_t* queue)
 {
     uint32  index;
 
     spin_lock(&queue->lock, NULL);
-    
+
     if(queue->free == 0) {
         spin_unlock(&queue->lock);
         return INVALID_QUEUE_INDEX;
@@ -56,10 +57,12 @@ uint32 queue_push(queue_t *queue)
     return index;    
 }
 
-void queue_pop(queue_t *queue, uint32 index)
+void queue_pop(queue_t* queue, uint32 index)
 {
-    if (index >= queue->count)
+    if (index >= queue->count) {
+        ut_ad(index < queue->count);
         return;
+    }
 
     spin_lock(&queue->lock, NULL);
 
@@ -82,26 +85,26 @@ void queue_pop(queue_t *queue, uint32 index)
     spin_unlock(&queue->lock);
 }
 
-void queue_free(queue_t *queue)
+void queue_free(queue_t* queue)
 {
     if (NULL != queue) {
-        free(queue);
+        ut_free(queue);
     }
 }
-
-
-
 
 
 /*******************************************************************
  *                          dynamic queue                          *
  ******************************************************************/
 
-bool32 dyn_queue::append(void *first)
+void dyn_queue::append(void* first)
 {
+    if (m_first == NULL) {
+        return;
+    }
+
     mutex_enter(&m_lock, NULL);
 
-    bool32 empty = (m_first == NULL);
     *m_last = first;
 
     /*
@@ -115,15 +118,13 @@ bool32 dyn_queue::append(void *first)
     m_last = m_next_node_address_func(first);
 
     mutex_exit(&m_lock);
-
-    return empty;
 }
 
 void* dyn_queue::fetch_and_empty()
 {
     mutex_enter(&m_lock, NULL);
 
-    void *result = m_first;
+    void* result = m_first;
     m_first = NULL;
     m_last = &m_first;
 
@@ -138,7 +139,7 @@ void* dyn_queue::pop_front()
 {
     mutex_enter(&m_lock, NULL);
 
-    void *result = m_first;
+    void* result = m_first;
     if (result) {
         m_first = m_next_node_func(result);
     }

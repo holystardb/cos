@@ -56,19 +56,19 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
         ctrl_page_max_count = 128;
         break;
     default:
-        LOGGER_ERROR(LOGGER, "vm_pool_create: error, invalid page size %u", page_size);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_create: error, invalid page size %u", page_size);
         return FALSE;
     }
 
     tmp_memory_size = (memory_size / page_size) * page_size;
     if (tmp_memory_size < 1024 * 1024 || (tmp_memory_size / page_size) > ctrl_page_max_count) {
-        LOGGER_ERROR(LOGGER, "vm_pool_create: error, invalid memory size %lu", memory_size);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_create: error, invalid memory size %lu", memory_size);
         return NULL;
     }
 
     pool = (vm_pool_t *)ut_malloc_zero(sizeof(vm_pool_t));
     if (pool == NULL) {
-        LOGGER_ERROR(LOGGER, "vm_pool_create: error, can not alloc memory for vm_pool_t");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_create: error, can not alloc memory for vm_pool_t");
         return NULL;
     }
 
@@ -111,7 +111,7 @@ vm_pool_t* vm_pool_create(uint64 memory_size, uint32 page_size)
     if (pool->aio_array == NULL) {
         os_mem_free_large(pool->buf, pool->memory_size);
         ut_free(pool);
-        LOGGER_ERROR(LOGGER, "vm_pool_create: error, can not create aio array");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_create: error, can not create aio array");
         return NULL;
     }
 
@@ -131,7 +131,7 @@ void vm_pool_destroy(vm_pool_t *pool)
             }
         }
         if (pool->vm_files[i].name) {
-            free(pool->vm_files[i].name);
+            ut_free(pool->vm_files[i].name);
         }
     }
     //
@@ -139,7 +139,7 @@ void vm_pool_destroy(vm_pool_t *pool)
 
     os_aio_array_free(pool->aio_array);
 
-    free(pool);
+    ut_free(pool);
 }
 
 status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
@@ -175,7 +175,7 @@ status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
     }
 
     if (size > max_size || size < 8 * 1024 * 1024) {
-        LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, invalid size %lu", size);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_add_file: error, invalid size %lu", size);
         return CM_ERROR;
     }
     size = size / (8 * 1024 * 1024) * (8 * 1024 * 1024);
@@ -198,7 +198,7 @@ status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
     mutex_exit(&pool->mutex);
 
     if (vm_file == NULL) {
-        LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, file array is full, %s", name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_add_file: error, file array is full, %s", name);
         return CM_ERROR;
     }
 
@@ -208,7 +208,8 @@ status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
         if (ret == FALSE) {
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s, error desc %s", name, err_info);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM,
+                "vm_pool_add_file: error, can not create file %s, error desc %s", name, err_info);
             goto err_exit;
         }
     }
@@ -217,7 +218,8 @@ status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
     if (ret == FALSE) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER, "vm_pool_add_file: error, can not create file %s, error desc %s", name, err_info)
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM,
+            "vm_pool_add_file: error, can not create file %s, error desc %s", name, err_info)
         goto err_exit;
     }
 #endif
@@ -235,11 +237,11 @@ status_t vm_pool_add_file(vm_pool_t *pool, char *name, uint64 size)
     for (uint32 page_index = 0; page_index < slot_page_count; page_index++) {
         ctrl = vm_alloc(pool);
         if (ctrl == NULL) {
-            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error for alloc vm_ctrl");
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_add_file: error for alloc vm_ctrl");
             goto err_exit;
         }
         if (!vm_open(pool, ctrl)) {
-            LOGGER_ERROR(LOGGER, "vm_pool_add_file: error for vm_open");
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIRTUAL_MEM, "vm_pool_add_file: error for vm_open");
             goto err_exit;
         }
         UT_LIST_ADD_FIRST(list_node, vm_file->slot_pages, ctrl);

@@ -171,7 +171,7 @@ static pat_conn_t* pat_alloc_conn(reactor_t* reactor)
         conn->buf_size = PAT_DATA_BUF_SIZE;
     }
 
-    LOGGER_DEBUG(LOGGER, "pat_alloc_conn: connection(%d)", conn->id);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_alloc_conn: connection(%d)", conn->id);
 
     return conn;
 }
@@ -179,7 +179,7 @@ static pat_conn_t* pat_alloc_conn(reactor_t* reactor)
 static void pat_free_conn(pat_conn_t* conn)
 {
     biqueue_node_t *node;
-    LOGGER_DEBUG(LOGGER, "pat_free_conn: connection(%d)", conn->id);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_free_conn: connection(%d)", conn->id);
     node = QUEUE_NODE_OF_OBJECT(conn, node);
     biqueue_free(g_pat_mgr.conn_pool, node);
 }
@@ -191,7 +191,7 @@ static bool32 pat_epoll_accept(reactor_t* reactor, my_socket listen_fd, my_socke
 
     conn = pat_alloc_conn(reactor);
     if (conn == NULL) {
-        LOGGER_ERROR(LOGGER, "pat_epoll_accept: error for alloc conn, accept fd %d", accept_fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_epoll_accept: error for alloc conn, accept fd %d", accept_fd);
         return FALSE;
     }
 
@@ -199,12 +199,12 @@ static bool32 pat_epoll_accept(reactor_t* reactor, my_socket listen_fd, my_socke
     conn->vio.inactive = FALSE;
     epoll_data.ptr = conn;
     if (-1 == reactor_add_read(conn->reactor, accept_fd, &epoll_data, 0)) {
-        LOGGER_ERROR(LOGGER, "pat_epoll_accept: connection(id=%d, fd=%d) can not add event to epoll", conn->id, accept_fd);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_epoll_accept: connection(id=%d, fd=%d) can not add event to epoll", conn->id, accept_fd);
         pat_free_conn(conn);
         return FALSE;
     }
 
-    LOGGER_DEBUG(LOGGER, "pat_epoll_accept: connection(id=%d, fd=%d) added event to epoll", conn->id, accept_fd);
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_epoll_accept: connection(id=%d, fd=%d) added event to epoll", conn->id, accept_fd);
 
     return TRUE;
 }
@@ -259,7 +259,7 @@ bool32 pat_pool_init(uint8 reactor_count, memory_pool_t *mpool)
     g_pat_mgr.is_exited = FALSE;
     handle = os_thread_create(&timer_thread_entry, NULL, &thr_id);
     if (!os_thread_is_valid(handle)) {
-        LOGGER_ERROR(LOGGER, "pat_pool_init: Error for create_thread");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_pool_init: Error for create_thread");
         return FALSE;
     }
 
@@ -305,11 +305,11 @@ static void pat_retry_connect(pat_conn_t *conn)
     epoll_data_t epoll_data;
 
     if (VIO_SUCCESS != vio_connect(&conn->vio, conn->pat->host, conn->pat->port, NULL, TIMEOUT_SECONDS)) {
-        LOGGER_ERROR(LOGGER, "pat_retry_connect: can not connect to server(pno %d %s:%d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_retry_connect: can not connect to server(pno %d %s:%d), error %d",
             conn->pat->pno, conn->pat->host, conn->pat->port, conn->vio.error_no);
         goto err_exit;
     } else {
-        LOGGER_DEBUG(LOGGER, "pat_retry_connect: connected to server(pno %d %s:%d), connection(%d : %d)",
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_retry_connect: connected to server(pno %d %s:%d), connection(%d : %d)",
             conn->pat->pno, conn->pat->host, conn->pat->port, conn->id, conn->vio.sock_fd);
     }
     
@@ -329,7 +329,7 @@ static void pat_retry_connect(pat_conn_t *conn)
     }
     mach_write_to_4(conn->buf, conn->buf_len - 4);
     if (VIO_SUCCESS != vio_write(&conn->vio, (const char *)conn->buf, conn->buf_len)) {
-        LOGGER_ERROR(LOGGER, "pat_retry_connect: error for send auth to server(pno %d %s:%d), connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_retry_connect: error for send auth to server(pno %d %s:%d), connection(%d : %d), error %d",
             conn->pat->pno, conn->pat->host, conn->pat->port, conn->id, conn->vio.sock_fd, conn->vio.error_no);
         vio_close_socket(&conn->vio);
         goto err_exit;
@@ -384,7 +384,7 @@ static void* pat_send_thread_entry(void *arg)
         }
 
         if (pat->pno != data->pno) {
-            LOGGER_ERROR(LOGGER, "pat_send_thread_entry: Error, dest pno(%d) is invalid, current pat pno(%d)",
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_send_thread_entry: Error, dest pno(%d) is invalid, current pat pno(%d)",
                 data->pno, pat->pno);
             free(data);
             data = NULL;
@@ -393,11 +393,11 @@ static void* pat_send_thread_entry(void *arg)
 
         if (VIO_SUCCESS != vio_write(&conn->vio, (const char*)data->data, data->len))
         {
-            LOGGER_ERROR(LOGGER, "pat_send_thread_entry: error for send data to pno(%d), connection(%d : %d), error %d",
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_send_thread_entry: error for send data to pno(%d), connection(%d : %d), error %d",
                 pat->pno, conn->id, conn->vio.sock_fd, conn->vio.error_no);
             pat_close_connection(conn);
         } else {
-            LOGGER_DEBUG(LOGGER, "pat_send_thread_entry: sended data to pno(%d), connection(%d : %d)",
+            LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_send_thread_entry: sended data to pno(%d), connection(%d : %d)",
                 pat->pno, conn->id, conn->vio.sock_fd);
 
             free(data);
@@ -509,14 +509,14 @@ static void pat_handle_auth_req(pat_conn_t *conn)
     conn->buf_len = 4;
     ret = vio_read(&conn->vio, (const char*)conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOGGER_ERROR(LOGGER, "pat_handle_auth_req: error for read from lproxy, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: error for read from lproxy, connection(%d : %d), error %d",
             conn->id, conn->vio.sock_fd, conn->vio.error_no);
         goto err_exit;
     }
     conn->buf_len = mach_read_from_4(conn->buf);
     ret = vio_read(&conn->vio, (const char*)conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOGGER_ERROR(LOGGER, "pat_handle_auth_req: error for read from lproxy, connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: error for read from lproxy, connection(%d : %d), error %d",
             conn->id, conn->vio.sock_fd, conn->vio.error_no);
         goto err_exit;
     }
@@ -526,7 +526,7 @@ static void pat_handle_auth_req(pat_conn_t *conn)
     // 4byte(len) + 1byte(client pno) + 1byte(user len) + nbyte + 1byte(password len) + nbyte
     client_pno = mach_read_from_1(conn->buf);
     if (INVALID_PNO == client_pno) {
-        LOGGER_DEBUG(LOGGER, "pat_handle_auth_req: invalid pno, connection(%d : %d)",
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: invalid pno, connection(%d : %d)",
             conn->id, conn->vio.sock_fd);
         goto err_exit;
     }
@@ -544,22 +544,22 @@ static void pat_handle_auth_req(pat_conn_t *conn)
         if (user_len != g_pat_mgr.user_len || passwd_len != g_pat_mgr.passwd_len ||
             strncmp((const char*)g_pat_mgr.user, (const char*)user, user_len) != 0 ||
             strncmp((const char*)g_pat_mgr.password, (const char*)passwd, passwd_len) != 0) {
-            LOGGER_DEBUG(LOGGER, "pat_handle_auth_req: client pno %d is invalid user or password, connection(%d : %d)",
+            LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: client pno %d is invalid user or password, connection(%d : %d)",
                 client_pno, conn->id, conn->vio.sock_fd);
             goto err_exit;
         } else {
-            LOGGER_DEBUG(LOGGER, "pat_handle_auth_req: client pno(%d) is authenticated by user/password. connection(%d : %d)",
+            LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: client pno(%d) is authenticated by user/password. connection(%d : %d)",
                 client_pno, conn->id, conn->vio.sock_fd);
         }
     } else {
-        LOGGER_DEBUG(LOGGER, "pat_handle_auth_req: client pno(%d) is authenticated without user/password. connection(%d : %d)",
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: client pno(%d) is authenticated without user/password. connection(%d : %d)",
             client_pno, conn->id, conn->vio.sock_fd);
     }
     conn->buf[0] = 0;
     conn->buf_len = 1;
     ret = vio_write(&conn->vio, (const char*)conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOGGER_ERROR(LOGGER, "pat_handle_auth_req: error for send result of authenticated to client pno %d by connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: error for send result of authenticated to client pno %d by connection(%d : %d), error %d",
             client_pno, conn->id, conn->vio.sock_fd, conn->vio.error_no);
         goto err_exit;
     }
@@ -575,7 +575,7 @@ static void pat_handle_auth_req(pat_conn_t *conn)
 
     conn->pat->handle = os_thread_create(pat_send_thread_entry, conn, &conn->pat->thread_id);
     if (!os_thread_is_valid(conn->pat->handle)) {
-        LOGGER_ERROR(LOGGER, "pat_handle_auth_req: failed to create thread for client pno %d", client_pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_handle_auth_req: failed to create thread for client pno %d", client_pno);
         goto err_exit;
     }
 
@@ -600,16 +600,16 @@ static void pat_handle_auth_rsp(pat_conn_t *conn)
     conn->buf_len = 1;
     ret = vio_read(&conn->vio, (const char*)conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOGGER_ERROR(LOGGER, "handle_auth_rsp: error for read, pno %d connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "handle_auth_rsp: error for read, pno %d connection(%d : %d), error %d",
             conn->pat->pno, conn->id, conn->vio.sock_fd, conn->vio.error_no);
         goto err_exit;
     }
     if (conn->buf[0] != 0) {
-        LOGGER_ERROR(LOGGER, "handle_auth_rsp: invalid user or password, pno %d connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "handle_auth_rsp: invalid user or password, pno %d connection(%d : %d)",
             conn->pat->pno, conn->id, conn->vio.sock_fd);
         goto err_exit;
     } else {
-        LOGGER_DEBUG(LOGGER, "handle_auth_rsp: pno %d authenticated, connection(%d : %d)",
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_VIO_PAT, "handle_auth_rsp: pno %d authenticated, connection(%d : %d)",
             conn->pat->pno, conn->id, conn->vio.sock_fd);
     }
     // 
@@ -634,7 +634,7 @@ static void pat_handle_content(pat_conn_t *conn)
     conn->buf_len = 4;
     ret = vio_read(&conn->vio, (const char*)conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOGGER_ERROR(LOGGER, "handle_content: error for read lenght of package, pno %d connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "handle_content: error for read lenght of package, pno %d connection(%d : %d), error %d",
             conn->pat->pno, conn->id, conn->vio.sock_fd, conn->vio.error_no);
         goto err_exit;
     }
@@ -642,7 +642,7 @@ static void pat_handle_content(pat_conn_t *conn)
     conn->buf_len = mach_read_from_4(conn->buf);
     ret = vio_read(&conn->vio, (const char*)conn->buf, conn->buf_len);
     if (VIO_SUCCESS != ret) {
-        LOGGER_ERROR(LOGGER, "handle_content: error for read data, pno %d connection(%d : %d), error %d",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "handle_content: error for read data, pno %d connection(%d : %d), error %d",
             conn->pat->pno, conn->id, conn->vio.sock_fd, conn->vio.error_no);
         goto err_exit;
     }
@@ -650,7 +650,7 @@ static void pat_handle_content(pat_conn_t *conn)
     dest_pno = mach_read_from_1(conn->buf);
     src_pno = mach_read_from_1(conn->buf + 1);
     if (pat_append_to_list(dest_pno, src_pno, EVENT_RECV, conn->buf + 2, conn->buf_len - 2) == FALSE) {
-        LOGGER_ERROR(LOGGER, "handle_content: error for append_to_list, dest pno %d src pno %d connection(%d : %d)",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "handle_content: error for append_to_list, dest pno %d src pno %d connection(%d : %d)",
             dest_pno, src_pno, conn->id, conn->vio.sock_fd);
     }
 
@@ -671,7 +671,7 @@ static pat_t* pat_init(uint8 pno, pat_callback_func func_ptr)
     pat_t       *pat;
 
     if (INVALID_PNO == pno || g_pat_mgr.pats[pno].pno != INVALID_PNO) {
-        LOGGER_ERROR(LOGGER, "pat_init: Error, pno(%d) is invalid or already exists", pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_init: Error, pno(%d) is invalid or already exists", pno);
         return NULL;
     }
 
@@ -711,7 +711,7 @@ bool32 pat_startup_as_server(uint8 pno, pat_callback_func func_ptr, char *host, 
 
     pat = pat_init(pno, func_ptr);
     if (NULL == pat) {
-        LOGGER_ERROR(LOGGER, "pat_startup_as_server: Error for pat_init, pno %d", pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_startup_as_server: Error for pat_init, pno %d", pno);
         return FALSE;
     }
 
@@ -730,7 +730,7 @@ bool32 pat_startup_as_server(uint8 pno, pat_callback_func func_ptr, char *host, 
 
     pat->handle = os_thread_create(pat_worker_thread_entry, pat, &pat->thread_id);
     if (!os_thread_is_valid(pat->handle)) {
-        LOGGER_ERROR(LOGGER, "pat_startup_as_server: failed to create thread for pno %d", pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_startup_as_server: failed to create thread for pno %d", pno);
         goto err_exit;
     }
 
@@ -752,7 +752,7 @@ bool32 pat_set_server_info(uint8 pno, char *host, uint16 port)
     
     pat = pat_init(pno, NULL);
     if (NULL == pat) {
-        LOGGER_ERROR(LOGGER, "pat_set_server_info: Error for pat_init, pno %d", pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_set_server_info: Error for pat_init, pno %d", pno);
         return FALSE;
     }
     pat->type = IS_CLIENT;
@@ -770,13 +770,13 @@ bool32 pat_startup_as_client(uint8 pno, pat_callback_func func_ptr)
 
     pat = pat_init(pno, func_ptr);
     if (NULL == pat) {
-        LOGGER_ERROR(LOGGER, "pat_startup_as_client: Error for pat_init, pno %d", pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_startup_as_client: Error for pat_init, pno %d", pno);
         return FALSE;
     }
 
     pat->handle = os_thread_create(pat_worker_thread_entry, pat, &pat->thread_id);
     if (!os_thread_is_valid(pat->handle)) {
-        LOGGER_ERROR(LOGGER, "pat_startup_as_client: failed to create thread for pno %d", pno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_startup_as_client: failed to create thread for pno %d", pno);
         pat_destroy(pat);
         return FALSE;
     }
@@ -791,7 +791,7 @@ bool32 pat_startup_as_client(uint8 pno, pat_callback_func func_ptr)
 
         conn = pat_alloc_conn(get_roubin_reactor(g_pat_mgr.reator_pool));
         if (conn == NULL) {
-            LOGGER_ERROR(LOGGER, "pat_startup_as_client: failed to alloc conn for pno %d", g_pat_mgr.pats[i].pno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_startup_as_client: failed to alloc conn for pno %d", g_pat_mgr.pats[i].pno);
             goto err_exit;
         }
         conn->pat = &g_pat_mgr.pats[i];
@@ -799,7 +799,7 @@ bool32 pat_startup_as_client(uint8 pno, pat_callback_func func_ptr)
         
         g_pat_mgr.pats[i].handle = os_thread_create(pat_send_thread_entry, conn, &g_pat_mgr.pats[i].thread_id);
         if (!os_thread_is_valid(g_pat_mgr.pats[i].handle)) {
-            LOGGER_ERROR(LOGGER, "pat_startup_as_client: failed to create thread for pno %d", g_pat_mgr.pats[i].pno);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_VIO_PAT, "pat_startup_as_client: failed to create thread for pno %d", g_pat_mgr.pats[i].pno);
             goto err_exit;
         }
     }

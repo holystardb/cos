@@ -410,7 +410,7 @@ static status_t buf_read_page_callback(int32 code, os_aio_slot_t* slot)
     if (code != OS_FILE_IO_COMPLETION) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_error_desc_by_err(code, err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_FATAL(LOGGER,
+        LOGGER_FATAL(LOGGER, LOG_MODULE_BUFFERPOOL,
             "buf_read_page: fatal error occurred, error = %d err desc = %s, service exited",
             slot->ret, err_info);
         ut_error;
@@ -451,7 +451,7 @@ static bool32 buf_read_page_low(
     uint32         block_offset;
 
     if (buf_dblwr_page_inside(page_id)) {
-        LOGGER_WARN(LOGGER,
+        LOGGER_WARN(LOGGER, LOG_MODULE_BUFFERPOOL,
             "Warning: trying to read doublewrite buffer page %lu : %lu\n",
             page_id.space_id(), page_id.page_no());
         return FALSE;
@@ -507,7 +507,7 @@ bool32 buf_read_page(const page_id_t &page_id, const page_size_t &page_size)
     ret = buf_read_page_low(&err, true, BUF_READ_ANY_PAGE, page_id, page_size);
     srv_stats.buf_pool_reads.add(1);
     if (err == ERR_TABLESPACE_DELETED) {
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
             "Error: trying to access tablespace %lu page no. %lu,\n"
             "but the tablespace does not exist or is just being dropped.\n",
             page_id.space_id(), page_id.page_no());
@@ -651,7 +651,7 @@ retry:
         rw_lock_s_unlock(hash_lock);
 
         if (!buf_read_page(page_id, page_size)) {
-            LOGGER_ERROR(LOGGER,
+            LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
                 "Error: Unable to read tablespace %lu page no"
                 " %lu into the buffer pool\n"
                 "The most probable cause of this error may be that the"
@@ -752,7 +752,7 @@ static void buf_page_init(buf_pool_t* buf_pool, const page_id_t& page_id,
         //atomic32_add(&block->page.buf_fix_count, buf_fix_count);
         //buf_pool_watch_remove(buf_pool, hash_page);
     } else {
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
             "Page (space %lu, page %lu) already found in the hash table: %p, %p",
             page_id.space_id(), page_id.page_no(), (const void*)hash_page, (const void*)block);
         ut_ad(0);
@@ -1176,7 +1176,7 @@ static bool32 buf_pool_fill_block(buf_pool_t *buf_pool, uint64 mem_size)
         ut_2pow_round((mem_size / UNIV_PAGE_SIZE) * sizeof(buf_block_t) + (UNIV_PAGE_SIZE - 1), UNIV_PAGE_SIZE);
     buf_pool->mem = (uchar *)os_mem_alloc_large(&buf_pool->mem_size);
     if (buf_pool->mem == NULL) {
-        LOGGER_FATAL(LOGGER, "can not alloc memory, size = %lu", buf_pool->mem_size);
+        LOGGER_FATAL(LOGGER, LOG_MODULE_BUFFERPOOL, "can not alloc memory, size = %lu", buf_pool->mem_size);
         return FALSE;
     }
 

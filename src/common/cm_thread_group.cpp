@@ -14,7 +14,7 @@ thread_groups_t* thread_groups_create(memory_pool_t      * mem_pool, uint8 group
     thread_groups_t*    groups;
     uint32              task_count = FREE_TASK_COUNT_PRE_GROUP * group_count;
 
-    groups = (thread_groups_t *)malloc(ut_align8(sizeof(thread_groups_t)) + ut_align8(sizeof(group_task_t)) * task_count);
+    groups = (thread_groups_t *)ut_malloc_zero(ut_align8(sizeof(thread_groups_t)) + ut_align8(sizeof(group_task_t)) * task_count);
     spin_lock_init(&groups->lock);
     groups->group_count = group_count;
     groups->thread_count_per_group = thread_count_per_group;

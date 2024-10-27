@@ -2,6 +2,7 @@
 #include "cm_dbug.h"
 #include "cm_queue.h"
 #include "cm_util.h"
+#include "cm_log.h"
 #include "knl_buf.h"
 #include "knl_page.h"
 #include "knl_server.h"
@@ -591,13 +592,16 @@ static inline void mtr_log_reserve_and_write(mtr_t *mtr)
 
     // alloc from log buffer
     uint32 data_size = dyn_array_get_data_size(mlog);
-    ut_ad(data_size > 2);
+    ut_ad(data_size > MTR_LOG_LEN_SIZE);
     ut_a(data_size <= UINT_MAX16);
     log_buffer_reserve(&mtr->start_buf_lsn, data_size);
     mtr->end_lsn = mtr->start_buf_lsn.val.lsn + mtr->start_buf_lsn.data_len;
 
     // length for log
-    mach_write_to_2(dyn_block_get_data(first_block), data_size - 2);
+    mach_write_to_2(dyn_block_get_data(first_block), data_size - MTR_LOG_LEN_SIZE);
+    LOGGER_TRACE(LOGGER, LOG_MODULE_MTR,
+        "mtr_log_reserve_and_write: start_lsn %llu, end_lsn %llu, original data_len %u, adjust data_len %u",
+        mtr->start_buf_lsn.val.lsn, mtr->end_lsn, data_size, mtr->start_buf_lsn.data_len);
 
     // add dirtied pages to flush list
     mtr_add_dirtied_pages_to_flush_list(mtr);
@@ -610,6 +614,7 @@ static inline void mtr_log_reserve_and_write(mtr_t *mtr)
              block = dyn_array_get_next_block(mlog, block)) {
             start_lsn = log_buffer_write(start_lsn, dyn_block_get_data(block), dyn_block_get_used(block));
         }
+        ut_ad(start_lsn == mtr->end_lsn);
         log_write_complete(&mtr->start_buf_lsn);
     } else {
         ut_ad(mtr->log_mode == MTR_LOG_NONE || mtr->log_mode == MTR_LOG_NO_REDO);
@@ -970,7 +975,7 @@ inline mtr_t* mtr_start(mtr_t *mtr)
 {
     dyn_array_create(&(mtr->memo), mtr_memory_pool);
     dyn_array_create(&(mtr->log), mtr_memory_pool);
-    mtr->log.first_block.used = 2; // reserved 2 bytes for length
+    mtr->log.first_block.used = MTR_LOG_LEN_SIZE; // reserved 2 bytes for length
 
     mtr->log_mode = MTR_LOG_ALL;
     mtr->modifications = FALSE;

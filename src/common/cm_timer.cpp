@@ -93,7 +93,7 @@ static void* timer_proc_thread(void *arg)
     date_t start_time = cm_now();
     int16 tz_min;
 
-    LOGGER_INFO(LOGGER, "timer thread starting ...");
+    LOGGER_INFO(LOGGER, LOG_MODULE_TIMER, "timer thread starting ...");
 
     sync_time = start_time;
     timer->status = TIMER_STATUS_RUNNING;

@@ -287,17 +287,17 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
 
     bool32 ret = os_open_file(name, OS_FILE_CREATE, 0, &file);
     if (!ret) {
-        LOGGER_ERROR(LOGGER, "write_ctrl_file: failed to create file, name = %s", name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "write_ctrl_file: failed to create file, name = %s", name);
         goto err_exit;
     }
     ret = os_pwrite_file(file, 0, buf, (uint32)align_size);
     if (!ret) {
-        LOGGER_ERROR(LOGGER, "write_ctrl_file: failed to write file, name = %s", name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "write_ctrl_file: failed to write file, name = %s", name);
         goto err_exit;
     }
     ret = os_fsync_file(file);
     if (!ret) {
-        LOGGER_ERROR(LOGGER, "write_ctrl_file: failed to sync file, name = %s", name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "write_ctrl_file: failed to sync file, name = %s", name);
         goto err_exit;
     }
 
@@ -326,7 +326,7 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
 
     bool32 ret = os_open_file(name, OS_FILE_OPEN, 0, &file);
     if (!ret) {
-        LOGGER_FATAL(LOGGER, "invalid control file, can not open ctrl file, name = %s", name);
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CTRLFILE, "invalid control file, can not open ctrl file, name = %s", name);
         goto err_exit;
     }
 
@@ -335,14 +335,14 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
     // len(4B) + magic(4B) + checksum(8B) + ctrl file
     ret = os_pread_file(file, 0, buf, size, &read_bytes);
     if (!ret || read_bytes <= 4 || mach_read_from_4(buf) > read_bytes) {
-        LOGGER_FATAL(LOGGER, "invalid control file, read size = %d ctrl file size %d",
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CTRLFILE, "invalid control file, read size = %d ctrl file size %d",
             read_bytes, mach_read_from_4(buf));
         goto err_exit;
     }
 
     // check magic
     if (mach_read_from_4(buf + 4) != DB_CTRL_FILE_MAGIC) {
-        //LOGGER_FATAL(LOGGER, "invalid control file, wrong magic = %lu", mach_read_from_4(ptr));
+        //LOGGER_FATAL(LOGGER, LOG_MODULE_CTRLFILE, "invalid control file, wrong magic = %lu", mach_read_from_4(ptr));
         goto err_exit;
     }
 
@@ -352,7 +352,7 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
         checksum += buf[i];
     }
     if (checksum != mach_read_from_8(buf + 8)) {
-        LOGGER_FATAL(LOGGER, "checksum mismatch, damaged control file");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CTRLFILE, "checksum mismatch, damaged control file");
         goto err_exit;
     }
 
@@ -481,7 +481,7 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
         }
     }
     if (ctrl->charset_info == NULL) {
-        LOGGER_FATAL(LOGGER, "invalid control file, not found charset name %s", ctrl->charset_name);
+        LOGGER_FATAL(LOGGER, LOG_MODULE_CTRLFILE, "invalid control file, not found charset name %s", ctrl->charset_name);
         goto err_exit;
     }
 
@@ -563,7 +563,7 @@ bool32 db_ctrl_add_system(char* data_file_name, uint64 size, uint64 max_size, bo
 bool32 db_ctrl_add_redo(char* data_file_name, uint64 size, uint64 max_size, bool32 autoextend)
 {
     if (srv_ctrl_file.redo_count >= DB_REDO_FILE_MAX_COUNT) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_redo: Error, REDO file has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_redo: Error, REDO file has reached the maximum limit");
         return FALSE;
     }
 
@@ -587,7 +587,7 @@ bool32 db_ctrl_add_dbwr(char* data_file_name, uint64 size)
 bool32 db_ctrl_add_undo(char* data_file_name, uint64 size, uint64 max_size, bool32 autoextend)
 {
     if (srv_ctrl_file.undo_count >= DB_UNDO_FILE_MAX_COUNT) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_undo: Error, UNDO file has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_undo: Error, UNDO file has reached the maximum limit");
         return FALSE;
     }
 
@@ -602,7 +602,7 @@ bool32 db_ctrl_add_undo(char* data_file_name, uint64 size, uint64 max_size, bool
 bool32 db_ctrl_add_temp(char* data_file_name, uint64 size, uint64 max_size, bool32 autoextend)
 {
     if (srv_ctrl_file.temp_count >= DB_TEMP_FILE_MAX_COUNT) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_temp: Error, TEMP file has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_temp: Error, TEMP file has reached the maximum limit");
         return FALSE;
     }
 
@@ -617,29 +617,39 @@ bool32 db_ctrl_add_temp(char* data_file_name, uint64 size, uint64 max_size, bool
 bool32 db_ctrl_add_system_space(char* space_name, uint32 space_id)
 {
     if (space_id >= DB_SYSTEM_SPACE_MAX_COUNT || strlen(space_name) > DB_OBJECT_NAME_MAX_LEN) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_system_space: Error, invalid table space. name %s id %lu", space_name, space_id);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
+            "db_ctrl_add_system_space: Error, invalid table space. name %s id %lu",
+            space_name, space_id);
         return FALSE;
     }
 
     for (uint32 i = 0; i < DB_SYSTEM_SPACE_MAX_COUNT; i++) {
         if (space_id == srv_ctrl_file.system_spaces[i].space_id) {
-            LOGGER_ERROR(LOGGER, "db_ctrl_add_system_space: Error, id of system space already exists, name %s id %lu", space_name, space_id);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
+                "db_ctrl_add_system_space: Error, id of system space already exists, name %s id %lu",
+                space_name, space_id);
             return FALSE;
         }
         if (strlen(space_name) == strlen(srv_ctrl_file.system_spaces[i].name) &&
             strcmp(space_name, srv_ctrl_file.system_spaces[i].name) == 0) {
-            LOGGER_ERROR(LOGGER, "db_ctrl_add_system_space: Error, name of system space already exists, name %s id %lu", space_name, space_id);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
+                "db_ctrl_add_system_space: Error, name of system space already exists, name %s id %lu",
+                space_name, space_id);
             return FALSE;
         }
     }
 
     if (srv_ctrl_file.system_spaces[space_id].space_id != DB_SPACE_INALID_ID) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_system_space: Error, id of system space already exists, name %s id %lu", space_name, space_id);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
+            "db_ctrl_add_system_space: Error, id of system space already exists, name %s id %lu",
+            space_name, space_id);
         return FALSE;
     }
 
     if (srv_ctrl_file.system_spaces[space_id].name[0] != '\0') {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_system_space: Error, name of system space already exists, name %s id %lu", space_name, space_id);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
+            "db_ctrl_add_system_space: Error, name of system space already exists, name %s id %lu",
+            space_name, space_id);
         return FALSE;
     }
 
@@ -653,11 +663,11 @@ bool32 db_ctrl_add_system_space(char* space_name, uint32 space_id)
 bool32 db_ctrl_add_user_space(char* space_name)
 {
     if (srv_ctrl_file.user_space_count >= DB_USER_SPACE_MAX_COUNT) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_user_space: Error, user space has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_user_space: Error, user space has reached the maximum limit");
         return FALSE;
     }
     if (strlen(space_name) > DB_OBJECT_NAME_MAX_LEN) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_user_space: Error, invalid user space name %s", space_name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_user_space: Error, invalid user space name %s", space_name);
         return FALSE;
     }
 
@@ -665,7 +675,9 @@ bool32 db_ctrl_add_user_space(char* space_name)
     for (uint32 i = 0; i < DB_SYSTEM_SPACE_MAX_COUNT; i++) {
         if (strlen(space_name) == strlen(srv_ctrl_file.system_spaces[i].name) &&
             strcmp(space_name, srv_ctrl_file.system_spaces[i].name) == 0) {
-            LOGGER_ERROR(LOGGER, "db_ctrl_add_user_space: Error, name of system space already exists, name %s", space_name);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
+                "db_ctrl_add_user_space: Error, name of system space already exists, name %s",
+                space_name);
             return FALSE;
         }
     }
@@ -675,7 +687,7 @@ bool32 db_ctrl_add_user_space(char* space_name)
     for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
         if (strlen(space_name) == strlen(srv_ctrl_file.user_spaces[i].name) &&
             strcmp(space_name, srv_ctrl_file.user_spaces[i].name) == 0) {
-            LOGGER_ERROR(LOGGER, "db_ctrl_add_user_space: Error, name of user space already exists, name %s", space_name);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_user_space: Error, name of user space already exists, name %s", space_name);
             return FALSE;
         }
         if (space_id == DB_SPACE_INALID_ID &&
@@ -684,7 +696,7 @@ bool32 db_ctrl_add_user_space(char* space_name)
         }
     }
     if (space_id == DB_SPACE_INALID_ID) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_user_space: Error, user space has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_user_space: Error, user space has reached the maximum limit");
         return FALSE;
     }
 
@@ -698,12 +710,12 @@ bool32 db_ctrl_add_user_space(char* space_name)
 bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 size, uint64 max_size, bool32 autoextend)
 {
     if (strlen(data_file_name) > DB_DATA_FILE_NAME_MAX_LEN) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_space_file: Error, name of data file has reached the maximum limit %s", data_file_name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, name of data file has reached the maximum limit %s", data_file_name);
         return FALSE;
     }
 
     if (srv_ctrl_file.user_space_data_file_count >= DB_SPACE_DATA_FILE_MAX_COUNT) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_space_file: Error, data file has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, data file has reached the maximum limit");
         return FALSE;
     }
 
@@ -717,13 +729,13 @@ bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 siz
         }
     }
     if (space_id == DB_SPACE_INALID_ID) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_space_file: Error, invalid space name %s", space_name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, invalid space name %s", space_name);
         return FALSE;
     }
 
     // check data file
     if (!db_ctrl_check_space_file(data_file_name)) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_space_file: Error, data file exists, space %s name %s",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, data file exists, space %s name %s",
             space_name, data_file_name);
         return FALSE;
     }
@@ -755,7 +767,7 @@ bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 siz
         }
     }
     if (node_id == DB_DATA_FILNODE_INALID_ID) {
-        LOGGER_ERROR(LOGGER, "db_ctrl_add_space_file: Error, data file has reached the maximum limit");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, data file has reached the maximum limit");
         return FALSE;
     }
 
@@ -798,7 +810,7 @@ static status_t create_db_file(db_data_file_t *ctrl_file)
     if (!ret) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER, "can not create file, name = %s error = %s",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "can not create file, name = %s error = %s",
             ctrl_file->name, err_info);
         return CM_ERROR;
     }
@@ -807,7 +819,7 @@ static status_t create_db_file(db_data_file_t *ctrl_file)
     if (!ret) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER, "can not extend file %s to size %lu MB, error = %s",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "can not extend file %s to size %lu MB, error = %s",
              ctrl_file->name, ctrl_file->size, err_info);
         return CM_ERROR;
     }
@@ -824,7 +836,7 @@ static status_t srv_delete_db_file(char* name)
     if (!ret && os_file_get_last_error() != OS_FILE_NOT_FOUND) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        LOGGER_ERROR(LOGGER, "failed to delete file, name = %s error = %s",
+        LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "failed to delete file, name = %s error = %s",
              name, err_info);
         return CM_ERROR;
     }
@@ -971,7 +983,7 @@ void* write_io_handler_thread(void *arg)
     uint32 index = *(uint32 *)arg;
 
     ut_ad(index < srv_write_io_threads);
-    LOGGER_INFO(LOGGER, "write io thread (id = %lu) starting ...", index);
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "write io thread (id = %lu) starting ...", index);
 
     context = os_aio_array_get_nth_context(srv_os_aio_async_write_array, index);
 
@@ -988,7 +1000,7 @@ void* read_io_handler_thread(void *arg)
     os_aio_context_t* context;
     uint32 index = *(uint32 *)arg;
 
-    LOGGER_INFO(LOGGER, "read io thread (id = %lu) starting ...", index);
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "read io thread (id = %lu) starting ...", index);
     ut_ad(index < srv_read_io_threads);
 
     context = os_aio_array_get_nth_context(srv_os_aio_async_read_array, index);;

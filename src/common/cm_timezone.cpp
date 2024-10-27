@@ -144,7 +144,8 @@ int16 cm_get_local_tzoffset(void)
     LONG tzoffset = 0;
     TIME_ZONE_INFORMATION tmp;
     if (GetTimeZoneInformation(&tmp) == TIME_ZONE_ID_INVALID) {
-        LOGGER_ERROR(LOGGER, "error occurred during calling GetTimeZoneInformation(). errno: \"%lu\"", GetLastError());
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TIMEZONE,
+            "error occurred during calling GetTimeZoneInformation(). errno: \"%lu\"", GetLastError());
         ut_error;
     } else {
         tzoffset = 0 - tmp.Bias; /* field "Bias" means west of GMT,
@@ -161,7 +162,7 @@ int16 cm_get_local_tzoffset(void)
         retval = (int16)(result.tm_gmtoff / TIMEZONE_MINUTES_PER_HOUR); /* tm_gmtoff: seconds east of GMT */
     } else {
         /* when compiled with gcc on linux, errno is thread-safe. ref: http://www.unix.org/whitepapers/reentrant.html */
-        LOGGER_ERROR(LOGGER, "error occurred during calling localtime_r(). errno: \"%d\"", errno);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_TIMEZONE, "error occurred during calling localtime_r(). errno: \"%d\"", errno);
         ut_error;
     }
 

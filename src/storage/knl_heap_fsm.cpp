@@ -190,13 +190,13 @@ static int32 fsm_search_avail(buf_block_t* block, uint8 min_value)
             continue;
         }
 
-        LOGGER_FATAL(LOGGER, "corrupt FSM block, space id %u page no %u",
+        LOGGER_FATAL(LOGGER, LOG_MODULE_HEAP_FSM, "corrupt FSM block, space id %u page no %u",
             block->get_space_id(), block->get_page_no());
         ut_error;
     }
 
     if (unlikely(node_no < FSM_NON_LEAF_NODES_PER_PAGE)) {
-        LOGGER_FATAL(LOGGER, "corrupt FSM block, space id %u page no %u",
+        LOGGER_FATAL(LOGGER, LOG_MODULE_HEAP_FSM, "corrupt FSM block, space id %u page no %u",
             block->get_space_id(), block->get_page_no());
         ut_error;
     }
@@ -415,7 +415,7 @@ static bool32 fsm_extend_table_segment(dict_table_t* table)
     mtr_commit(&mtr);
 
     if (!ret) {
-        LOGGER_ERROR(LOGGER,
+        LOGGER_ERROR(LOGGER, LOG_MODULE_HEAP_FSM,
             "failed to extend segment of table, space id %u table name %s extend page count %u",
             table->space_id, table->name, page_count);
     }

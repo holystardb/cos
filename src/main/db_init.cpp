@@ -40,12 +40,13 @@ status_t create_database(char* base_dir)
     // 2.
     char *log_path = "D:\\MyWork\\cos\\data\\";
     LOGGER.log_init(log_level, log_path, "initdb");
+    LOGGER.set_module_log_level(LOG_MODULE_REDO, LOG_LEVEL_ALL);
 
     // 3.
     char err_file[1024];
     sprintf_s(err_file, 1024, "%s\\share\\english\\errmsg.txt", base_dir);
     if (!error_message_init(err_file)) {
-        LOGGER_ERROR(LOGGER, "Failed to init error messages, Service exited");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to init error messages, Service exited");
         return CM_ERROR;
     }
 
@@ -93,12 +94,13 @@ status_t start_database(char* base_dir)
     // 2.
     char *log_path = "D:\\MyWork\\cos\\data\\";
     LOGGER.log_init(log_level, log_path, "initdb");
+    LOGGER.set_module_log_level(LOG_MODULE_REDO, LOG_LEVEL_ALL);
 
     // 3.
     char err_file[1024];
     sprintf_s(err_file, 1024, "%s\\share\\english\\errmsg.txt", base_dir);
     if (!error_message_init(err_file)) {
-        LOGGER_ERROR(LOGGER, "Failed to init error messages, Service exited");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to init error messages, Service exited");
         return CM_ERROR;
     }
 
@@ -129,7 +131,7 @@ int main(int argc, const char *argv[])
 
     err = create_database(base_dir);
     if (err != CM_SUCCESS) {
-        LOGGER_ERROR(LOGGER, "Failed to create database, Service exited");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to create database, Service exited");
         goto err_exit;
     }
 
@@ -154,7 +156,7 @@ int main(int argc, const char *argv[])
 
     err = knl_insert(&sess, &insert_node);
     if (err != CM_SUCCESS) {
-        LOGGER_ERROR(LOGGER, "Failed to knl_insert");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to knl_insert");
         goto err_exit;
     }
 
@@ -164,7 +166,7 @@ int main(int argc, const char *argv[])
 
     err = start_database(base_dir);
     if (err != CM_SUCCESS) {
-        LOGGER_ERROR(LOGGER, "Failed to start database, Service exited");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to start database, Service exited");
         goto err_exit;
     }
 

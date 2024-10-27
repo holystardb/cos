@@ -18,6 +18,10 @@ log_info::log_info()
 
     is_print_stderr = FALSE;
     mutex_create(&mutex);
+
+    for (uint32 i = 0; i < LOG_MODULE_END; i++) {
+        modules_log_level[i] = LOG_LEVEL_CRITICAL;
+    }
 }
 
 bool32 log_info::log_init(uint32 level, char *log_path, char *file_name, bool32 batch_flush)
@@ -121,7 +125,7 @@ bool32 log_info::create_log_file()
     return TRUE;
 }
 
-void log_info::log_to_file(char* log_level_desc, const char *file, uint32 line, const char *fmt, ...)
+void log_info::log_to_file(char* log_level_desc, uint32 module_id, const char *file, uint32 line, const char *fmt, ...)
 {
     int             len, write_size = 0;
     va_list         ap;
@@ -148,9 +152,9 @@ retry:
 
     current_clock(&clock);
     write_pos = snprintf(write_buffer, LOG_WRITE_BUFFER_SIZE,
-        "%d-%02d-%02d %02d:%02d:%02d.%03d %s [%08lu] %s\n",
+        "%d-%02d-%02d %02d:%02d:%02d.%03d %s [%04u] [%08lu] %s\n",
         clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second,
-        clock.milliseconds, log_level_desc, os_thread_get_curr_id(), errbuf);
+        clock.milliseconds, log_level_desc, module_id, os_thread_get_curr_id(), errbuf);
     write_buffer[write_pos] = '\0';
 
     if (log_handle != OS_FILE_INVALID_HANDLE) {
@@ -301,7 +305,7 @@ void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 }
 
 
-void log_info::log_to_stderr(char* log_level_desc, const char *file, uint32 line, const char *fmt, ...)
+void log_info::log_to_stderr(char* log_level_desc, uint32 module_id, const char *file, uint32 line, const char *fmt, ...)
 {
     int             len;
     va_list         ap;
@@ -314,18 +318,18 @@ void log_info::log_to_stderr(char* log_level_desc, const char *file, uint32 line
 #ifdef __WIN__
     len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
-    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%08lu] %s\n",
+    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%04u] [%08lu] %s\n",
         clock.year, clock.month, clock.day,
         clock.hour, clock.minute, clock.second,
-        clock.milliseconds, log_level_desc, os_thread_get_curr_id(), errbuf);
+        clock.milliseconds, log_level_desc, module_id, os_thread_get_curr_id(), errbuf);
     fflush(stderr);
 #else
     len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
-    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%08lu] %s\n",
+    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%04u] [%08lu] %s\n",
         clock.year, clock.month, clock.day,
         clock.hour, clock.minute, clock.second,
-        clock.milliseconds, log_level_desc, os_thread_get_curr_id(), errbuf);
+        clock.milliseconds, log_level_desc, module_id, os_thread_get_curr_id(), errbuf);
     fflush(stderr);
 #endif
     va_end(ap);

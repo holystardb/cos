@@ -58,7 +58,7 @@ void server_shutdown_database()
 
 status_t read_write_aio_init()
 {
-    LOGGER_INFO(LOGGER, "aio initialize");
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "aio initialize");
 
     uint32 io_limit = OS_AIO_N_PENDING_IOS_PER_THREAD;
 #ifndef __WIN__
@@ -67,17 +67,17 @@ status_t read_write_aio_init()
 
     srv_os_aio_async_read_array = os_aio_array_create(io_limit, srv_read_io_threads);
     if (srv_os_aio_async_read_array == NULL) {
-        LOGGER_FATAL(LOGGER, "FATAL for create aio read_array");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_STARTUP, "FATAL for create aio read_array");
         return CM_ERROR;
     }
     srv_os_aio_async_write_array = os_aio_array_create(io_limit, srv_write_io_threads);
     if (srv_os_aio_async_write_array == NULL) {
-        LOGGER_FATAL(LOGGER, "FATAL for create aio write_array");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_STARTUP, "FATAL for create aio write_array");
         return CM_ERROR;
     }
     srv_os_aio_sync_array = os_aio_array_create(io_limit, srv_sync_io_contexts);
     if (srv_os_aio_sync_array == NULL) {
-        LOGGER_FATAL(LOGGER, "FATAL for create aio sync array");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_STARTUP, "FATAL for create aio sync array");
         return CM_ERROR;
     }
 
@@ -86,7 +86,7 @@ status_t read_write_aio_init()
 
 status_t read_write_threads_startup()
 {
-    LOGGER_INFO(LOGGER, "create io threads: read threads = %u, write threads = %u",
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "create io threads: read threads = %u, write threads = %u",
         srv_read_io_threads, srv_write_io_threads);
 
     /* Create i/o-handler threads: */
@@ -143,7 +143,7 @@ status_t memory_pool_create(attr_memory_t* attr)
     uint32 local_page_count;
     uint32 max_page_count;
 
-    LOGGER_INFO(LOGGER, "memory pool initialize");
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "memory pool initialize");
 
     uint64 total_memory_size =
         attr->common_memory_cache_size +
@@ -152,14 +152,14 @@ status_t memory_pool_create(attr_memory_t* attr)
         attr->plan_memory_cache_size;
     srv_memory_sga = marea_create(total_memory_size, FALSE);
     if (srv_memory_sga == NULL) {
-        LOGGER_ERROR(LOGGER, "Failed to create memory area, size %llu", total_memory_size);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create memory area, size %llu", total_memory_size);
         return CM_ERROR;
     }
 
     max_page_count = attr->common_memory_cache_size / page_size_16K;
     srv_common_mpool = mpool_create(srv_memory_sga, 0, max_page_count, UINT32_UNDEFINED, page_size_16K);
     if (srv_common_mpool == NULL) {
-        LOGGER_ERROR(LOGGER, "Failed to create common memory pool");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create common memory pool");
         return CM_ERROR;
     }
 
@@ -167,27 +167,27 @@ status_t memory_pool_create(attr_memory_t* attr)
     max_page_count = attr->mtr_memory_cache_size / page_size_16K;
     srv_mtr_memory_pool = mpool_create(srv_memory_sga, initial_page_count, max_page_count, UINT32_UNDEFINED, page_size_16K);
     if (srv_mtr_memory_pool == NULL) {
-        LOGGER_ERROR(LOGGER, "Failed to create mtr memory pool");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create mtr memory pool");
         return CM_ERROR;
     }
 
     max_page_count = attr->dictionary_memory_cache_size / page_size_16K;
     srv_dictionary_mem_pool = mpool_create(srv_memory_sga, 0, max_page_count, max_page_count, page_size_16K);
     if (srv_dictionary_mem_pool == NULL) {
-        LOGGER_ERROR(LOGGER, "Failed to create dictionary memory pool");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create dictionary memory pool");
         return CM_ERROR;
     }
 
     max_page_count = attr->plan_memory_cache_size / page_size_16K;
     srv_plan_mem_pool = mpool_create(srv_memory_sga, 0, max_page_count, max_page_count, page_size_16K);
     if (srv_plan_mem_pool == NULL) {
-        LOGGER_ERROR(LOGGER, "Failed to create plan memory pool");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create plan memory pool");
         return CM_ERROR;
     }
 
     srv_temp_mem_pool = vm_pool_create(attr->temp_memory_cache_size, page_size_128K);
     if (srv_temp_mem_pool == NULL) {
-        LOGGER_ERROR(LOGGER, "Failed to create temporary memory pool");
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create temporary memory pool");
         return CM_ERROR;
     }
 
@@ -248,7 +248,7 @@ static status_t server_create_file_system(uint32 open_files_limit)
 {
     bool32 ret;
 
-    LOGGER_INFO(LOGGER, "fil system initialize");
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "fil system initialize");
 
     // file system
     ret = fil_system_init(srv_common_mpool, open_files_limit);
@@ -274,7 +274,7 @@ static status_t server_open_tablespace_data_files()
 {
     bool32 ret;
 
-    LOGGER_INFO(LOGGER, "open data files of table space");
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "open data files of table space");
 
     // system space
     fil_space_t* system_space = fil_space_create("system", FIL_SYSTEM_SPACE_ID, 0);
@@ -284,7 +284,8 @@ static status_t server_open_tablespace_data_files()
     fil_node_t *node = fil_node_create(system_space, 0, srv_ctrl_file.system.name,
         srv_ctrl_file.system.max_size / UNIV_PAGE_SIZE, UNIV_PAGE_SIZE, srv_ctrl_file.system.autoextend);
     if (!node) {
-        LOGGER_ERROR(LOGGER, "Failed to create fil_node for system table space, name %s", srv_ctrl_file.system.name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
+            "Failed to create fil_node for system table space, name %s", srv_ctrl_file.system.name);
         return CM_ERROR;
     }
 
@@ -296,7 +297,8 @@ static status_t server_open_tablespace_data_files()
     node = fil_node_create(dbwr_space, DB_DBWR_FILNODE_ID, srv_ctrl_file.dbwr.name,
         srv_ctrl_file.dbwr.max_size / UNIV_PAGE_SIZE, UNIV_PAGE_SIZE, srv_ctrl_file.dbwr.autoextend);
     if (!node) {
-        LOGGER_ERROR(LOGGER, "Failed to create fil_node for double write table space, name %s", srv_ctrl_file.dbwr.name);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
+            "Failed to create fil_node for double write table space, name %s", srv_ctrl_file.dbwr.name);
         return CM_ERROR;
     }
 
@@ -367,7 +369,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     err = buf_pool_init(buffer_pool_size,
         attr->attr_storage.buffer_pool_instances, page_hash_lock_count);
     if (err != CM_SUCCESS) {
-        LOGGER_FATAL(LOGGER, "FATAL in initializing data buffer pool.");
+        LOGGER_FATAL(LOGGER, LOG_MODULE_STARTUP, "FATAL in initializing data buffer pool.");
         return CM_ERROR;
     }
 
@@ -432,7 +434,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     // Create checkpoint thread
     //err = checkpoint_thread_startup();
     CM_RETURN_IF_ERROR(err);
-
+    
     //
     if (is_create_new_db) {
         // Filespace Header/Extent Descriptor
@@ -465,7 +467,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
         CM_RETURN_IF_ERROR(err);
         //srv_startup_is_before_trx_rollback_phase = FALSE;
     } else if (srv_archive_recovery) {
-        LOGGER_INFO(LOGGER, "Starting archive recovery from a backup...\n");
+        LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "Starting archive recovery from a backup...\n");
         //err = recv_recovery_from_archive_start(min_flushed_lsn,
         //    srv_archive_recovery_limit_lsn, min_arch_log_no);
         //if (err != DB_SUCCESS) {
@@ -513,16 +515,16 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     // Create the master thread which monitors the database server,
     // and does purge and other utility operations
     //os_thread_create(&srv_master_thread, NULL, thread_ids + 1 + SRV_MAX_N_IO_THREADS);
-
+    log_checkpoint(20);
     // Makes a checkpoint at a given lsn or later
     log_make_checkpoint_at(ut_duint64_max);
-    LOGGER_INFO(LOGGER,
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP,
         "checkpoint: writed_to_buffer_lsn=%llu, writed_to_file_lsn=%llu, flushed_to_disk_lsn=%llu, "
         "checkpoint_no=%llu. checkpoint_lsn=%llu",
         log_get_writed_to_buffer_lsn(), log_get_writed_to_file_lsn(), log_get_flushed_to_disk_lsn(),
         log_sys->next_checkpoint_no - 1, log_sys->last_checkpoint_lsn);
 
-    LOGGER_INFO(LOGGER, "Service started");
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "Service started");
 
     return CM_SUCCESS;
 }
