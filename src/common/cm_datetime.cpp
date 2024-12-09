@@ -31,7 +31,7 @@ The value may wrap around.  It should only be used for heuristic purposes.
 @return ms since epoch */
 uint32 get_time_ms(void)
 {
-    struct timeval	tv;
+    struct timeval tv;
 
     get_time_of_day(&tv);
 
@@ -41,7 +41,7 @@ uint32 get_time_ms(void)
 
 date_t current_utc_time()
 {
-    date_t         dt = UNIX_EPOCH;
+    date_t dt = UNIX_EPOCH;
     struct timeval tv;
     
     get_time_of_day(&tv);
@@ -51,21 +51,22 @@ date_t current_utc_time()
 
 date_t current_time()
 {
-    date_t         dt = UNIX_EPOCH;
-    int32          tz_min;
+    date_t dt = UNIX_EPOCH;
+    int32 tz_min;
     struct timeval tv;
-    
+
     get_time_of_day(&tv);
     tz_min = get_time_zone();
     dt += tz_min * 60 * 1000000LL;
     dt += ((int64)tv.tv_sec * MICROSECS_PER_SECOND + tv.tv_usec);
+
     return dt;
 }
 
 int32 get_time_zone()
 {
 #ifdef __WIN__
-    TIME_ZONE_INFORMATION  tmp;
+    TIME_ZONE_INFORMATION tmp;
     GetTimeZoneInformation(&tmp);
     return tmp.Bias * (-1);
 #else
@@ -118,10 +119,10 @@ void current_clock(date_clock_t *clock)
     
     /* get real clock from CMOS */
     gettimeofday(&tp,NULL);
-    
+
     dt = tp.tv_sec;
     tm1 = localtime_r(&dt, &tm1_r);
-    
+
     clock->year      = (uint16)(tm1->tm_year+1900);
     clock->month     = (uint8)tm1->tm_mon + 1;
     clock->day       = (uint8)tm1->tm_mday;
@@ -138,7 +139,7 @@ void current_clock(date_clock_t *clock)
 }
 
 //convert second tick to clock.
-void SECONDS_TO_CLOCK(uint64 *second_ticks, date_clock_t *ClockPtr)
+void SECONDS_TO_CLOCK(uint64* second_ticks, date_clock_t* ClockPtr)
 {
     uint16   DaysPerYear = 365;  /* days per year */
     uint16   year;
@@ -195,10 +196,10 @@ void SECONDS_TO_CLOCK(uint64 *second_ticks, date_clock_t *ClockPtr)
 
 // convert clock to second tick.
 static UINT8 DeltaDays[12] = {0, 3, 3, 6, 8, 11, 13, 16, 19, 21, 24, 26};
-void CLOCK_TO_SECONDS(date_clock_t *ClockPtr, uint64 *second_ticks)
+void CLOCK_TO_SECONDS(date_clock_t* ClockPtr, uint64* second_ticks)
 {
-    uint64       DaysSince2020;
-    uint64       SecondsSince2020;
+    uint64 DaysSince2020;
+    uint64 SecondsSince2020;
 
     DaysSince2020  = ClockPtr->day - 1;
     DaysSince2020 += (ClockPtr->month - 1) * 28;
@@ -224,17 +225,17 @@ bool32 is_leap_year(uint32 inyear)
     return  FALSE;
 }
 
-void CLOCK_TO_MICRO_SECONDS(date_clock_t *ClockPtr, uint64 *micro_second_ticks)
+void CLOCK_TO_MICRO_SECONDS(date_clock_t* ClockPtr, uint64* micro_second_ticks)
 {
      uint64 sec;
-     
+
      CLOCK_TO_SECONDS(ClockPtr, &sec);
     *micro_second_ticks = sec * MICROSECS_PER_SECOND +
                           ClockPtr->milliseconds * MICROSECS_PER_MILLISECOND +
                           ClockPtr->microseconds;
 }
 
-void MICRO_SECONDS_TO_CLOCK(uint64 *micro_second_ticks, date_clock_t *ClockPtr)
+void MICRO_SECONDS_TO_CLOCK(uint64* micro_second_ticks, date_clock_t* ClockPtr)
 {
     uint64 sec = *micro_second_ticks / MICROSECS_PER_SECOND;
 
@@ -246,17 +247,16 @@ void MICRO_SECONDS_TO_CLOCK(uint64 *micro_second_ticks, date_clock_t *ClockPtr)
 
 #ifdef __WIN__
 
-int get_time_of_day(struct timeval *tv)
-
+int get_time_of_day(struct timeval* tv)
 {
     FILETIME ft;
     unsigned __int64 tmpres = 0;
     static int tzflag = 0;
-    
+
     if (tv != NULL)
     {
         GetSystemTimeAsFileTime(&ft);
-        
+
         tmpres = ft.dwHighDateTime;
         tmpres <<= 32;
         tmpres |= ft.dwLowDateTime;

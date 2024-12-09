@@ -32,16 +32,12 @@ The space for this header is reserved in every extent descriptor page, but used 
 
 #define FSP_HEADER_OFFSET   FIL_PAGE_DATA   /* Offset of the space header within a file page */
 /*-------------------------------------*/
-#define FSP_SPACE_ID        0 /* space id */
-
-#define FSP_NOT_USED        0   /* this field contained a value up to
-                                   which we know that the modifications
-                                   in the database have been flushed to the file space;
-                                   not used now */
-#define FSP_SIZE            8   /* Current size of the space in pages */
-#define FSP_FREE_LIMIT      12  /* Minimum page number for
-                                   which the free list has not been initialized:
-                                   the pages >= this limit are, by definition free */
+#define FSP_SPACE_ID        0   // space id
+#define FSP_MAX_SIZE        4   // space size
+#define FSP_SIZE            8   // current size of the space in pages
+#define FSP_FREE_LIMIT      12  // high water mark,
+                                // Minimum page number for which the free list has not been initialized:
+                                //    the pages >= this limit are, by definition free
 #define FSP_SPACE_FLAGS     16  /* fsp_space_t.flags, similar to dict_table_t::flags */
 #define FSP_FRAG_N_USED     20  /* number of used pages in the FSP_FREE_FRAG list */
 #define FSP_FREE            24  /* list of free extents */
@@ -212,7 +208,10 @@ extern inline void xdes_set_bit(
     bool32   val,    /*!< in: bit value */
     mtr_t   *mtr);   /*!< in/out: mini-transaction */
 
-
+extern inline void xdes_set_state(
+    xdes_t  *descr,  /*!< in/out: descriptor */
+    uint32   state,  /*!< in: state to set */
+    mtr_t   *mtr);   /*!< in/out: mini-transaction */
 
 
 
@@ -284,21 +283,21 @@ extern inline bool32 fsp_is_system_temporary(space_id_t space_id)
 
 //-----------------------------------------------------------------------------------------------------
 
-extern byte* fut_get_ptr(space_id_t space, const page_size_t &page_size,
-                  fil_addr_t addr, rw_lock_type_t rw_latch, mtr_t *mtr,
-                  buf_block_t **ptr_block);
 
-extern buf_block_t* fsp_page_create(uint32 space_id, uint32 page_no, mtr_t* mtr, mtr_t* init_mtr);
 
+extern buf_block_t* fsp_page_create(const page_id_t& page_id, const page_size_t& page_size,
+    Page_fetch mode, mtr_t* mtr, mtr_t* init_mtr);
 
 extern bool32 fsp_is_system_temporary(space_id_t space_id);
-extern fsp_header_t* fsp_get_space_header(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);
+extern inline fsp_header_t* fsp_get_space_header(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);
 
-extern status_t fsp_init_space(uint32 space_id, uint32 size);
-extern status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no);
+extern status_t fsp_init_space(uint32 space_id, uint64 init_size, uint64 max_size, uint32 fsp_type);
+extern status_t fsp_reserve_system_space();
+//extern status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no);
 
 extern void fsp_free_page(const page_id_t& page_id, const page_size_t& page_size, mtr_t* mtr);
-extern buf_block_t* fsp_alloc_free_page(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);
+extern buf_block_t* fsp_alloc_free_page(uint32 space_id,
+    const page_size_t& page_size, Page_fetch mode, mtr_t* mtr);
 
 extern void fsp_free_extent(    uint32 space_id,   xdes_t* xdes, mtr_t* mtr);
 extern xdes_t* fsp_alloc_free_extent(uint32 space_id, const page_size_t&  page_size, mtr_t* mtr);
@@ -323,6 +322,7 @@ extern xdes_t* fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, mtr_
 // Allocates free extents from table space
 extern xdes_t* fseg_reserve_free_extents(uint32 space_id, fseg_inode_t* inode, uint32 count, mtr_t* mtr);
 
+extern byte* fsp_replay_init_file_page(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
 
 #ifdef __cplusplus
 }

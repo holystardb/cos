@@ -72,15 +72,15 @@ typedef struct st_reactor_pool
     void (*reactor_start_poll) (struct st_reactor_pool*, epoll_event_callback_func);
 } reactor_pool_t;
 
-int reactor_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
-int reactor_add_write(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
-int reactor_del(reactor_t *reactor, my_socket fd);
-int reactor_mod_read_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
-int reactor_mod_write_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
+int32 reactor_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
+int32 reactor_add_write(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
+int32 reactor_del(reactor_t *reactor, my_socket fd);
+int32 reactor_mod_read_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
+int32 reactor_mod_write_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec);
 
-int reactor_epoll_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data);
-int reactor_epoll_del(reactor_t *reactor, my_socket fd);
-int reactor_epoll_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data);
+int32 reactor_epoll_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data);
+int32 reactor_epoll_del(reactor_t *reactor, my_socket fd);
+int32 reactor_epoll_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data);
 
 reactor_pool_t* reactor_pool_create(uint32 reactor_count, memory_pool_t *mem_pool = NULL);
 void reactor_pool_destroy(reactor_pool_t* pool);

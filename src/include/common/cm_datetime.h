@@ -17,7 +17,7 @@ extern "C" {
 
 
 typedef int64           date_t;
-//typedef uint64          time_t;
+
 
 typedef struct
 {

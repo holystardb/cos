@@ -161,7 +161,7 @@ static void free_reactor_data(reactor_t *reactor, my_socket fd)
     rbt_delete(reactor->data_rbt, &key);
 }
 
-static int reactor_add(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint32 events, uint16 timeout_sec)
+static int32 reactor_add(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint32 events, uint16 timeout_sec)
 {
     struct epoll_event  ev;
     reactor_data_t     *r_data;
@@ -197,21 +197,21 @@ static int reactor_add(reactor_t *reactor, my_socket fd, epoll_data_t *data, uin
     return 0;
 }
 
-int reactor_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
+int32 reactor_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
 {
     uint32 events;
     events = EPOLLIN | EPOLLONESHOT;
     return reactor_add(reactor, fd, data, events, timeout_sec);
 }
 
-int reactor_add_write(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
+int32 reactor_add_write(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
 {
     uint32 events;
     events = EPOLLOUT | EPOLLONESHOT;
     return reactor_add(reactor, fd, data, events, timeout_sec);
 }
 
-int reactor_del(reactor_t *reactor, my_socket fd)
+int32 reactor_del(reactor_t *reactor, my_socket fd)
 {
     reactor_data_t     *r_data;
     
@@ -237,7 +237,7 @@ int reactor_del(reactor_t *reactor, my_socket fd)
     return 0;
 }
 
-static int reactor_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint32 events, uint16 timeout_sec)
+static int32 reactor_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint32 events, uint16 timeout_sec)
 {
     struct epoll_event  ev;
     reactor_data_t     *r_data;
@@ -272,21 +272,21 @@ static int reactor_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *d
     return 0;
 }
 
-int reactor_mod_read_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
+int32 reactor_mod_read_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
 {
     uint32  events;
     events = EPOLLIN | EPOLLONESHOT;
     return reactor_mod_oneshot(reactor, fd, data, events, timeout_sec);
 }
 
-int reactor_mod_write_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
+int32 reactor_mod_write_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data, uint16 timeout_sec)
 {
     uint32  events;
     events = EPOLLOUT | EPOLLONESHOT;
     return reactor_mod_oneshot(reactor, fd, data, events, timeout_sec);
 }
 
-int reactor_epoll_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data)
+int32 reactor_epoll_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data)
 {
     struct epoll_event  ev;
     ev.events = EPOLLIN | EPOLLONESHOT;
@@ -297,7 +297,7 @@ int reactor_epoll_add_read(reactor_t *reactor, my_socket fd, epoll_data_t *data)
     return 0;
 }
 
-int reactor_epoll_del(reactor_t *reactor, my_socket fd)
+int32 reactor_epoll_del(reactor_t *reactor, my_socket fd)
 {
     if (epoll_ctl(reactor->epoll_fd_without_timeout, EPOLL_CTL_DEL, fd, NULL) != 0) {
         return -1;
@@ -305,7 +305,7 @@ int reactor_epoll_del(reactor_t *reactor, my_socket fd)
     return 0;
 }
 
-int reactor_epoll_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data)
+int32 reactor_epoll_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *data)
 {
     struct epoll_event  ev;
     ev.events = EPOLLIN | EPOLLONESHOT;
@@ -316,7 +316,7 @@ int reactor_epoll_mod_oneshot(reactor_t *reactor, my_socket fd, epoll_data_t *da
     return 0;
 }
 
-static int reactor_data_cmp(const void *p1, const void *p2)
+static int32 reactor_data_cmp(const void *p1, const void *p2)
 {
     const reactor_data_t*   data1 = (const reactor_data_t*) p1;
     const reactor_data_t*   data2 = (const reactor_data_t*) p2;

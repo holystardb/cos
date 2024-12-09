@@ -69,7 +69,8 @@ static void checkpoint_copy_item(checkpoint_t* checkpoint,
     // 1 copy data
     // if it is transaction slot page, 
     rw_lock_s_lock(&(block->rw_lock));
-    memcpy(checkpoint->group.buf + UNIV_PAGE_SIZE * checkpoint->group.item_count, block->frame, UNIV_PAGE_SIZE);
+    memcpy(checkpoint->group.buf + UNIV_PAGE_SIZE * checkpoint->group.item_count,
+        block->frame, block->page.size.physical());
     //knl_securec_check(ret);
     rw_lock_s_unlock(&(block->rw_lock));
 
@@ -264,11 +265,10 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
 {
     status_t err;
     checkpoint_sort_item_t* item;
-    const page_size_t page_size(0);
 
     for (uint32 i = begin; i < end; i++) {
         item = &checkpoint->group.items[i];
-
+        const page_size_t page_size(item->page_id.space_id());
         err = fil_write(FALSE, item->page_id, page_size, page_size.physical(),
             checkpoint->group.buf + page_size.physical() * item->buf_id,
             checkpoint_flush_callback, item);
@@ -280,8 +280,8 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
     }
 
     uint32 count = 0;
-    date_t begin_time_us = g_timer()->now;
-    while (g_timer()->now < begin_time_us + checkpoint->flush_timeout_us) {
+    date_t begin_time_us = g_timer()->now_us;
+    while (g_timer()->now_us < begin_time_us + checkpoint->flush_timeout_us) {
         count = 0;
         for (uint32 i = begin; i < end; i++) {
             item = &checkpoint->group.items[i];
@@ -308,7 +308,6 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
 static status_t checkpoint_sync_pages(checkpoint_t* checkpoint, uint32 begin, uint32 end)
 {
     checkpoint_sort_item_t* item;
-    const page_size_t page_size(0);
     fil_node_t* node;
     fil_space_t* space;
 
@@ -590,4 +589,5 @@ inline void checkpoint_wake_up_thread()
 
     os_event_set(checkpoint->checkpoint_event);
 }
+
 

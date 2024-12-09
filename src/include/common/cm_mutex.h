@@ -20,7 +20,7 @@ extern "C" {
 #define OS_WAIT_TIME_FAIL       2
 
 /** Denotes an infinite delay for os_event_wait_time() */
-#define OS_WAIT_INFINITE_TIME   UINT32_UNDEFINED
+#define OS_WAIT_INFINITE_TIME   UINT64_UNDEFINED
 
 #ifdef __WIN__
 typedef CRITICAL_SECTION    os_mutex_t;
@@ -44,7 +44,7 @@ void os_event_set_signal(os_event_t event);
 uint64 os_event_reset(os_event_t event);
 void os_event_destroy(os_event_t event);
 void os_event_wait(os_event_t event, uint64 reset_sig_count = 0);
-int os_event_wait_time(os_event_t event, uint32 timeout_us, uint64 reset_sig_count = 0);
+int os_event_wait_time(os_event_t event, uint64 timeout_us, uint64 reset_sig_count = 0);
 
 void os_mutex_create(os_mutex_t *mutex);
 void os_mutex_enter(os_mutex_t *mutex);

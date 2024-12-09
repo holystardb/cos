@@ -28,10 +28,10 @@ uint32 heap_create_entry(uint32 space_id)
 
     mtr_start(&mtr);
 
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
     buf_block_t* block[8] = {NULL};
     for (uint32 i = 0; i < 8; i++) {
-        block[i] = fsp_alloc_free_page(space_id, page_size, &mtr);
+        block[i] = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
         if (block[i] == NULL) {
             //LOG_ERROR(LOGGER,
             //          "failed to create heap entry of table, space id %u table name %s",
@@ -61,9 +61,9 @@ err_exit:
     return page_no;
 }
 
-static inline itl_t* heap_get_itl(page_t* page, uint8 id)
+static inline itl_t* heap_get_itl(page_t* page, uint8 itl_id)
 {
-    return (itl_t *)(page + UNIV_PAGE_SIZE - FIL_PAGE_DATA_END - (id + 1) * sizeof(itl_t));
+    return (itl_t *)(page + UNIV_PAGE_SIZE - FIL_PAGE_DATA_END - (itl_id + 1) * sizeof(itl_t));
 }
 
 inline row_header_t* heap_get_row_by_dir(page_t* page, row_dir_t* dir)
@@ -97,14 +97,14 @@ static inline row_dir_t *heap_alloc_free_dir(page_t* page, uint32* dir_slot, mtr
         dir->undo_page_no = FIL_NULL;
         dir->undo_page_offset = 0;
         dir->is_free = 1;
-        dir->is_overwrite_scn = 0;
+        dir->is_ow_scn = 0;
 
-        uint16 offset = mach_read_from_2(hdr + HEAP_HEADER_UPPER) - sizeof(row_dir_t);
+        uint16 offset = (uint16)mach_read_from_2(hdr + HEAP_HEADER_UPPER) - sizeof(row_dir_t);
         mlog_write_uint32(hdr + HEAP_HEADER_UPPER, offset, MLOG_2BYTES, mtr);
     } else {
         dir = heap_get_dir(page, *dir_slot);
 
-        mlog_write_uint32(hdr + HEAP_HEADER_FIRST_FREE_DIR, dir->next_free_dir, MLOG_2BYTES, mtr);
+        mlog_write_uint32(hdr + HEAP_HEADER_FIRST_FREE_DIR, dir->free_next_dir, MLOG_2BYTES, mtr);
     }
 
     return dir;
@@ -145,18 +145,17 @@ static void heap_reorganize_page(buf_block_t* block)
 
         row = HEAP_GET_ROW(page, dir);
         if (row->is_deleted) {
-            LOGGER_PANIC_CHECK(LOGGER, heap_row_get_itl_id(row) != HEAP_INVALID_ITL_ID,
+            LOGGER_PANIC_CHECK(LOGGER, LOG_MODULE_HEAP, heap_row_get_itl_id(row) != HEAP_INVALID_ITL_ID,
                 "row itl id is invalid, space id %u page no %u page type %u",
-                0, 0, 0);
-                //block->get_space_id(), block->get_page_no(), block->get_page_type());
+                block->get_space_id(), block->get_page_no(), block->get_page_type());
 
             itl_t* itl = heap_get_itl(page, heap_row_get_itl_id(row));
             if (!itl->is_active) {
                 heap_row_set_itl_id(row, HEAP_INVALID_ITL_ID);
                 dir->scn = itl->scn;
-                dir->is_overwrite_scn = itl->is_overwrite_scn;
+                dir->is_ow_scn = itl->is_ow_scn;
                 dir->is_free = 1;
-                dir->next_free_dir = mach_read_from_2(header + HEAP_HEADER_FIRST_FREE_DIR);
+                dir->free_next_dir = mach_read_from_2(header + HEAP_HEADER_FIRST_FREE_DIR);
                 mach_write_to_2(header + HEAP_HEADER_FIRST_FREE_DIR, i);
                 continue;
             }
@@ -283,10 +282,10 @@ static void heap_reuse_itl(page_t* page, itl_t* itl, uint8 itl_id, mtr_t* mtr)
         }
 
         dir->scn = itl->scn;
-        dir->is_overwrite_scn = itl->is_overwrite_scn;
+        dir->is_ow_scn = itl->is_ow_scn;
         if (row->is_deleted) {
             dir->is_free = TRUE;
-            dir->next_free_dir = mach_read_from_2(header + HEAP_HEADER_FIRST_FREE_DIR);
+            dir->free_next_dir = mach_read_from_2(header + HEAP_HEADER_FIRST_FREE_DIR);
             mach_write_to_2(header + HEAP_HEADER_FIRST_FREE_DIR, i);
         }
     }
@@ -297,7 +296,7 @@ static itl_t* heap_alloc_itl(buf_block_t* block, trx_t* trx, mtr_t* mtr, uint8* 
     itl_t* ret_itl = NULL;
     page_t* page = buf_block_get_frame(block);
     heap_page_header_t* header = page + HEAP_HEADER_OFFSET;
-    uint32   itl_count = mach_read_from_2(header + HEAP_HEADER_ITLS);
+    uint32 itl_count = mach_read_from_2(header + HEAP_HEADER_ITLS);
 
     for (uint32 i = 0; i < itl_count; i++) {
         itl_t* itl = heap_get_itl(page, i);
@@ -343,6 +342,25 @@ static itl_t* heap_alloc_itl(buf_block_t* block, trx_t* trx, mtr_t* mtr, uint8* 
     return ret_itl;
 }
 
+inline void heap_set_itl_trx_end(buf_block_t* block,
+    trx_slot_id_t slot_id, uint8 itl_id, uint64 scn, mtr_t* mtr)
+{
+    ut_ad(rw_lock_own(&block->rw_lock, RW_X_LATCH));
+
+    page_t* page = buf_block_get_frame(block);
+
+    itl_t* itl = heap_get_itl(page, itl_id);
+    ut_a(itl);
+    ut_a(itl->trx_slot_id.id == slot_id.id);
+    ut_a(itl->is_active);
+    itl->scn = scn;
+    itl->is_active = FALSE;
+    itl->is_ow_scn = FALSE;
+
+    mlog_write_log(MLOG_HEAP_CLEAN_ITL, block->get_space_id(), block->get_page_no(), NULL, 0, mtr);
+    mlog_catenate_uint32(mtr, itl_id, MLOG_1BYTE);
+    mlog_catenate_uint64(mtr, scn);
+}
 
 itl_t* heap_alloc_itl_new(que_sess_t* session, page_t* page, mtr_t* mtr, uint8* itl_id)
 {
@@ -424,6 +442,8 @@ bool32 heap_lock_row(que_sess_t* session, buf_block_t* block, row_header_t* row,
 
     //row_dir_t* dir = heap_get_dir(page, row->slot);
     //heap_row_set_itl_id(row, itl_id);
+
+    return TRUE;
 }
 
 uint16 heap_get_insert_size(uint16 row_size, bool32 is_alloc_itl)
@@ -439,7 +459,7 @@ uint16 heap_get_insert_size(uint16 row_size, bool32 is_alloc_itl)
 inline void heap_page_init(buf_block_t* block, dict_table_t* table, mtr_t* mtr)
 {
     page_t* page = buf_block_get_frame(block);
-    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_HEAP_DATA, MLOG_2BYTES, mtr);
+    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_HEAP, MLOG_2BYTES, mtr);
 
     uint16 lower = FIL_PAGE_DATA + HEAP_HEADER_SIZE;
     uint16 upper = UNIV_PAGE_SIZE_DEF - FIL_PAGE_DATA_END - sizeof(itl_t) * table->init_trans;
@@ -465,7 +485,7 @@ static inline uint32 heap_get_page_free_space(buf_block_t* block)
 static buf_block_t* heap_get_page_for_tuple(dict_table_t* table, uint32 page_no, uint16 row_size, mtr_t* mtr)
 {
     const page_id_t page_id(table->space_id, page_no);
-    const page_size_t page_size(0);
+    const page_size_t page_size(table->space_id);
     buf_block_t* block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
     ut_a(block->get_page_no() == page_no);
     //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
@@ -526,6 +546,7 @@ inline status_t heap_check_row_record_size(row_header_t* row, uint32 len)
 
 #define ROW_NULL_BITS_IN_BYTES(b)   (((b) + 7) / 8)
 
+
 static status_t heap_insert_row_ext(que_sess_t *sess,
     dict_table_t* table, const dfield_t* field, row_id_t* row_id)
 {
@@ -541,21 +562,22 @@ static inline status_t heap_convert_dtuple_to_rec(que_sess_t* sess,
     byte*  data;
     uint32 null_bytes = ROW_NULL_BITS_IN_BYTES(table->column_count);
 
-    row->column_count = table->column_count;
-    row->size = OFFSET_OF(row_header_t, null_bits) + null_bytes;
+    row->col_count = table->column_count;
+    row->size = (uint16)OFFSET_OF(row_header_t, null_bits) + null_bytes;
     row->flag = 0;
     data = (byte*)row + row->size;
     nulls_ptr = (byte*)row + OFFSET_OF(row_header_t, null_bits);
     memset(nulls_ptr, 0x00, null_bytes);
 
     for (uint32 i = 0; i < tuple->n_fields; i++) {
-        const dfield_t* field = tuple->fields[i];
+        const dfield_t* field = tuple->fields + i;
         if (dfield_is_null(field)) {
             nulls_ptr += (i / 8);
             *nulls_ptr |= (1 << (7 - i / 8));
             continue;
         }
         uint32 field_len = dfield_get_len(field);
+        uint32 compressed_size = 2;//mach_get_compressed_size(field_len);
 
         if (dfield_is_ext(field)) {
             CM_RETURN_IF_ERROR(heap_check_row_record_size(row, sizeof(row_id_t)));
@@ -570,12 +592,17 @@ static inline status_t heap_convert_dtuple_to_rec(que_sess_t* sess,
             continue;
         }
 
-        CM_RETURN_IF_ERROR(heap_check_row_record_size(row, field_len + mach_get_compressed_size(field_len)));
-
-        data += mach_write_compressed(data, field_len);
+        // check size of row
+        CM_RETURN_IF_ERROR(heap_check_row_record_size(row, field_len + compressed_size));
+        // length
+        //data += mach_write_compressed(data, field_len);
+        mach_write_to_2(data, field_len);
+        data += compressed_size;
+        // data
         memcpy(data, dfield_get_data(field), field_len);
         data += field_len;
-        row->size += field_len;
+        //
+        row->size += compressed_size + field_len;
     }
 
     return CM_SUCCESS;
@@ -587,7 +614,7 @@ static inline row_header_t* heap_prepare_insert(que_sess_t* sess, dict_table_t* 
     status_t ret;
     row_header_t* row;
 
-    row = (row_header_t*)mcontext_stack_push(sess->stack_context, ROW_RECORD_MAX_SIZE);
+    row = (row_header_t*)mcontext_stack_push(sess->mcontext_stack, ROW_RECORD_MAX_SIZE);
     ret = heap_convert_dtuple_to_rec(sess, table, tuple, row);
 
     return ret == CM_SUCCESS ? row : NULL;
@@ -595,42 +622,42 @@ static inline row_header_t* heap_prepare_insert(que_sess_t* sess, dict_table_t* 
 
 
 static void heap_insert_row_into_page(buf_block_t* block, row_header_t *rec,
-    command_id_t cid, undo_data_t* undo, trx_undo_page_t* undo_page, mtr_t* mtr)
+    command_id_t cid, undo_data_t* undo_data, mtr_t* mtr)
 {
     page_t* page = buf_block_get_frame(block);
     heap_page_header_t* hdr = page + HEAP_HEADER_OFFSET;
     uint16 upper = mach_read_from_2(hdr + HEAP_HEADER_UPPER);
     uint16 lower = mach_read_from_2(hdr + HEAP_HEADER_LOWER);
 
-    // check compact
+    // 1. check compact
     if (lower + rec->size + sizeof(row_dir_t) > upper) {
         heap_reorganize_page(block);
         mlog_write_log(MLOG_PAGE_REORGANIZE, block->get_space_id(), block->get_page_no(), NULL, 0, mtr);
     }
 
+    // 2. alloc directory
     uint32 dir_slot;
     row_dir_t* dir = heap_alloc_free_dir(page, &dir_slot, mtr);
     dir->is_free = 0;
     dir->scn = cid;
-    dir->is_overwrite_scn = 0;
+    dir->is_ow_scn = 0;
     dir->offset = lower;  // new position, dont overwrite old data
     // Sets roll ptr field of row
-    dir->undo_page_no = undo_page->page_no;
-    dir->undo_page_offset = undo_page->offset;
+    dir->undo_space_index = undo_data->undo_space_index;
+    dir->undo_page_no = undo_data->undo_page_no;
+    dir->undo_page_offset = undo_data->undo_page_offset;
     //row->is_changed = 1;
 
-    undo->type = UNDO_HEAP_INSERT;
-    // old dir value
-    undo->snapshot.scn = dir->scn;
-    undo->snapshot.undo_page_no = dir->undo_page_no;
-    undo->snapshot.offsets = dir->offsets;
+    // 3. 
+    undo_data->rec.type = UNDO_HEAP_INSERT;
+    undo_data->rec.snapshot.scn = dir->scn;
+    undo_data->rec.snapshot.undo_page_no = dir->undo_page_no;
+    undo_data->rec.snapshot.offsets = dir->offsets;
+    undo_data->rec.space_id = block->get_space_id();
+    undo_data->rec.page_no = block->get_page_no();
+    undo_data->rec.dir_slot = dir_slot;
 
-    undo->space_id = block->get_space_id();
-    undo->page_no = block->get_page_no();
-    undo->dir_slot = dir_slot;
-    undo->data_size = 0;
-
-    // insert row
+    // 4. insert row to page
     uint32 rows = mach_read_from_2(hdr + HEAP_HEADER_ROWS);
     uint32 free_size = mach_read_from_2(hdr + HEAP_HEADER_FREE_SIZE);
     mach_write_to_2(hdr + HEAP_HEADER_LOWER, lower + rec->size);
@@ -638,6 +665,7 @@ static void heap_insert_row_into_page(buf_block_t* block, row_header_t *rec,
     mach_write_to_2(hdr + HEAP_HEADER_ROWS, rows + 1);
     memcpy(page + lower, (const byte *)rec, rec->size);
 
+    // 5. redo
     mlog_write_log(MLOG_HEAP_INSERT, block->get_space_id(), block->get_page_no(), NULL, 0, mtr);
     mlog_catenate_uint32(mtr, lower + rec->size, MLOG_2BYTES);
     mlog_catenate_uint32(mtr, free_size - rec->size, MLOG_2BYTES);
@@ -646,10 +674,9 @@ static void heap_insert_row_into_page(buf_block_t* block, row_header_t *rec,
     mlog_catenate_string(mtr, (byte *)rec, rec->size);
 }
 
-
 static status_t heap_insert_row(que_sess_t *sess, dict_table_t* table, row_header_t *row)
 {
-    status_t  ret = CM_SUCCESS;
+    status_t ret = CM_SUCCESS;
     mtr_t mtr;
     uint32 cost_size;
     fsm_search_path_t search_path;
@@ -674,22 +701,24 @@ static status_t heap_insert_row(que_sess_t *sess, dict_table_t* table, row_heade
     // set itl
     uint8 itl_id;
     itl_t* itl = heap_alloc_itl(block, sess->trx, &mtr, &itl_id);
+    ut_ad(itl);
     heap_row_set_itl_id(row, itl_id);
 
+    //
+    undo_data_t undo_data;
+    undo_data.undo_op = UNDO_INSERT_OP;
+    undo_data.query_min_scn = query_min_scn;
+    undo_data.rec.data_size = 0;
     //if (cursor->nologging_type != SESSION_LEVEL) {
-        trx_undo_page_t* undo_page;
-        undo_page = trx_undo_prepare(sess, TRX_UNDO_INSERT, sizeof(row_dir_t), query_min_scn, &mtr);
-        if (undo_page == NULL) {
+        if (trx_undo_prepare(sess, &undo_data, &mtr) != CM_SUCCESS) {
             ret = CM_ERROR;
             goto err_exit;
         }
     //}
 
-    undo_data_t undo_data;
-    row_dir_t* dir;
-    heap_insert_row_into_page(block, row, sess->cid, &undo_data, undo_page, &mtr);
+    heap_insert_row_into_page(block, row, sess->cid, &undo_data, &mtr);
 
-    trx_undo_write(sess, &undo_data, &mtr);
+    trx_undo_write_log_rec(sess, &undo_data, &mtr);
 
     // change catagory of page
     uint16 avail = heap_get_page_free_space(block);
@@ -697,6 +726,9 @@ static status_t heap_insert_row(que_sess_t *sess, dict_table_t* table, row_heade
     if (category != search_path.category) {
         fsm_recursive_set_catagory(table, search_path, category, &mtr);
     }
+
+    // add page to fast_clean_page_list
+    sess_append_fast_clean_page_list(sess, block, itl_id);
 
 err_exit:
 
@@ -719,10 +751,11 @@ status_t heap_insert(que_sess_t* sess, insert_node_t* insert_node)
         return CM_ERROR;
     }
 
+    //
+    trx_start_if_not_started(sess);
+
 
     mtr_start(&mtr);
-
-    trx_start_if_not_started(sess, &mtr);
 
     // 
     //if (lock_table_shared(session, cursor->dc_entity, LOCK_INF_WAIT) != CT_SUCCESS) {

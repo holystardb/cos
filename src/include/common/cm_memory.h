@@ -192,7 +192,7 @@ extern uint32 MemoryBufHeaderSize;
 extern inline void* ut_malloc_zero(size_t size)
 {
     void* tmp = malloc(size);
-    memset(tmp, '\0', size);
+    memset_s(tmp, size, '\0', size);
     return tmp;
 }
 

@@ -749,31 +749,28 @@ ib_rbt_t* rbt_create(
     ib_rbt_t* tree;
     ib_rbt_node_t* node;
 
-    tree = (ib_rbt_t*)ut_malloc(sizeof(*tree));
-    memset(tree, 0, sizeof(*tree));
+    tree = (ib_rbt_t*)ut_malloc_zero(sizeof(ib_rbt_t));
+    if (tree == NULL) {
+        return NULL;
+    }
+
     tree->count = 0;
     tree->start = NULL;
     tree->end = NULL;
     tree->sizeof_value = sizeof_value;
     tree->mpool = mpool;
+    tree->compare = compare;
     UT_LIST_INIT(tree->used_pages);
 
-    /* Create the sentinel (NIL) node. */
-    node = tree->nil = (ib_rbt_node_t*)ut_malloc(sizeof(*node));
-    memset(node, 0, sizeof(*node));
-
+    // Create the sentinel (NIL) node
+    node = tree->nil = (ib_rbt_node_t*)ut_malloc_zero(sizeof(ib_rbt_node_t));
     node->color = IB_RBT_BLACK;
     node->parent = node->left = node->right = node;
 
-    /* Create the "fake" root, the real root node will be the
-    left child of this node. */
-    node = tree->root = (ib_rbt_node_t*)ut_malloc(sizeof(*node));
-    memset(node, 0, sizeof(*node));
-
+    // Create the "fake" root, the real root node will be the left child of this node
+    node = tree->root = (ib_rbt_node_t*)ut_malloc_zero(sizeof(ib_rbt_node_t));
     node->color = IB_RBT_BLACK;
     node->parent = node->left = node->right = tree->nil;
-
-    tree->compare = compare;
 
     return(tree);
 }
@@ -813,8 +810,7 @@ Add a new node to the tree, useful for data that is pre-sorted.
 const ib_rbt_node_t* rbt_add_node(
 	ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: bounds */
-	const void*	value)			/*!< in: this value is copied
-						to the node */
+	const void*	value)			/*!< in: this value is copied to the node */
 {
 	ib_rbt_node_t*	node;
 
@@ -829,8 +825,7 @@ const ib_rbt_node_t* rbt_add_node(
 		parent->last = tree->root;
 	}
 
-	/* Append the node, the hope here is that the caller knows
-	what s/he is doing. */
+	/* Append the node, the hope here is that the caller knows what s/he is doing. */
 	rbt_tree_add_child(tree, parent, node);
 	rbt_balance_tree(tree, node);
 
@@ -973,7 +968,7 @@ const ib_rbt_node_t* rbt_upper_bound(
 /**********************************************************************//**
 Find the node that has the greatest key that is <= key.
 @return	value of result */
-int rbt_search(
+int32 rbt_search(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: search bounds */
 	const void*	key)			/*!< in: key to search */
@@ -1005,7 +1000,7 @@ int rbt_search(
 Find the node that has the greatest key that is <= key. But use the
 supplied comparison function.
 @return	value of result */
-int rbt_search_cmp(
+int32 rbt_search_cmp(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: search bounds */
 	const void*	key,			/*!< in: key to search */
@@ -1111,7 +1106,6 @@ uint32 rbt_merge_uniq(
 	}
 
 	for (/* No op */; src_node; src_node = rbt_next(src, src_node)) {
-
 		if (rbt_search(dst, &parent, src_node->value) != 0) {
 			rbt_add_node(dst, &parent, src_node->value);
 			++n_merged;
@@ -1146,8 +1140,7 @@ uint32 rbt_merge_uniq_destructive(
 		/* Skip duplicates. */
 		if (rbt_search(dst, &parent, prev->value) != 0) {
 
-			/* Remove and reset the node but preserve
-			the node (data) value. */
+			/* Remove and reset the node but preserve the node (data) value. */
 			rbt_remove_node_and_rebalance(src, prev);
 
 			/* The nil should be taken from the dst tree. */

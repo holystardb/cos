@@ -3,7 +3,7 @@
 #include "cm_util.h"
 #include "cm_log.h"
 #include "knl_fsp.h"
-#include "knl_log.h"
+#include "knl_redo.h"
 
 #include "m_ctype.h"
 
@@ -19,8 +19,8 @@ bool32 buf_pool_should_madvise;
 uint32 srv_purge_threads;
 /* Use srv_n_io_[read|write]_threads instead. */
 uint32 srv_n_file_io_threads;
-uint32 srv_read_io_threads = 4;
-uint32 srv_write_io_threads = 4;
+uint32 srv_read_io_threads = 8;
+uint32 srv_write_io_threads = 8;
 uint32 srv_sync_io_contexts = 16;
 
 uint32 srv_read_io_timeout_seconds = 30;
@@ -160,6 +160,11 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
     mach_write_to_8(ptr, ctrl->ver_num);
     ptr += 8;
 
+    // reserved
+
+    /*---------------tablespace file is Starting from position 512 -----------------*/
+    ptr = buf + 512;
+
     // database name
     memcpy(ptr, ctrl->database_name, strlen(ctrl->database_name) + 1);
     ptr += strlen(ctrl->database_name) + 1;
@@ -174,6 +179,26 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
     mach_write_to_8(ptr, ctrl->system.max_size);
     ptr += 8;
     mach_write_to_4(ptr, ctrl->system.autoextend);
+    ptr += 4;
+
+    // systrans
+    memcpy(ptr, ctrl->systrans.name, strlen(ctrl->systrans.name) + 1);
+    ptr += strlen(ctrl->systrans.name) + 1;
+    mach_write_to_8(ptr, ctrl->systrans.size);
+    ptr += 8;
+    mach_write_to_8(ptr, ctrl->systrans.max_size);
+    ptr += 8;
+    mach_write_to_4(ptr, ctrl->systrans.autoextend);
+    ptr += 4;
+
+    // sysaux
+    memcpy(ptr, ctrl->sysaux.name, strlen(ctrl->sysaux.name) + 1);
+    ptr += strlen(ctrl->sysaux.name) + 1;
+    mach_write_to_8(ptr, ctrl->sysaux.size);
+    ptr += 8;
+    mach_write_to_8(ptr, ctrl->sysaux.max_size);
+    ptr += 8;
+    mach_write_to_4(ptr, ctrl->sysaux.autoextend);
     ptr += 4;
 
     // double write
@@ -239,7 +264,7 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
         ptr += strlen(ctrl->user_spaces[i].name) + 1;
         mach_write_to_4(ptr, ctrl->user_spaces[i].space_id);
         ptr += 4;
-        mach_write_to_4(ptr, ctrl->user_spaces[i].purpose);
+        mach_write_to_4(ptr, ctrl->user_spaces[i].flags);
         ptr += 4;
     }
 
@@ -357,13 +382,16 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
     }
 
     // ctrl file
-    ptr = buf + 16;
+    ptr = buf + 16; // magic len + file_size len + checksum len
 
     //
     ctrl->version = mach_read_from_8(ptr);
     ptr += 8;
     ctrl->ver_num = mach_read_from_8(ptr);
     ptr += 8;
+
+    /*---------------tablespace file is Starting from position 512 -----------------*/
+    ptr = buf + 512;
 
     // database name
     memcpy(ctrl->database_name, (const char*)ptr, strlen((const char*)ptr) + 1);
@@ -379,6 +407,26 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
     ctrl->system.max_size = mach_read_from_8(ptr);
     ptr += 8;
     ctrl->system.autoextend = mach_read_from_4(ptr);
+    ptr += 4;
+
+    // systrans
+    memcpy(ctrl->systrans.name, (const char*)ptr, strlen((const char*)ptr) + 1);
+    ptr += strlen((const char*)ptr) + 1;
+    ctrl->systrans.size = mach_read_from_8(ptr);
+    ptr += 8;
+    ctrl->systrans.max_size = mach_read_from_8(ptr);
+    ptr += 8;
+    ctrl->systrans.autoextend = mach_read_from_4(ptr);
+    ptr += 4;
+
+    // sysaux
+    memcpy(ctrl->sysaux.name, (const char*)ptr, strlen((const char*)ptr) + 1);
+    ptr += strlen((const char*)ptr) + 1;
+    ctrl->sysaux.size = mach_read_from_8(ptr);
+    ptr += 8;
+    ctrl->sysaux.max_size = mach_read_from_8(ptr);
+    ptr += 8;
+    ctrl->sysaux.autoextend = mach_read_from_4(ptr);
     ptr += 4;
 
     // double write
@@ -441,7 +489,7 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
         ptr += strlen((const char*)ptr) + 1;
         ctrl->user_spaces[i].space_id = mach_read_from_4(ptr);
         ptr += 4;
-        ctrl->user_spaces[i].purpose = mach_read_from_4(ptr);
+        ctrl->user_spaces[i].flags = mach_read_from_4(ptr);
         ptr += 4;
     }
 
@@ -560,7 +608,20 @@ bool32 db_ctrl_add_system(char* data_file_name, uint64 size, uint64 max_size, bo
     return TRUE;
 }
 
-bool32 db_ctrl_add_redo(char* data_file_name, uint64 size, uint64 max_size, bool32 autoextend)
+bool32 db_ctrl_add_systrans(char* data_file_name, uint64 size)
+{
+    db_data_file_t *file = &srv_ctrl_file.systrans;
+
+    size = (size / UNIV_PAGE_SIZE) * UNIV_PAGE_SIZE;
+    if (size < 1024 * 1024 || size > 1024 * 1024 * 8) {
+        return FALSE;
+    }
+    db_ctrl_set_file(file, DB_SYSTRANS_SPACE_ID, DB_SYSTRANS_FILNODE_ID, data_file_name, size, size, FALSE);
+
+    return TRUE;
+}
+
+bool32 db_ctrl_add_redo(char* data_file_name, uint64 size)
 {
     if (srv_ctrl_file.redo_count >= DB_REDO_FILE_MAX_COUNT) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_redo: Error, REDO file has reached the maximum limit");
@@ -570,7 +631,7 @@ bool32 db_ctrl_add_redo(char* data_file_name, uint64 size, uint64 max_size, bool
     db_data_file_t *file = &srv_ctrl_file.redo_group[srv_ctrl_file.redo_count];
     srv_ctrl_file.redo_count++;
 
-    db_ctrl_set_file(file, DB_REDO_SPACE_ID, DB_DATA_FILNODE_INALID_ID, data_file_name, size, max_size, autoextend);
+    db_ctrl_set_file(file, DB_REDO_SPACE_ID, DB_DATA_FILNODE_INALID_ID, data_file_name, size, size, FALSE);
 
     return TRUE;
 }
@@ -592,9 +653,10 @@ bool32 db_ctrl_add_undo(char* data_file_name, uint64 size, uint64 max_size, bool
     }
 
     db_data_file_t *file = &srv_ctrl_file.undo_group[srv_ctrl_file.undo_count];
-    srv_ctrl_file.undo_count++;
+    db_ctrl_set_file(file, DB_UNDO_START_SPACE_ID + srv_ctrl_file.undo_count,
+        DB_DATA_FILNODE_INALID_ID, data_file_name, size, max_size, autoextend);
 
-    db_ctrl_set_file(file, DB_UNDO_SPACE_ID, DB_DATA_FILNODE_INALID_ID, data_file_name, size, max_size, autoextend);
+    srv_ctrl_file.undo_count++;
 
     return TRUE;
 }
@@ -906,6 +968,20 @@ status_t srv_create_system_file()
     return CM_SUCCESS;
 }
 
+status_t srv_create_systrans_file()
+{
+    db_data_file_t *ctrl_file = &srv_ctrl_file.systrans;
+
+    CM_RETURN_IF_ERROR(srv_delete_db_file(ctrl_file->name));
+
+    status_t err = create_db_file(ctrl_file);
+    if (err != CM_SUCCESS) {
+        return err;
+    }
+
+    return CM_SUCCESS;
+}
+
 status_t srv_create_double_write_file()
 {
     db_data_file_t *ctrl_file = &srv_ctrl_file.dbwr;
@@ -939,7 +1015,7 @@ status_t srv_create_user_data_files()
     return CM_SUCCESS;
 }
 
-bool32 db_ctrl_createdatabase(char* database_name, char* charset_name)
+static bool32 db_ctrl_create_database_low(char* database_name, char* charset_name)
 {
     db_ctrl_t* ctrl_file = &srv_ctrl_file;
 
@@ -952,9 +1028,14 @@ bool32 db_ctrl_createdatabase(char* database_name, char* charset_name)
         ctrl_file->system_spaces[i].space_id = DB_SPACE_INALID_ID;
     }
     db_ctrl_add_system_space("system", DB_SYSTEM_SPACE_ID);
+    db_ctrl_add_system_space("systrans", DB_SYSTRANS_SPACE_ID);
     db_ctrl_add_system_space("sysaux", DB_SYSAUX_SPACE_ID);
     db_ctrl_add_system_space("redo", DB_REDO_SPACE_ID);
-    db_ctrl_add_system_space("undo", DB_UNDO_SPACE_ID);
+    for (uint32 i = 0; i < DB_UNDO_SPACE_MAX_COUNT; i++) {
+        char undo_space_name[DB_OBJECT_NAME_MAX_LEN];
+        sprintf_s(undo_space_name, DB_OBJECT_NAME_MAX_LEN, "undo%02u", i);
+        db_ctrl_add_system_space(undo_space_name, DB_UNDO_START_SPACE_ID + i);
+    }
     db_ctrl_add_system_space("temporary", DB_TEMP_SPACE_ID);
     db_ctrl_add_system_space("dictionary", DB_DICT_SPACE_ID);
     db_ctrl_add_system_space("dbwr", DB_DBWR_SPACE_ID);
@@ -967,13 +1048,36 @@ bool32 db_ctrl_createdatabase(char* database_name, char* charset_name)
     ctrl_file->user_space_data_file_array_size = 0;
     ctrl_file->user_space_data_files = NULL;
 
-    sprintf_s(ctrl_file->database_name, strlen(database_name) + 1, "%s", database_name);
-    ctrl_file->database_name[strlen(database_name)] = '\0';
+    if (database_name) {
+        sprintf_s(ctrl_file->database_name, strlen(database_name) + 1, "%s", database_name);
+        ctrl_file->database_name[strlen(database_name)] = '\0';
+    } else {
+        ctrl_file->database_name[0] = '\0';
+    }
 
-    sprintf_s(ctrl_file->charset_name, strlen(charset_name) + 1, "%s", charset_name);
-    ctrl_file->charset_name[strlen(charset_name)] = '\0';
-    
+    if (charset_name) {
+        (ctrl_file->charset_name, strlen(charset_name) + 1, "%s", charset_name);
+        ctrl_file->charset_name[strlen(charset_name)] = '\0';
+    } else {
+        ctrl_file->charset_name[0] = '\0';
+    }
+
     return TRUE;
+}
+
+
+bool32 db_ctrl_init_database()
+{
+    return db_ctrl_create_database_low(NULL, NULL);
+}
+
+bool32 db_ctrl_create_database(char* database_name, char* charset_name)
+{
+    if (database_name == NULL || charset_name == NULL) {
+        return FALSE;
+    }
+
+    return db_ctrl_create_database_low(database_name, charset_name);
 }
 
 

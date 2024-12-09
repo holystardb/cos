@@ -53,7 +53,7 @@ typedef struct st_checkpoint_stat {
 } checkpoint_stat_t;
 
 typedef struct st_checkpoint {
-    uint64        flush_timeout_us;
+    int64         flush_timeout_us;
 
     lsn_t         least_recovery_point;
 

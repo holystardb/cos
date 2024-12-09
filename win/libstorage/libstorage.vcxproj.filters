@@ -11,7 +11,6 @@
     <ClCompile Include="..\..\src\storage\knl_fsp.cpp" />
     <ClCompile Include="..\..\src\storage\knl_page.cpp" />
     <ClCompile Include="..\..\src\storage\knl_dict.cpp" />
-    <ClCompile Include="..\..\src\storage\knl_log.cpp" />
     <ClCompile Include="..\..\src\storage\knl_dblwrite.cpp" />
     <ClCompile Include="..\..\src\storage\knl_file_system.cpp" />
     <ClCompile Include="..\..\src\storage\knl_btree.cpp" />
@@ -21,12 +20,15 @@
     <ClCompile Include="..\..\src\storage\knl_session.cpp" />
     <ClCompile Include="..\..\src\storage\knl_trx_undo.cpp" />
     <ClCompile Include="..\..\src\storage\knl_recovery.cpp" />
-    <ClCompile Include="..\..\src\storage\knl_data.cpp" />
     <ClCompile Include="..\..\src\storage\knl_heap.cpp" />
     <ClCompile Include="..\..\src\storage\knl_heap_fsm.cpp" />
     <ClCompile Include="..\..\src\storage\knl_heap_toast.cpp" />
     <ClCompile Include="..\..\src\storage\knl_data_type.cpp" />
     <ClCompile Include="..\..\src\storage\knl_checkpoint.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_redo.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_record.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_start.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_undo_fsm.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\storage\include\knl_handler.h" />
@@ -40,7 +42,6 @@
     <ClInclude Include="..\..\src\storage\knl_page_size.h" />
     <ClInclude Include="..\..\src\storage\knl_dict.h" />
     <ClInclude Include="..\..\src\storage\include\knl_server.h" />
-    <ClInclude Include="..\..\src\storage\knl_log.h" />
     <ClInclude Include="..\..\src\storage\knl_dblwrite.h" />
     <ClInclude Include="..\..\src\storage\knl_page_id.h" />
     <ClInclude Include="..\..\src\storage\knl_file_system.h" />
@@ -51,12 +52,16 @@
     <ClInclude Include="..\..\src\storage\knl_session.h" />
     <ClInclude Include="..\..\src\storage\knl_trx_undo.h" />
     <ClInclude Include="..\..\src\storage\knl_recovery.h" />
-    <ClInclude Include="..\..\src\storage\knl_data.h" />
     <ClInclude Include="..\..\src\storage\knl_heap.h" />
     <ClInclude Include="..\..\src\storage\knl_heap_fsm.h" />
     <ClInclude Include="..\..\src\storage\knl_heap_toast.h" />
     <ClInclude Include="..\..\src\storage\knl_trx_types.h" />
     <ClInclude Include="..\..\src\storage\knl_data_type.h" />
     <ClInclude Include="..\..\src\storage\knl_checkpoint.h" />
+    <ClInclude Include="..\..\src\storage\knl_redo.h" />
+    <ClInclude Include="..\..\src\storage\knl_record.h" />
+    <ClInclude Include="..\..\src\storage\knl_defs.h" />
+    <ClInclude Include="..\..\src\storage\knl_start.h" />
+    <ClInclude Include="..\..\src\storage\knl_undo_fsm.h" />
   </ItemGroup>
 </Project>

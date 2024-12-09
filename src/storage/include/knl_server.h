@@ -8,15 +8,19 @@
 #include "cm_file.h"
 #include "cm_memory.h"
 #include "cm_virtual_mem.h"
+#include "knl_defs.h"
+
+const uint32 UNIV_PAGE_SIZE = 16384; // 16KB
+const uint32 UNIV_SYSTRANS_PAGE_SIZE = 4096; // 4KB
 
 
-const unsigned int UNIV_PAGE_SIZE = 16384; /* 16KB */
-
-
+#define INVALID_SPACE_ID    0xFFFFFFFF
 #define INVALID_PAGE_NO     0xFFFFFFFF
 
 #define ROW_MAX_COLUMN_COUNT     (uint32)1000
 #define ROW_RECORD_MAX_SIZE      (uint32)8000
+
+
 
 
 
@@ -43,8 +47,9 @@ typedef uint64              scn_t;
 #define SCN_MAX             UINT_MAX64
 #define INVALID_SCN         UINT_MAX64
 
-typedef ib_id_t             table_id_t;
-typedef ib_id_t             index_id_t;
+typedef uint64              table_id_t;
+typedef uint64              index_id_t;
+typedef uint64              object_id_t;
 
 typedef uint32              command_id_t;
 
@@ -82,47 +87,7 @@ extern os_aio_array_t* srv_os_aio_async_write_array;
 extern os_aio_array_t* srv_os_aio_sync_array;
 
 
-/*-------------------------------------------------- */
 
-#define DB_CTRL_FILE_MAX_COUNT          3
-#define DB_CTRL_FILE_VERSION            1
-#define DB_CTRL_FILE_VERSION_NUM        1
-
-#define DB_REDO_FILE_MAX_COUNT          16
-#define DB_UNDO_FILE_MAX_COUNT          16
-#define DB_TEMP_FILE_MAX_COUNT          16
-
-#define DB_SPACE_DATA_FILE_MAX_COUNT    65536
-
-#define DB_SYSTEM_SPACE_ID              0
-#define DB_SYSAUX_SPACE_ID              1
-#define DB_REDO_SPACE_ID                2
-#define DB_UNDO_SPACE_ID                3
-#define DB_TEMP_SPACE_ID                4
-#define DB_DICT_SPACE_ID                5
-#define DB_DBWR_SPACE_ID                6
-#define DB_SYSTEM_SPACE_MAX_COUNT       16
-
-#define DB_USER_SPACE_FIRST_ID          16
-#define DB_USER_SPACE_MAX_COUNT         256
-
-#define DB_SPACE_INALID_ID              0xFFFFFFFF
-
-#define DB_SYSTEM_FILNODE_ID            0
-#define DB_DBWR_FILNODE_ID              1
-
-
-#define DB_SYSTEM_DATA_FILE_MAX_COUNT   128
-#define DB_USER_DATA_FILE_FIRST_NODE_ID 128
-
-#define DB_DATA_FILNODE_INALID_ID       0xFFFFFFFF
-
-
-#define DB_DATA_FILE_NAME_MAX_LEN       256
-#define DB_OBJECT_NAME_MAX_LEN          64
-
-#define USER_SPACE_MAX_COUNT            10240
-#define FILE_NODE_COUNT_PER_USER_SPACE  1024
 
 
 
@@ -139,12 +104,15 @@ typedef struct st_db_data_file {
 typedef struct st_db_space {
     char      name[DB_OBJECT_NAME_MAX_LEN];
     uint32    space_id;
-    uint32    purpose;
+    uint32    flags;
 } db_space_t;
 
 typedef struct st_db_ctrl {
     uint64          version;
     uint64          ver_num;
+    uint64          init_time;  // 
+    uint64          start_time;
+    uint64          scn;
     char            database_name[DB_OBJECT_NAME_MAX_LEN];
     char            charset_name[DB_OBJECT_NAME_MAX_LEN];
     CHARSET_INFO*   charset_info;
@@ -156,6 +124,8 @@ typedef struct st_db_ctrl {
     uint32          user_space_data_file_count;
     uint32          user_space_data_file_array_size;
     db_data_file_t  system;
+    db_data_file_t  systrans;
+    db_data_file_t  sysaux;
     db_data_file_t  dbwr;
     db_data_file_t  redo_group[DB_REDO_FILE_MAX_COUNT];
     db_data_file_t  undo_group[DB_UNDO_FILE_MAX_COUNT];
@@ -294,13 +264,16 @@ extern status_t srv_create_redo_log_files();
 extern status_t srv_create_undo_log_files();
 extern status_t srv_create_temp_files();
 extern status_t srv_create_system_file();
+extern status_t srv_create_systrans_file();
 extern status_t srv_create_double_write_file();
 extern status_t srv_create_user_data_files();
 
 
-extern bool32 db_ctrl_createdatabase(char *database_name, char *charset_name);
+extern bool32 db_ctrl_create_database(char *database_name, char *charset_name);
+extern bool32 db_ctrl_init_database();
 extern bool32 db_ctrl_add_system(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
-extern bool32 db_ctrl_add_redo(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
+extern bool32 db_ctrl_add_systrans(char* data_file_name, uint64 size);
+extern bool32 db_ctrl_add_redo(char *data_file_name, uint64 size);
 extern bool32 db_ctrl_add_dbwr(char* data_file_name, uint64 size);
 extern bool32 db_ctrl_add_undo(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
 extern bool32 db_ctrl_add_temp(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);

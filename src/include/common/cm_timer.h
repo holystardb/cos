@@ -19,19 +19,15 @@ typedef enum en_timer_status {
 } timer_status_t;
 
 typedef struct st_cm_timer {
-    volatile date_detail_t detail;  // detail of date, yyyy-mm-dd hh24:mi:ss
-    volatile date_t now;
-    volatile date_t monotonic_now;  // not affected by user change
-    volatile date_t today;          // the day with time 00:00:00
-    volatile uint32 systime;        // seconds between timer started and now
-    volatile int32 tz;              // time zone (min)
-    volatile int64 host_tz_offset;  // host timezone offset (us)
-    atomic64_t now_scn;
-    atomic64_t sys_scn_valid;
-    atomic64_t *system_scn;
-    time_t db_init_time;
-    timer_status_t status;
+    volatile date_detail_t detail;     // detail of date, yyyy-mm-dd hh24:mi:ss
+    volatile date_t now_us;            // us (microsecs) from 2020-01-01 00:00:00
+    volatile date_t monotonic_now_us;  // us (microsecs) from 1970-01-01 00:00:00, not affected by user change
+    volatile date_t today_us;          // the day with time 00:00:00
+    volatile uint32 systime_s;         // seconds between timer started and now
+    volatile int32 tz;                 // time zone (min)
+    volatile int64 host_tz_offset;     // host timezone offset (us)
 
+    timer_status_t status;
     os_thread_t    thread;
     os_thread_id_t thread_id;
     bool32         thread_exited;

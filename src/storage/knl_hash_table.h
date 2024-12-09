@@ -129,14 +129,14 @@ extern HASH_TABLE* HASH_TABLE_CREATE(uint32 hash_cell_count,
 
 extern void HASH_TABLE_FREE(HASH_TABLE* table);
 
-extern HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE* table, uint32 n);
-extern uint32 HASH_CALC_HASH(HASH_TABLE* table, uint32 fold);
+extern inline HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE* table, uint32 n);
+extern inline uint32 HASH_CALC_HASH(HASH_TABLE* table, uint32 fold);
 
-extern mutex_t* HASH_GET_MUTEX(HASH_TABLE* table, uint32 fold);
+extern inline mutex_t* HASH_GET_MUTEX(HASH_TABLE* table, uint32 fold);
 
-extern rw_lock_t* hash_get_lock(HASH_TABLE* table, uint32 fold);
-extern rw_lock_t* hash_lock_s_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold);
-extern rw_lock_t* hash_lock_x_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold);
+extern inline rw_lock_t* hash_get_lock(HASH_TABLE* table, uint32 fold);
+extern inline rw_lock_t* hash_lock_s_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold);
+extern inline rw_lock_t* hash_lock_x_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold);
 
 
 #endif  /* _KNL_HASH_TABLE_H */

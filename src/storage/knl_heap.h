@@ -2,7 +2,7 @@
 #define _KNL_HEAP_H
 
 #include "cm_type.h"
-#include "knl_data.h"
+#include "knl_record.h"
 #include "knl_trx_types.h"
 #include "knl_dict.h"
 #include "knl_session.h"
@@ -11,8 +11,6 @@
 extern "C" {
 #endif // __cplusplus
 
-
-#define FLEXIBLE_ARRAY_MEMBER   /* empty */
 
 
 /*
@@ -204,7 +202,7 @@ typedef struct st_itl {
     trx_slot_id_t  trx_slot_id;
     uint16         fsc; // free space credit (bytes)
     uint16         is_active : 1;  // committed or not
-    uint16         is_overwrite_scn : 1;   // txn scn overwrite or not
+    uint16         is_ow_scn : 1;   // txn scn overwrite or not
     uint16         is_copied : 1;  // itl is copied or not
     uint16         unused : 13;
 } itl_t;
@@ -226,48 +224,25 @@ typedef union st_row_id
     };
 } row_id_t;
 
-// row_header_t: 
-//   size: 2B
-//   column count: 10bit
-//   bitmap: 0  null, 1 4byte,  2 8byte,  3 variant
-typedef struct st_row_header
-{
-    union {
-        struct {
-            uint16 size;  // row size
-            uint16 column_count : 10;  // column count
-            uint16 flag : 6;
-        };
-        struct {
-            uint16 aligned1;  // aligned row size
-            uint16 aligned2 : 10; // aligned column count
-            uint16 is_deleted : 1;
-            uint16 is_ext : 1;  // externally stored
-            uint16 is_migr : 1;   // migration flag
-            uint16 is_change : 1; // changed flag after be locked
-            uint16 reserved : 2;
-        };
-    };
-    uint8  itl_id;  // row itl id
-    uint8  null_bits[FLEXIBLE_ARRAY_MEMBER];
-} row_header_t;
 
 // row_dir_t: 16 Bytes
 typedef struct st_row_dir {
     uint64  scn; // commit scn or command id
-    uint32  undo_page_no;
+    uint32  undo_space_index : 4;
+    uint32  undo_page_no : 12;
+    uint32  undo_page_offset : 16;
     union {
         uint32 offsets;
         struct {
+            uint16 offset; // offset of row
             uint16 is_free : 1;  // dir is free
-            uint16 offset  : 15;  // offset of row
-            uint16 is_overwrite_scn : 1;
-            uint16 undo_page_offset : 15;
+            uint16 is_ow_scn : 1;
+            uint16 aligned : 14;
         };
         struct {
+            uint16 free_next_dir;
             uint16 is_free : 1;  // dir is free
-            uint16 next_free_dir : 15;
-            uint16 aligned;
+            uint16 aligned : 15;
         };
     };
 } row_dir_t;
@@ -344,6 +319,10 @@ extern uint32 heap_create_entry(uint32 space_id);
 extern inline void heap_page_init(buf_block_t* block, dict_table_t* table, mtr_t* mtr);
 
 extern status_t heap_insert(que_sess_t* sess, insert_node_t* insert_node);
+
+extern inline void heap_set_itl_trx_end(buf_block_t* block,
+    trx_slot_id_t slot_id, uint8 itl_id, uint64 scn, mtr_t* mtr);
+
 
 #ifdef __cplusplus
 }

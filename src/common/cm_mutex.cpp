@@ -114,14 +114,14 @@ void os_event_wait(os_event_t event, uint64 reset_sig_count)
 
 int os_event_wait_time(
         os_event_t   event,  /* in: event to wait */
-        uint32       timeout_us,  /* in: timeout in microseconds, or  OS_SYNC_INFINITE_TIME */
+        uint64       timeout_us,  /* in: timeout in microseconds, or  OS_SYNC_INFINITE_TIME */
         uint64       reset_sig_count)
 {
 #ifdef __WIN__
     DWORD err;
     /* Specify an infinite time limit for waiting */
     if (timeout_us != OS_WAIT_INFINITE_TIME) {
-        err = WaitForSingleObject(event, timeout_us / 1000);
+        err = WaitForSingleObject(event, (DWORD)(timeout_us / 1000));
     } else {
         err = WaitForSingleObject(event, INFINITE);
     }

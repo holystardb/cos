@@ -19,11 +19,11 @@ public:
 
     /** Retrieve the tablespace id.
     @return tablespace id */
-    space_id_t space_id() const { return (m_space); }
+    uint32 space_id() const { return (m_space); }
 
     /** Retrieve the page number.
     @return page number */
-    page_no_t page_no() const { return (m_page_no); }
+    uint32 page_no() const { return (m_page_no); }
 
     /** Retrieve the fold value.
     @return fold value */
@@ -64,16 +64,13 @@ public:
     /** Check if a given page_id_t object is equal to the current one.
     @param[in]    a   page_id_t object to compare
     @return true if equal */
-    bool equals_to(const page_id_t &a) const {
+    bool32 equals_to(const page_id_t &a) const {
         return (a.space_id() == m_space && a.page_no() == m_page_no);
     }
 
 private:
-    /** Tablespace id. */
-    space_id_t m_space;
-
-    /** Page number. */
-    page_no_t m_page_no;
+    uint32 m_space;
+    uint32 m_page_no;
 
     /** A fold value derived from m_space and m_page_no,
     used in hashing. */

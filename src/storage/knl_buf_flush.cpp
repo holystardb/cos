@@ -120,19 +120,14 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
     buf_pool_t* buf_pool = buf_pool_from_block(block);
 
     ut_ad(!srv_read_only_mode);
-    ut_ad(block->is_resident() || rw_lock_own(&block->rw_lock, RW_LOCK_EXCLUSIVE));
+    ut_ad(rw_lock_own(&block->rw_lock, RW_LOCK_EXCLUSIVE));
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad((block->is_resident() && block->get_fix_count() == 0) ||
-        (!block->is_resident() && block->get_fix_count() > 0));
     ut_ad(mtr->modifications);
 
     mutex_enter(&block->mutex);
 
-    // if it is block of transaction slot, because block does not have a rw_lock
-    // block->page.newest_modification is not assigned in order
-    if (block->page.newest_modification < mtr->end_lsn) {
-        block->page.newest_modification = mtr->end_lsn;
-    }
+    ut_ad(block->page.newest_modification <= mtr->end_lsn);
+    block->page.newest_modification = mtr->end_lsn;
 
     if (block->page.recovery_lsn == 0) {
         buf_flush_insert_into_flush_list(buf_pool, block);
@@ -148,6 +143,87 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
     srv_stats.buf_pool_write_requests.inc();
 }
 
+
+
+// Inserts a modified block into the flush list in the right sorted position.
+// This function is used by recovery, because there the modifications do not
+// necessarily come in the order of lsn's.
+static inline void buf_flush_insert_sorted_into_flush_list(
+    buf_pool_t* buf_pool, // in: buffer pool instance
+    buf_block_t* block,   // in/out: block which is modified
+    lsn_t lsn)            // in: oldest modification
+{
+    buf_block_t* prev_b;
+    buf_block_t* b;
+
+    //ut_ad(!buf_pool_mutex_own(buf_pool));
+    ut_ad(log_flush_order_mutex_own());
+    ut_ad(mutex_own(&block->mutex));
+    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
+
+    mutex_enter(&buf_pool->flush_list_mutex, &buf_pool->stat.flush_list_mutex_stat);
+
+    // The field in_LRU_list is protected by buf_pool->mutex, which we are not holding.
+    // However, while a block is in the flush list, it is dirty and cannot be discarded,
+    // not from the page_hash or from the LRU list.
+
+    ut_ad(block->page.is_resident || block->page.in_LRU_list);
+    ut_ad(block->page.in_page_hash);
+    ut_ad(!block->page.in_flush_list);
+
+    block->page.in_flush_list = TRUE;
+    block->page.recovery_lsn = lsn;
+
+    prev_b = NULL;
+    b = UT_LIST_GET_FIRST(buf_pool->flush_list);
+    while (b && b->page.recovery_lsn > block->page.recovery_lsn) {
+        ut_ad(b->page.in_flush_list);
+        prev_b = b;
+        b = UT_LIST_GET_NEXT(list_node, b);
+    }
+
+    if (prev_b == NULL) {
+        UT_LIST_ADD_FIRST(list_node, buf_pool->flush_list, block);
+    } else {
+        UT_LIST_ADD_AFTER(list_node, buf_pool->flush_list, prev_b, block);
+    }
+
+    buf_pool->stat.flush_list_bytes += UNIV_PAGE_SIZE;
+
+    mutex_exit(&buf_pool->flush_list_mutex);
+}
+
+// This function should be called when recovery has modified a buffer page.
+inline void buf_flush_recv_note_modification(
+    buf_block_t* block, // in: block which is modified
+    lsn_t start_lsn, // in: start lsn of the first mtr in a set of mtr's
+    lsn_t end_lsn) // in: end lsn of the last mtr in the set of mtr's
+{
+    buf_pool_t* buf_pool = buf_pool_from_block(block);
+
+    ut_ad(!srv_read_only_mode);
+    ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
+    ut_ad(block->page.is_resident || block->page.buf_fix_count > 0);
+    ut_ad(rw_lock_own(&(block->rw_lock), RW_LOCK_EXCLUSIVE));
+
+    //ut_ad(!buf_pool_mutex_own(buf_pool));
+    //ut_ad(!buf_flush_list_mutex_own(buf_pool));
+    ut_ad(log_flush_order_mutex_own());
+
+    ut_ad(start_lsn != 0);
+    ut_ad(block->page.newest_modification <= end_lsn);
+
+    mutex_enter(&block->mutex);
+    block->page.newest_modification = end_lsn;
+
+    if (block->page.recovery_lsn == 0) {
+        buf_flush_insert_sorted_into_flush_list(buf_pool, block, start_lsn);
+    } else {
+        ut_ad(block->page.recovery_lsn <= start_lsn);
+    }
+
+    mutex_exit(&block->mutex);
+}
 
 
 

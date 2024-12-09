@@ -17,16 +17,19 @@ extern "C" {
 #define LOG_LEVEL_INFO            16
 #define LOG_LEVEL_DEBUG           32
 #define LOG_LEVEL_TRACE           64
+#define LOG_LEVEL_DETAIL          128
 
 #define LOG_LEVEL_NONE            0
-#define LOG_LEVEL_ALL             127
-#define LOG_LEVEL_CRITICAL        15  // include fatal, error, warn, notice
+#define LOG_LEVEL_CRITICAL        7   // include fatal, error, warn
+#define LOG_LEVEL_DEFAULT         15  // include fatal, error, warn, notice
+#define LOG_LEVEL_ALL             255
 
 // log module
 enum log_module_id_t {
     LOG_MODULE_COMMON = 0,
     LOG_MODULE_DBUG,
     LOG_MODULE_GUC,
+    LOG_MODULE_SECUREC,
 
     /* 10 - 29*/
     LOG_MODULE_RWLOCK = 10,
@@ -115,8 +118,8 @@ public:
     log_info();
 
     bool32 log_init(uint32 level, char *log_path, char *file_name, bool32 batch_flush = FALSE);
-    void log_to_stderr(char* log_level_desc, uint32 module_id, const char *file, uint32 line, const char *fmt, ...);
-    void log_to_file(char* log_level_desc, uint32 module_id, const char *file, uint32 line, const char *fmt, ...);
+    void log_to_stderr(char* log_level_desc, uint32 module_id, const char *fmt, ...);
+    void log_to_file(char* log_level_desc, uint32 module_id, const char *fmt, ...);
     void log_file_flush();
     void coredump_to_file(char **symbol_strings, int len_symbols);
 
@@ -174,69 +177,69 @@ private:
 
 
 
-#define LOGGER_TRACE(LOGINFO, module_id, format, ...)                \
-    do {                                                             \
+#define LOGGER_TRACE(LOGINFO, module_id, format, ...)                       \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_TRACE))) {   \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[TRACE] ", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[TRACE] ", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
-#define LOGGER_DEBUG(LOGINFO, module_id, format, ...)                \
-    do {                                                             \
+#define LOGGER_DEBUG(LOGINFO, module_id, format, ...)                       \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_DEBUG))) {   \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[DEBUG] ", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[DEBUG] ", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
-#define LOGGER_NOTICE(LOGINFO, module_id, format, ...)               \
-    do {                                                             \
+#define LOGGER_NOTICE(LOGINFO, module_id, format, ...)                      \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_NOTICE))) {  \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[NOTICE]", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__); \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[NOTICE]", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
-#define LOGGER_INFO(LOGINFO, module_id, format, ...)                 \
-    do {                                                             \
+#define LOGGER_INFO(LOGINFO, module_id, format, ...)                        \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_INFO))) {    \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[INFO]  ", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);   \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[INFO]  ", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
-#define LOGGER_WARN(LOGINFO, module_id, format, ...)                 \
-    do {                                                             \
+#define LOGGER_WARN(LOGINFO, module_id, format, ...)                        \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_WARN))) {    \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[WARN]  ", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);   \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[WARN]  ", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
-#define LOGGER_ERROR(LOGINFO, module_id, format, ...)                \
-    do {                                                             \
+#define LOGGER_ERROR(LOGINFO, module_id, format, ...)                       \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_ERROR))) {   \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[ERROR] ", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[ERROR] ", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
-#define LOGGER_FATAL(LOGINFO, module_id, format, ...)                \
-    do {                                                             \
+#define LOGGER_FATAL(LOGINFO, module_id, format, ...)                       \
+    do {                                                                    \
         if (!(LOGINFO.is_print_module_log(module_id, LOG_LEVEL_FATAL))) {   \
-            break;                                                   \
-        }                                                            \
-        LOGINFO.log_to_file("[FATAL] ", module_id, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
+            break;                                                          \
+        }                                                                   \
+        LOGINFO.log_to_file("[FATAL] ", module_id, format, ##__VA_ARGS__);  \
     } while (0);
 
 
-#define LOGGER_PANIC_CHECK(LOGINFO, condition, format, ...)                                             \
-    do {                                                                                                \
-        if (UNLIKELY(!(condition))) {                                                                   \
-            LOGINFO.log_to_file("[FATAL] ", 0, (char *)__FILE__, (uint32)__LINE__, format, ##__VA_ARGS__);  \
-            ut_error;                                                                                   \
-        }                                                                                               \
+#define LOGGER_PANIC_CHECK(LOGINFO, module_id, condition, format, ...)          \
+    do {                                                                        \
+        if (UNLIKELY(!(condition))) {                                           \
+            LOGINFO.log_to_file("[FATAL] ", module_id, format, ##__VA_ARGS__);  \
+            ut_error;                                                           \
+        }                                                                       \
     } while (0);
 
 

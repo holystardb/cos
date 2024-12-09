@@ -41,26 +41,7 @@ static uint32 fsp_seg_inode_page_find_free(
 
 
 
-byte *fut_get_ptr(space_id_t space, const page_size_t &page_size,
-                  fil_addr_t addr, rw_lock_type_t rw_latch, mtr_t *mtr,
-                  buf_block_t **ptr_block)
-{
-    buf_block_t *block;
-    byte *ptr;
-    const page_id_t page_id(space, addr.page);
 
-    ut_ad(addr.boffset < UNIV_PAGE_SIZE);
-    ut_ad((rw_latch == RW_S_LATCH) || (rw_latch == RW_X_LATCH));
-
-    block = buf_page_get(page_id, page_size, rw_latch, mtr);
-    ptr = buf_block_get_frame(block) + addr.boffset;
-
-    if (ptr_block != NULL) {
-      *ptr_block = block;
-    }
-
-    return(ptr);
-}
 
 
 
@@ -204,7 +185,7 @@ bool32 xdes_is_full(const xdes_t  *descr, mtr_t *mtr)
 }
 
 // Sets the state of an xdes.
-void xdes_set_state(
+inline void xdes_set_state(
     xdes_t  *descr,  /*!< in/out: descriptor */
     uint32   state,  /*!< in: state to set */
     mtr_t   *mtr)    /*!< in/out: mini-transaction */
@@ -246,18 +227,15 @@ void xdes_init(xdes_t *descr, mtr_t  *mtr)
     xdes_set_state(descr, XDES_FREE, mtr);
 }
 
-uint32 xdes_calc_descriptor_index(
-	const page_size_t&	page_size,
-	uint32			offset)
+static inline uint32 xdes_calc_descriptor_index(const page_size_t& page_size, uint32 offset)
 {
-	return(ut_2pow_remainder(offset, page_size.physical())
-	       / FSP_EXTENT_SIZE);
+    return(ut_2pow_remainder(offset, page_size.physical())  / FSP_EXTENT_SIZE);
 }
 
 // Get pointer to a the extent descriptor of a page
-xdes_t* xdes_get_descriptor_with_space_hdr(
+static inline xdes_t* xdes_get_descriptor_with_space_hdr(
     fsp_header_t*   sp_header,
-    uint32          space,
+    uint32          space_id,
     uint32          offset,
     mtr_t*          mtr)
 {
@@ -278,21 +256,20 @@ xdes_t* xdes_get_descriptor_with_space_hdr(
         return(NULL);
     }
 
-    buf_block_t   *block;
-    const page_size_t page_size(flags);
+    buf_block_t* block;
+    const page_size_t page_size(space_id);
     descr_page_no = xdes_calc_descriptor_page(page_size, offset);
     if (descr_page_no == 0) {
         /* It is on the space header page */
         descr_page = page_align(sp_header);
         block = NULL;
     } else {
-        const page_id_t page_id(space, descr_page_no);
+        const page_id_t page_id(space_id, descr_page_no);
         block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
         descr_page = buf_block_get_frame(block);
     }
 
-    return(descr_page + XDES_ARR_OFFSET
-       + XDES_SIZE * xdes_calc_descriptor_index(page_size, offset));
+    return(descr_page + XDES_ARR_OFFSET + XDES_SIZE * xdes_calc_descriptor_index(page_size, offset));
 }
 
 // Gets pointer to a the extent descriptor of a page.
@@ -305,7 +282,7 @@ xdes_t* xdes_get_descriptor(
     buf_block_t*        block;
     fsp_header_t*       sp_header;
     const page_id_t     page_id(space_id, 0);
-    const page_size_t   page_size(0);
+    const page_size_t   page_size(space_id);
 
     block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
 
@@ -327,7 +304,7 @@ xdes_t* xdes_lst_get_descriptor(
 
     ut_ad(mtr);
     //ut_ad(mtr_memo_contains(mtr, fil_space_get_latch(space, NULL), MTR_MEMO_X_LOCK));
-    descr = fut_get_ptr(space, page_size, lst_node, RW_X_LATCH, mtr, NULL) - XDES_FLST_NODE;
+    descr = flst_get_buf_ptr(space, page_size, lst_node, RW_X_LATCH, mtr, NULL) - XDES_FLST_NODE;
 
     return(descr);
 }
@@ -375,27 +352,25 @@ static uint32 fsp_get_autoextend_increment(fil_space_t* space)
 
 // Tries to extend the last data file of a tablespace if it is auto-extending.
 static bool32 fsp_try_extend_data_file(
-    uint32       *actual_increase,/*!< out: actual increase in pages */
-    fil_space_t  *space,  /*!< in: space */
-    fsp_header_t *header,  /*!< in/out: space header */
-    mtr_t        *mtr)
+    uint32*       actual_increase,/*!< out: actual increase in pages */
+    fil_space_t*  space,  /*!< in: space */
+    fsp_header_t* header,  /*!< in/out: space header */
+    mtr_t*        mtr)
 {
-    uint32    size;  /* current number of pages in the datafile */
-    uint32    size_increase;  /* number of pages to extend this file */
-    uint32    actual_size;
+    uint32 size;  /* current number of pages in the datafile */
+    uint32 size_increase;  /* number of pages to extend this file */
+    uint32 actual_size;
+    const page_size_t page_size(space->id);
 
     ut_d(fsp_space_modify_check(space->id, mtr));
-
-    size = mach_read_from_4(header + FSP_SIZE);
-    ut_ad(size == space->size_in_header);
-
-    const page_size_t page_size(mach_read_from_4(header + FSP_SPACE_FLAGS));
 
     size_increase = fsp_get_autoextend_increment(space);
     if (size_increase == 0) {
         return FALSE;
     }
 
+    size = mach_read_from_4(header + FSP_SIZE);
+    ut_ad(size == space->size_in_header);
     if (!fil_space_extend(space, size + size_increase, &actual_size)) {
         return FALSE;
     }
@@ -405,7 +380,6 @@ static bool32 fsp_try_extend_data_file(
 
     return TRUE;
 }
-
 
 static void fsp_space_modify_check(uint32 id, const mtr_t* mtr)
 {
@@ -457,8 +431,6 @@ static void fsp_init_file_page_low(buf_block_t* block)
 // Initialize a file page.
 static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr)
 {
-    //fsp_init_file_page_low(block);
-
     //ut_d(fsp_space_modify_check(block->page.id.space(), mtr));
     mlog_write_initial_log_record(buf_block_get_frame(block), MLOG_INIT_FILE_PAGE2, mtr);
 }
@@ -473,16 +445,15 @@ static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr)
 //    and freed in mtr in that case.
 // return block, initialized if init_mtr==mtr or rw_lock_x_lock_count(&block->lock) == 1
 buf_block_t* fsp_page_create(
-    uint32  space_id,      /*!< in: space id of the allocated page */
-    uint32  page_no,    /*!< in: page number of the allocated page */
+    const page_id_t& page_id,
+    const page_size_t& page_size,
+    Page_fetch mode,
     mtr_t*  mtr,        /*!< in: mini-transaction of the allocation */
     mtr_t*  init_mtr)   /*!< in: mini-transaction for initializing the page */
 {
-    const page_id_t page_id(space_id, page_no);
-    const page_size_t page_size(0);
     buf_block_t *block;
 
-    block = buf_page_create(page_id, page_size, RW_X_LATCH, Page_fetch::NORMAL, init_mtr);
+    block = buf_page_create(page_id, page_size, RW_X_LATCH, mode, init_mtr);
 
     if (init_mtr == mtr || rw_lock_get_x_lock_count(&block->rw_lock) == 1) {
         /* Initialize the page, unless it was already X-latched in mtr.
@@ -500,7 +471,7 @@ buf_block_t* fsp_page_create(
 
 
 // Gets a pointer to the space header and x-locks its page
-fsp_header_t* fsp_get_space_header(
+inline fsp_header_t* fsp_get_space_header(
     uint32              space_id,
     const page_size_t&  page_size,
     mtr_t*              mtr)
@@ -515,10 +486,7 @@ fsp_header_t* fsp_get_space_header(
     //buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
 
     ut_ad(space_id == mach_read_from_4(FSP_SPACE_ID + header));
-#ifdef UNIV_DEBUG
-    const uint32 flags = mach_read_from_4(FSP_SPACE_FLAGS + header);
-    //ut_ad(page_size_t(flags).equals_to(page_size));
-#endif /* UNIV_DEBUG */
+
     return(header);
 }
 
@@ -562,7 +530,7 @@ static void fsp_free_seg_inode(
 {
     page_t* page;
     fsp_header_t* space_header;
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
 
     page = page_align(inode);
     space_header = fsp_get_space_header(space_id, page_size, mtr);
@@ -591,7 +559,7 @@ static void fsp_free_seg_inode(
             space_id, page_get_page_no(page), page + FSEG_INODE_PAGE_NODE, space_header + FSP_SEG_INODES_FREE);
 
         page_id_t page_id(space_id, page_get_page_no(page));
-        const page_size_t page_size(0);
+        const page_size_t page_size(space_id);
         fsp_free_page(page_id, page_size, mtr);
     }
 }
@@ -644,13 +612,13 @@ static buf_block_t* fsp_alloc_seg_inode_page(
     fseg_inode_t*   inode;
     buf_block_t*    block;
     page_t*         page;
-    uint32          space;
+    uint32          space_id;
 
     ut_ad(page_offset(space_header) == FSP_HEADER_OFFSET);
 
-    space = page_get_space_id(page_align(space_header));
-    const page_size_t page_size(0);
-    block = fsp_alloc_free_page(space, page_size, mtr);
+    space_id = page_get_space_id(page_align(space_header));
+    const page_size_t page_size(space_id);
+    block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, mtr);
     if (block == NULL) {
         return NULL;
     }
@@ -661,7 +629,7 @@ static buf_block_t* fsp_alloc_seg_inode_page(
 
     page = buf_block_get_frame(block);
 
-    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_INODE, MLOG_2BYTES, mtr);
+    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_INODE, MLOG_2BYTES, mtr);
 
     for (uint32 i = 0; i < FSP_SEG_INODES_PER_PAGE; i++) {
         inode = fsp_seg_inode_page_get_nth_inode(page, i, page_size.physical(), mtr);
@@ -688,7 +656,6 @@ static fseg_inode_t* fsp_alloc_seg_inode(
     buf_block_t*    block;
     page_t*         page;
     fseg_inode_t*   inode;
-    bool32          success;
     uint32          n;
 
     ut_ad(page_offset(space_header) == FSP_HEADER_OFFSET);
@@ -702,8 +669,9 @@ static fseg_inode_t* fsp_alloc_seg_inode(
     }
 
     page_no = flst_get_first(space_header + FSP_SEG_INODES_FREE, mtr).page;
-    const page_id_t page_id(page_get_space_id(page_align(space_header)), page_no);
-    const page_size_t page_size(0);
+    uint32 space_id = page_get_space_id(page_align(space_header));
+    const page_id_t page_id(space_id, page_no);
+    const page_size_t page_size(space_id);
     block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
     //buf_block_dbg_add_level(block, SYNC_FSP_PAGE);
     page = buf_block_get_frame(block);
@@ -877,7 +845,7 @@ static void fseg_free_page(uint32 space_id, fseg_inode_t* inode, uint32 page_no,
     uint64  descr_id;
     uint64  seg_id;
     uint32  i;
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
     page_id_t page_id(space_id, page_no);
 
     ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
@@ -959,12 +927,11 @@ buf_block_t* fseg_alloc_free_page(
                         If init_mtr!=mtr, but the page is already
                         latched in mtr, do not initialize the page. */
 {
-    fsp_header_t*   space_header;
     fil_addr_t      first;
     uint64          seg_id;
     uint32          ret_page_no;// the allocated page offset, FIL_NULL if could not be allocated
     xdes_t*         ret_descr;  // the extent of the allocated page
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
 
     //ut_ad((direction >= FSP_UP) && (direction <= FSP_NO_DIR));
     ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
@@ -997,7 +964,7 @@ buf_block_t* fseg_alloc_free_page(
         first = flst_get_first(inode + FSEG_FREE, mtr);
     } else {
         // We allocate an individual page from the space
-        buf_block_t* block = fsp_alloc_free_page(space_id, page_size, mtr);
+        buf_block_t* block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, mtr);
         if (block != NULL) {
             // Put the page in the fragment page array of the segment
             uint32 n = fseg_find_free_frag_page_slot(inode, mtr);
@@ -1026,14 +993,15 @@ buf_block_t* fseg_alloc_free_page(
 
     fseg_mark_page_used(space_id, inode, ret_page_no, ret_descr, mtr);
 
-    return fsp_page_create(space_id, ret_page_no, mtr, init_mtr);
+    const page_id_t page_id(space_id, ret_page_no);
+    return fsp_page_create(page_id, page_size, Page_fetch::NORMAL, mtr, init_mtr);
 }
 
 // Allocates a free extent for the segment
 xdes_t* fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, mtr_t* mtr)
 {
     xdes_t* descr;
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
 
     ut_ad(!((page_offset(inode) - FSEG_ARR_OFFSET) % FSEG_INODE_SIZE));
     ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
@@ -1071,7 +1039,7 @@ xdes_t* fseg_reserve_free_extents(
     mtr_t* mtr)
 {
     xdes_t* descr = NULL;
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
 
     ut_ad(!((page_offset(inode) - FSEG_ARR_OFFSET) % FSEG_INODE_SIZE));
     ut_ad(mach_read_from_4(inode + FSEG_MAGIC_N) == FSEG_MAGIC_N_VALUE);
@@ -1130,7 +1098,7 @@ static void fsp_fill_extent_free_list(fil_space_t* space, fsp_header_t* header, 
     ut_ad(limit == space->free_limit);
     ut_ad(flags == space->flags);
 
-    const page_size_t page_size(flags);
+    const page_size_t page_size(space->id);
 
     uint32 i = limit;
     while (i + FSP_EXTENT_SIZE <= size) {
@@ -1146,7 +1114,7 @@ static void fsp_fill_extent_free_list(fil_space_t* space, fsp_header_t* header, 
                 const page_id_t page_id(space->id, i);
                 block = buf_page_create(page_id, page_size, RW_X_LATCH, Page_fetch::NORMAL, mtr);
                 fsp_init_file_page(block, mtr);
-                mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_XDES, MLOG_2BYTES, mtr);
+                mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_TYPE_XDES, MLOG_2BYTES, mtr);
             }
         }
 
@@ -1173,7 +1141,7 @@ static void fsp_fill_extent_free_list(fil_space_t* space, fsp_header_t* header, 
     }
 }
 
-static bool32 fsp_extend_space(fil_space_t *space, fsp_header_t* header, mtr_t* mtr)
+static bool32 fsp_extend_space(fil_space_t* space, fsp_header_t* header, mtr_t* mtr)
 {
     uint32 size = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, mtr);
     uint32 hwm_page_no = size + fsp_get_autoextend_increment(space);
@@ -1183,9 +1151,12 @@ static bool32 fsp_extend_space(fil_space_t *space, fsp_header_t* header, mtr_t* 
         return FALSE;
     }
 
+    if (UNLIKELY(actual_size == 0)) {
+        return FALSE;
+    }
+
     space->size_in_header += actual_size;
     mlog_write_uint32(header + FSP_SIZE, space->size_in_header, MLOG_4BYTES, mtr);
-
     fsp_fill_extent_free_list(space, header, mtr);
 
     return TRUE;
@@ -1195,7 +1166,6 @@ static bool32 fsp_try_extend_space(uint32 space_id, mtr_t* mtr)
 {
     fil_space_t *space;
     bool32       ret = TRUE;
-    uint32       hwm_page_no;
 
     space = fil_system_get_space_by_id(space_id);
     if (space == NULL) {
@@ -1213,7 +1183,7 @@ retry:
     space->io_in_progress = TRUE;
     mutex_exit(&space->mutex);
 
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
     fsp_header_t* header = fsp_get_space_header(space_id, page_size, mtr);
     if (flst_get_len(header + FSP_FREE) <= 0) {
         ret = fsp_extend_space(space, header, mtr);
@@ -1231,7 +1201,7 @@ retry:
 // Returns an extent to the free list of a space
 void fsp_free_extent(uint32 space_id, xdes_t* xdes, mtr_t* mtr)
 {
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
     fsp_header_t* header;
 
     header = fsp_get_space_header(space_id, page_size, mtr);
@@ -1334,15 +1304,11 @@ void fsp_free_page(
 // Allocates a single free page from a space
 // The page is marked as used
 // out: the page offset, FIL_NULL if no page could be allocated
-buf_block_t* fsp_alloc_free_page(
-    uint32              space_id,
-    const page_size_t&  page_size,
-    mtr_t*              mtr)
+buf_block_t* fsp_alloc_free_page(uint32 space_id, const page_size_t& page_size, Page_fetch mode, mtr_t* mtr)
 {
     fsp_header_t* header;
     fil_addr_t first;
     xdes_t* descr;
-    page_t* page;
     uint32 free;
     uint32 frag_n_used;
     uint32 page_no;
@@ -1406,7 +1372,7 @@ buf_block_t* fsp_alloc_free_page(
     // Initialize the allocated page to the buffer pool,
     // so that it can be obtained immediately with buf_page_get without need for a disk read.
     const page_id_t page_id(space_id, page_no);
-    buf_block_t* block = buf_page_create(page_id, page_size, RW_X_LATCH, Page_fetch::NORMAL, mtr);
+    buf_block_t* block = buf_page_create(page_id, page_size, RW_X_LATCH, mode, mtr);
 
     /* Prior contents of the page should be ignored */
     fsp_init_file_page(block, mtr);
@@ -1415,22 +1381,25 @@ buf_block_t* fsp_alloc_free_page(
 }
 
 // Initializes the space header of a new created space
-static fsp_header_t* fsp_header_init(fil_space_t* space, mtr_t* mtr)
+static fsp_header_t* fsp_header_init(fil_space_t* space, uint64 max_size, mtr_t* mtr)
 {
     const page_id_t page_id(space->id, 0);
-    const page_size_t page_size(0);
+    const page_size_t page_size(space->id);
     buf_block_t* block = buf_page_create(page_id, page_size, RW_X_LATCH, Page_fetch::NORMAL, mtr);
     fsp_init_file_page(block, mtr);
 
     page_t* page = buf_block_get_frame(block);
-    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_FSP_HDR, MLOG_2BYTES, mtr);
+    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_FSP_HDR, MLOG_2BYTES, mtr);
 
     fsp_header_t* header = FSP_HEADER_OFFSET + page;
 
+    uint32 page_max_count = (uint32)(max_size / page_size.physical());
     space->size_in_header = 0;
+    mlog_write_uint32(header + FSP_SPACE_ID, space->id, MLOG_4BYTES, mtr);
+    mlog_write_uint32(header + FSP_MAX_SIZE, page_max_count, MLOG_4BYTES, mtr);
     mlog_write_uint32(header + FSP_SIZE, 0, MLOG_4BYTES, mtr);
     mlog_write_uint32(header + FSP_FREE_LIMIT, 0, MLOG_4BYTES, mtr);
-    //mlog_write_uint32(header + FSP_LOWEST_NO_WRITE, 0, MLOG_4BYTES, mtr);
+    mlog_write_uint32(header + FSP_SPACE_FLAGS, 0, MLOG_4BYTES, mtr);
     mlog_write_uint32(header + FSP_FRAG_N_USED, 0, MLOG_4BYTES, mtr);
 
     flst_init(header + FSP_FREE, mtr);
@@ -1444,34 +1413,37 @@ static fsp_header_t* fsp_header_init(fil_space_t* space, mtr_t* mtr)
     return header;
 }
 
-static status_t fsp_reserve_system_space(mtr_t* mtr)
+status_t fsp_reserve_system_space()
 {
+    mtr_t mtr;
     buf_block_t* block;
-    const page_size_t page_size(0);
+    const page_size_t page_size(FIL_SYSTEM_SPACE_ID);
+
+    mtr_start(&mtr);
 
     for (uint32 i = 1; i < FSP_DYNAMIC_FIRST_PAGE_NO; i++) {
-        if (i == 63 || i == 126) {
-            block = NULL;
-        }
-        block = fsp_alloc_free_page(FIL_SYSTEM_SPACE_ID, page_size, mtr);
+        block = fsp_alloc_free_page(FIL_SYSTEM_SPACE_ID, page_size, Page_fetch::NORMAL, &mtr);
         if (block == NULL) {
+            mtr_commit(&mtr);
             return CM_ERROR;
         }
     }
+
+    mtr_commit(&mtr);
 
     return CM_SUCCESS;
 }
 
 // Initializes the space header of a new created space
 // and creates also the insert buffer tree root. */
-status_t fsp_init_space(uint32 space_id, uint32 size)
+status_t fsp_init_space(uint32 space_id, uint64 init_size, uint64 max_size, uint32 fsp_type)
 {
     status_t ret = CM_SUCCESS;
-    fil_space_t *space;
+    const page_size_t page_size(space_id);
 
     LOGGER_INFO(LOGGER, LOG_MODULE_FSP, "fsp space initialize");
 
-    space = fil_system_get_space_by_id(space_id);
+    fil_space_t* space = fil_system_get_space_by_id(space_id);
     if (space == NULL) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_FSP, "fsp_init_space: Failed to find space by space_id %lu", space_id);
         return CM_ERROR;
@@ -1481,21 +1453,24 @@ status_t fsp_init_space(uint32 space_id, uint32 size)
     mtr_start(&mtr);
 
     // fsp header
-    fsp_header_t* header = fsp_header_init(space, &mtr);
+    fsp_header_t* header = fsp_header_init(space, max_size, &mtr);
     if (header == NULL) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_FSP, "fsp_init_space: error for init fsp_header");
         ret = CM_ERROR;
         goto err_exit;
     }
 
-    uint32 size_in_header = 0;
-    while (size_in_header < size) {
+    uint32 page_size_in_header = 0;
+    uint32 page_count = (uint32)(init_size / page_size.physical());
+    while (page_size_in_header < page_count) {
         if (!fsp_extend_space(space, header, &mtr)) {
-            LOGGER_ERROR(LOGGER, LOG_MODULE_FSP, "fsp_init_space: error for extend space, increase size %u", size);
+            LOGGER_ERROR(LOGGER, LOG_MODULE_FSP,
+                "fsp_init_space: error for extend space, increase size %llu",
+                page_size.physical());
             ret = CM_ERROR;
             goto err_exit;
         }
-        size_in_header = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, &mtr);
+        page_size_in_header = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, &mtr);
     }
 
     // set used for page0
@@ -1509,12 +1484,6 @@ status_t fsp_init_space(uint32 space_id, uint32 size)
     //flst_remove(header + FSP_FREE, descr + XDES_FLST_NODE, &mtr);
     //flst_add_last(header + FSP_FREE_FRAG, descr + XDES_FLST_NODE, &mtr);
     //mlog_write_uint32(header + FSP_FRAG_N_USED, 1, MLOG_4BYTES, &mtr);
-
-    // page no in [1, FSP_DYNAMIC_FIRST_PAGE_NO)
-    if (fsp_reserve_system_space(&mtr) != CM_SUCCESS) {
-        ret = CM_ERROR;
-        goto err_exit;
-    }
 
     // inode
     //buf_block_t* block = fsp_alloc_seg_inode_page(header, &mtr);
@@ -1534,6 +1503,42 @@ err_exit:
     return ret;
 }
 
+
+// Parses a redo log record of a file page init.
+byte* fsp_replay_init_file_page(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block)
+{
+    ut_ad(log_rec_ptr);
+
+    LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
+        "fsp_replay_init_file_page: type %lu block (%p space_id %lu page_no %lu)",
+        type, block, block ? ((buf_block_t *)block)->get_space_id() : INVALID_SPACE_ID,
+        block ? ((buf_block_t *)block)->get_page_no() : INVALID_PAGE_NO);
+
+    if (block) {
+        fsp_init_file_page_low((buf_block_t *)block);
+    }
+
+    return log_rec_ptr;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#if 0
 status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
 {
     mtr_t mtr;
@@ -1579,4 +1584,4 @@ status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
 
     return CM_SUCCESS;
 }
-
+#endif

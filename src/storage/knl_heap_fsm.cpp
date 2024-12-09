@@ -339,13 +339,13 @@ inline uint8 fsm_space_avail_to_category(dict_table_t* table, uint32 avail)
 void fsm_recursive_set_catagory(dict_table_t* table, fsm_search_path_t& search_path, uint8 value, mtr_t* mtr)
 {
     page_id_t page_id(table->space_id, search_path.nodes[0].page_no);
-    const page_size_t page_size(0);
+    const page_size_t page_size(table->space_id);
 
     for (uint32 i  = 0; i < FSM_PATH_LEVEL_COUNT; i++) {
         page_id.set_page_no(search_path.nodes[i].page_no);
         buf_block_t* block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
         ut_ad(block->get_page_no() == search_path.nodes[i].page_no);
-        ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
+        ut_ad(block->get_page_type() == FIL_PAGE_TYPE_HEAP_FSM);
         //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
         bool32 is_modify_root = FALSE;
@@ -388,11 +388,11 @@ static bool32 fsm_extend_table_segment(dict_table_t* table)
 
     mtr_start(&mtr);
 
-    const page_size_t page_size(0);
+    const page_size_t page_size(table->space_id);
     const page_id_t page_id(table->space_id, table->entry_page_no);
     buf_block_t* block = buf_page_get(page_id, page_size, RW_NO_LATCH, &mtr);
     ut_ad(block->get_page_no() == table->entry_page_no);
-    ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
+    ut_ad(block->get_page_type() == FIL_PAGE_TYPE_HEAP_FSM);
     //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
     page_t* page = buf_block_get_frame(block);
@@ -433,7 +433,7 @@ page_no_t fsm_search_free_page(dict_table_t* table, uint8 min_category, fsm_sear
 {
     int restarts = 0;
     page_id_t page_id(table->space_id, table->entry_page_no);
-    const page_size_t page_size(0);
+    const page_size_t page_size(table->space_id);
     mtr_t mtr;
     page_no_t page_no;
     uint32 level = FSM_PATH_MAX_LEVEL;
@@ -447,10 +447,10 @@ page_no_t fsm_search_free_page(dict_table_t* table, uint8 min_category, fsm_sear
         page_id.set_page_no(search_path.nodes[level].page_no);
         buf_block_t* block = buf_page_get(page_id, page_size, RW_NO_LATCH, &mtr);
         ut_ad(block->get_page_no() == search_path.nodes[level].page_no);
-        ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
+        ut_ad(block->get_page_type() == FIL_PAGE_TYPE_HEAP_FSM);
         //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
-        buf_block_lock(block, RW_S_LATCH, &mtr);
+        buf_block_lock_and_fix(block, RW_S_LATCH, &mtr);
 
         // Search within the page
         int32 slot = fsm_search_avail(block, min_category);
@@ -507,7 +507,7 @@ static buf_block_t* fsm_get_right_page(uint32 space_id, page_t* page, mtr_t* mtr
     page_no = mach_read_from_4(page + FIL_PAGE_NEXT);
 
     const page_id_t page_id(space_id, page_no);
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
 
     if (page_no != FIL_NULL) {
         block = buf_page_get(page_id, page_size, RW_S_LATCH, mtr);
@@ -520,10 +520,10 @@ static buf_block_t* fsm_get_right_page(uint32 space_id, page_t* page, mtr_t* mtr
 static buf_block_t* fsm_get_map_page_with_x_latch(uint32 space_id, uint32 page_no, mtr_t* mtr)
 {
     const page_id_t page_id(space_id, page_no);
-    const page_size_t page_size(0);
+    const page_size_t page_size(space_id);
     buf_block_t* block = buf_page_get(page_id, page_size, RW_X_LATCH, mtr);
     ut_ad(block->get_page_no() == page_no);
-    ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
+    ut_ad(block->get_page_type() == FIL_PAGE_TYPE_HEAP_FSM);
     //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
     return block;
@@ -531,7 +531,7 @@ static buf_block_t* fsm_get_map_page_with_x_latch(uint32 space_id, uint32 page_n
 
 static buf_block_t* fsm_get_last_leaf_map_page(fsm_search_path_t& search_path, mtr_t* mtr)
 {
-    const page_size_t page_size(0);
+    const page_size_t page_size(search_path.space_id);
     buf_block_t* block = NULL;
     uint32 level = FSM_PATH_MAX_LEVEL;
 
@@ -541,7 +541,7 @@ static buf_block_t* fsm_get_last_leaf_map_page(fsm_search_path_t& search_path, m
         block = buf_page_get(page_id, page_size,
             FSM_IS_LEAF_PAGE(level) ? RW_X_LATCH : RW_S_LATCH, mtr);
         ut_ad(block->get_page_no() == search_path.nodes[level].page_no);
-        ut_ad(block->get_page_type() == FIL_PAGE_HEAP_FSM);
+        ut_ad(block->get_page_type() == FIL_PAGE_TYPE_HEAP_FSM);
         //buf_block_dbg_add_level(block, SYNC_DICT_HEADER);
 
         page_t* page = buf_block_get_frame(block);
@@ -642,7 +642,7 @@ static inline void fsm_page_init(buf_block_t* block, mtr_t* mtr)
 
     // 1.
 
-    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_HEAP_FSM, MLOG_2BYTES, mtr);
+    mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_HEAP_FSM, MLOG_2BYTES, mtr);
 
     // 2.
 
@@ -667,7 +667,7 @@ static inline uint32 fsm_get_nodes_page_count(buf_block_t* block)
 {
     page_t* page = buf_block_get_frame(block);
 
-    ut_ad(mach_read_from_2(page + FIL_PAGE_TYPE) == FIL_PAGE_HEAP_FSM);
+    ut_ad(block->get_page_type() == FIL_PAGE_TYPE_HEAP_FSM);
 
     return mach_read_from_4(page + FSM_NODES + FSM_NODES_PAGE_COUNT);
 }
@@ -687,8 +687,8 @@ bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, 
     if (page0_count >= FSM_LEAF_NODES_PER_PAGE) {
 
         // alloc a map page
-        const page_size_t page_size(0);
-        buf_block_t* new_block0 = fsp_alloc_free_page(space_id, page_size, mtr);
+        const page_size_t page_size(space_id);
+        buf_block_t* new_block0 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, mtr);
         if (new_block0 == NULL) {
             return FALSE;
         }
@@ -698,7 +698,7 @@ bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, 
         uint32 page1_count = fsm_get_nodes_page_count(block1);
         if (page1_count >= FSM_LEAF_NODES_PER_PAGE) {
 
-            buf_block_t* new_block1 = fsp_alloc_free_page(space_id, page_size, mtr);
+            buf_block_t* new_block1 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, mtr);
             if (new_block1 == NULL) {
                 const page_id_t page_id(space_id, new_block0->get_page_no());
                 fsp_free_page(page_id, page_size, mtr);
@@ -795,10 +795,10 @@ uint32 fsm_create(uint32 space_id)
 
     // 1. alloc pages
 
-    const page_size_t page_size(0);
-    buf_block_t* leaf_map_block = fsp_alloc_free_page(space_id, page_size, &mtr);
-    buf_block_t* non_leaf_map_block = fsp_alloc_free_page(space_id, page_size, &mtr);
-    buf_block_t* root_map_block = fsp_alloc_free_page(space_id, page_size, &mtr);
+    const page_size_t page_size(space_id);
+    buf_block_t* leaf_map_block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
+    buf_block_t* non_leaf_map_block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
+    buf_block_t* root_map_block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
     if (leaf_map_block == NULL || non_leaf_map_block == NULL || root_map_block == NULL) {
         goto err_exit;
     }
@@ -842,12 +842,12 @@ err_exit:
 // Protected by table->heap_io_in_progress.
 static bool32 fsm_extend_heap_pages(dict_table_t* table, mtr_t* mtr)
 {
-    const page_size_t page_size(0);
+    const page_size_t page_size(table->space_id);
     const uint32 alloc_page_count = 8;
     buf_block_t* block[alloc_page_count] = {NULL};
 
     for (uint32 i = 0; i < alloc_page_count; i++) {
-        block[i] = fsp_alloc_free_page(table->space_id, page_size, mtr);
+        block[i] = fsp_alloc_free_page(table->space_id, page_size, Page_fetch::NORMAL, mtr);
         if (block[i] == NULL) {
             goto err_exit;
         }
@@ -875,7 +875,7 @@ err_exit:
 // segment expanded by a maximum of 64MB at a time
 static bool32 fsm_extend_heap_extents(dict_table_t* table, uint32 extent_count, mtr_t* mtr)
 {
-    const page_size_t page_size(0);
+    const page_size_t page_size(table->space_id);
     const uint32 alloc_extent_count = 64;
     xdes_t* descr[alloc_extent_count] = {NULL};
 
@@ -893,7 +893,8 @@ static bool32 fsm_extend_heap_extents(dict_table_t* table, uint32 extent_count, 
         // create pages
         for (uint32 j = 0; j < FSP_EXTENT_SIZE; j++) {
             uint32 page_no = xdes_get_offset(descr[i]) + j;
-            buf_block_t* block = fsp_page_create(table->space_id, page_no, mtr, mtr);
+            const page_id_t page_id(table->space_id, page_no);
+            buf_block_t* block = fsp_page_create(page_id, page_size, Page_fetch::NORMAL, mtr, mtr);
             heap_page_init(block, table, mtr);
         }
 

@@ -243,7 +243,7 @@ static inline memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 in
     uint32         count;
 
     for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
-        index = (index + i) % MPOOL_FREE_PAGE_LIST_COUNT;
+        index = (index + i) & (MPOOL_FREE_PAGE_LIST_COUNT - 1);
 
         mutex_enter(&pool->free_pages_mutex[index], &pool->free_pages_mutex_stats[index]);
         page = UT_LIST_GET_FIRST(pool->free_pages[index].pages);
@@ -279,7 +279,7 @@ static inline memory_page_t* mpool_alloc_page_low(memory_pool_t *pool, uint64 in
     return NULL;
 }
 
-inline memory_page_t* mpool_alloc_page(memory_pool_t *pool)
+inline memory_page_t* mpool_alloc_page(memory_pool_t* pool)
 {
     uint64 owner_list_id = ut_rnd_gen_uint64();
     return mpool_alloc_page_low(pool, owner_list_id);
@@ -514,6 +514,10 @@ inline void* mcontext_stack_save(memory_stack_context_t* context)
 {
     void* ptr = NULL;
     memory_page_t *page;
+
+    if (context == NULL) {
+        return NULL;
+    }
 
     mutex_enter(&context->mutex, NULL);
     page = UT_LIST_GET_LAST(context->used_buf_pages);
@@ -829,7 +833,8 @@ inline void* mcontext_realloc(void* ptr, uint32 size, const char* file, int line
     void *new_ptr = mcontext_alloc(context, size, file, line);
     if (likely(new_ptr != NULL)) {
         uint32 min_size = (block->size < size) ? block->size : size;
-        memcpy(new_ptr, ptr, min_size);
+        errno_t err = memcpy_s(new_ptr, size, ptr, min_size);
+        securec_check(err);
         mcontext_free(ptr, context);
     }
 

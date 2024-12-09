@@ -48,7 +48,7 @@ void HASH_TABLE_FREE(HASH_TABLE* table)
     ut_free(table);
 }
 
-HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE* table, uint32 n)
+inline HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE* table, uint32 n)
 {
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
     ut_ad(n < table->n_cells);
@@ -56,7 +56,7 @@ HASH_CELL_T* HASH_GET_NTH_CELL(HASH_TABLE* table, uint32 n)
     return (table->array + n);
 }
 
-uint32 HASH_CALC_HASH(HASH_TABLE* table, uint32 fold)
+inline uint32 HASH_CALC_HASH(HASH_TABLE* table, uint32 fold)
 {
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
 #define UT_HASH_RANDOM_MASK2       1653893711
@@ -65,7 +65,7 @@ uint32 HASH_CALC_HASH(HASH_TABLE* table, uint32 fold)
 }
 
 /** Gets the sync object index for a fold value in a hash table. */
-uint32 hash_get_sync_obj_index(HASH_TABLE* table, uint32 fold)
+static inline uint32 hash_get_sync_obj_index(HASH_TABLE* table, uint32 fold)
 {
     ut_ad(table);
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
@@ -75,7 +75,7 @@ uint32 hash_get_sync_obj_index(HASH_TABLE* table, uint32 fold)
 }
 
 /** Gets the nth mutex in a hash table. */
-mutex_t* hash_get_nth_mutex(HASH_TABLE* table, uint32 i)
+inline mutex_t* hash_get_nth_mutex(HASH_TABLE* table, uint32 i)
 {
     ut_ad(table);
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
@@ -86,7 +86,7 @@ mutex_t* hash_get_nth_mutex(HASH_TABLE* table, uint32 i)
 }
 
 /** Gets the mutex for a fold value in a hash table. */
-mutex_t* HASH_GET_MUTEX(HASH_TABLE* table, uint32 fold)
+inline mutex_t* HASH_GET_MUTEX(HASH_TABLE* table, uint32 fold)
 {
     uint32 i;
 
@@ -99,7 +99,7 @@ mutex_t* HASH_GET_MUTEX(HASH_TABLE* table, uint32 fold)
 }
 
 /** Gets the nth rw_lock in a hash table. */
-rw_lock_t* hash_get_nth_lock(HASH_TABLE* table, uint32 i) /*!< in: index of the rw_lock */
+inline rw_lock_t* hash_get_nth_lock(HASH_TABLE* table, uint32 i) /*!< in: index of the rw_lock */
 {
     ut_ad(table);
     ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
@@ -110,7 +110,7 @@ rw_lock_t* hash_get_nth_lock(HASH_TABLE* table, uint32 i) /*!< in: index of the 
 }
 
 /** Gets the rw_lock for a fold value in a hash table. */
-rw_lock_t* hash_get_lock(HASH_TABLE* table, uint32 fold)
+inline rw_lock_t* hash_get_lock(HASH_TABLE* table, uint32 fold)
 {
     uint32 i;
 
@@ -130,7 +130,7 @@ relock S-lock the another rw_lock until appropriate for a fold value.
 @param[in]	fold		fold value
 @return	latched rw_lock */
 
-rw_lock_t* hash_lock_s_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold)
+inline rw_lock_t* hash_lock_s_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold)
 {
     ut_ad(rw_lock_own(hash_lock, RW_LOCK_SHARED));
 
@@ -153,7 +153,7 @@ relock X-lock the another rw_lock until appropriate for a fold value.
 @param[in]	fold		fold value
 @return	latched rw_lock */
 
-rw_lock_t* hash_lock_x_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold)
+inline rw_lock_t* hash_lock_x_confirm(rw_lock_t* hash_lock, HASH_TABLE* table, uint32 fold)
 {
     ut_ad(rw_lock_own(hash_lock, RW_LOCK_WAIT_EXCLUSIVE));
 

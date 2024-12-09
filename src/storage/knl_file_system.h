@@ -11,6 +11,7 @@
 #include "knl_server.h"
 #include "knl_page_id.h"
 #include "knl_page_size.h"
+#include "knl_defs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,32 +60,37 @@ extern fil_addr_t   fil_addr_null;
 /*-----------------------------------------------------------------*/
 
 /** File page types (values of FIL_PAGE_TYPE) */
-#define FIL_PAGE_ALLOCATED          0       /*!< Freshly allocated page */
-#define FIL_PAGE_FSP_HDR            1       /*!< File space header */
-#define FIL_PAGE_XDES               2       /*!< Extent descriptor page */
-#define FIL_PAGE_INODE              3       /*!< Index node */
-#define FIL_PAGE_TRX_SYS            4       /*!< Transaction system data */
-#define FIL_PAGE_TRX_SLOT           5       /*!< Transaction system data */
-#define FIL_PAGE_UNDO_LOG           6       /*!< Undo log page */
-#define FIL_PAGE_DICT_HDR           7       /*!< Dictionary header */
-#define FIL_PAGE_DICT_DATA          8       /*!< Dictionary data */
-#define FIL_PAGE_IBUF_FREE_LIST     9       /*!< Insert buffer free list */
-#define FIL_PAGE_IBUF_BITMAP        10      /*!< Insert buffer bitmap */
-#define FIL_PAGE_DOUBLE_WRITE       11      /*!< Double write page */
-#define FIL_PAGE_SYS                12      /*!< System page */
-#define FIL_PAGE_BTREE_ROOT         13      /*!< B-tree root node */
-#define FIL_PAGE_BTREE_DATA         14      /*!< B-tree node */
-#define FIL_PAGE_HEAP_ROOT          15      /*!< Heap root page */
-#define FIL_PAGE_HEAP_DATA          16      /*!< Heap data page */
-#define FIL_PAGE_HEAP_FSM           17      /*!< Heap Map root page */
-#define FIL_PAGE_HEAP_MAP_DATA      18      /*!< Heap Map data page */
-#define FIL_PAGE_HASH_INDEX_ROOT    19      /*!< Hash root page */
-#define FIL_PAGE_HASH_INDEX_DATA    20      /*!< Hash data page */
-#define FIL_PAGE_TOAST              21      /*!< Toast page */
-#define FIL_PAGE_TYPE_BLOB          22      /*!< Uncompressed BLOB page */
-#define FIL_PAGE_TYPE_ZBLOB         23      /*!< First compressed BLOB page */
-#define FIL_PAGE_TYPE_ZBLOB2        24      /*!< Subsequent compressed BLOB page */
-#define FIL_PAGE_TYPE_LAST          FIL_PAGE_TYPE_ZBLOB2    /*!< Last page type */
+#define FIL_PAGE_TYPE_ALLOCATED      0    // Freshly allocated page
+#define FIL_PAGE_TYPE_FSP_HDR        1    // File space header
+#define FIL_PAGE_TYPE_XDES           2    // Extent descriptor page
+#define FIL_PAGE_TYPE_INODE          3    // Index node
+#define FIL_PAGE_TYPE_TRX_SYS        4    // Transaction system data
+#define FIL_PAGE_TYPE_TRX_SLOT       5    // Transaction slot
+#define FIL_PAGE_TYPE_SYSAUX         6    // 
+#define FIL_PAGE_TYPE_UNDO_FSM       7    // Undo log page
+#define FIL_PAGE_TYPE_UNDO_LOG       8    // Undo log page
+#define FIL_PAGE_TYPE_DICT_HDR       9    // Dictionary header
+#define FIL_PAGE_TYPE_DICT_DATA      10   // Dictionary header
+#define FIL_PAGE_TYPE_HEAP_FSM       11   // Heap Map root page
+#define FIL_PAGE_TYPE_HEAP           12   // Heap data page
+#define FIL_PAGE_TYPE_BTREE_NONLEAF  13   // B-tree non-leaf node page
+#define FIL_PAGE_TYPE_BTREE_LEAF     14   // B-tree node
+#define FIL_PAGE_TYPE_HASH_HDR       15   // B-tree non-leaf node page
+#define FIL_PAGE_TYPE_HASH_DATA      17   // B-tree node
+#define FIL_PAGE_TYPE_TOAST          18   // Toast page
+
+#define FIL_PAGE_TYPE_MASK           0xFF //
+
+#define FIL_PAGE_TYPE_RESIDENT_FLAG  0x8000
+
+
+
+//#define FIL_PAGE_IBUF_FREE_LIST     9       // Insert buffer free list
+//#define FIL_PAGE_IBUF_BITMAP        10      // Insert buffer bitmap
+//#define FIL_PAGE_DOUBLE_WRITE       11      // Double write page
+//#define FIL_PAGE_HEAP_MAP_DATA      18      // Heap Map data page
+//#define FIL_PAGE_HASH_INDEX_ROOT    19      // Hash root page
+//#define FIL_PAGE_HASH_INDEX_DATA    20      // Hash data page
 
 
 
@@ -141,12 +147,13 @@ typedef struct st_fil_node {
 
 /* Space types */
 #define FIL_SYSTEM_SPACE_ID           DB_SYSTEM_SPACE_ID
+#define FIL_SYSTRANS_SPACE_ID         DB_SYSTRANS_SPACE_ID
 #define FIL_SYSAUX_SPACE_ID           DB_SYSAUX_SPACE_ID
-#define FIL_REDO_SPACE_ID             DB_REDO_SPACE_ID
-#define FIL_UNDO_SPACE_ID             DB_UNDO_SPACE_ID
-#define FIL_TEMP_SPACE_ID             DB_TEMP_SPACE_ID
-#define FIL_DICT_SPACE_ID             DB_DICT_SPACE_ID
 #define FIL_DBWR_SPACE_ID             DB_DBWR_SPACE_ID
+#define FIL_TEMP_SPACE_ID             DB_TEMP_SPACE_ID
+#define FIL_UNDO_START_SPACE_ID       DB_UNDO_START_SPACE_ID
+#define FIL_UNDO_END_SPACE_ID         DB_UNDO_END_SPACE_ID
+
 #define FIL_USER_SPACE_ID             DB_USER_SPACE_FIRST_ID
 
 typedef struct st_fil_page {
@@ -156,22 +163,21 @@ typedef struct st_fil_page {
 } fil_page_t;
 
 struct st_fil_space {
-    char        *name;  /* space name */
-    uint32       id;  /* space id */
-    uint32       purpose;  // Space types
-    uint32       size_in_header; /* FSP_SIZE in the tablespace header; 0 if not known yet */
-    uint32       free_limit; /*!< contents of FSP_FREE_LIMIT */
-    uint32       flags; /*!< tablespace flags; see fsp_flags_is_valid(), page_size_t(ulint) (constructor) */
+    char*        name;  // tablespace name
+    uint32       id;    // tablespace id
+    uint32       flags; // tablespace type: FSP_FLAG_SYSTEM, etc
+    uint32       size_in_header; // FSP_SIZE in the tablespace header; 0 if not known yet
+    uint32       free_limit; // contents of FSP_FREE_LIMIT
     bool32       is_autoextend;
     uint32       autoextend_size;
-    uint32       page_size;  /* space size in pages */
-    /* number of reserved free extents for ongoing operations like B-tree page split */
+    uint32       page_size;  // space size in pages
+    // number of reserved free extents for ongoing operations like B-tree page split
     uint32       n_reserved_extents;
     uint32       magic_n;
     mutex_t      mutex;
     bool32       io_in_progress;
     rw_lock_t    rw_lock;
-    HASH_NODE_T  hash;   /*!< hash chain node */
+    HASH_NODE_T  hash;   // hash chain node
 
     atomic32_t   refcount;
 
@@ -219,12 +225,6 @@ inline bool32 is_system_tablespace(uint32 id)
     return(id == FIL_SYSTEM_SPACE_ID || id == FIL_TEMP_SPACE_ID);
 }
 
-// Check if shared-system or undo tablespace.
-inline bool32 is_system_or_undo_tablespace(uint32     id)
-{
-    return(id == FIL_SYSTEM_SPACE_ID || id <= FIL_UNDO_SPACE_ID);
-}
-
 inline void fil_system_pin_space(fil_space_t *space)
 {
     atomic32_inc(&space->refcount);
@@ -250,7 +250,7 @@ extern inline void fil_system_insert_space_to_hash_table(fil_space_t* space);
 extern bool32 fil_system_flush_filnodes();
 
 
-extern fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose);
+extern fil_space_t* fil_space_create(char* name, uint32 space_id, uint32 flags);
 extern void fil_space_destroy(uint32 space_id);
 extern fil_node_t* fil_node_create(fil_space_t *space, uint32 node_id, char *name,
                                          uint32 page_max_count, uint32 page_size, bool32 is_extend);
@@ -262,7 +262,7 @@ extern inline fil_node_t* fil_node_get_by_page_id(fil_space_t* space, const page
 extern inline void fil_node_complete_io(fil_node_t* node, uint32 type);
 
 
-extern bool fil_addr_is_null(fil_addr_t addr);
+extern bool32 fil_addr_is_null(fil_addr_t addr);
 
 extern inline status_t fil_io(uint32 type, bool32 sync, const page_id_t &page_id,
     const page_size_t &page_size, uint32 byte_offset, uint32 len, void* buf,
@@ -274,7 +274,7 @@ extern inline status_t fil_read(bool32 sync, const page_id_t &page_id,
 extern inline void fil_aio_reader_and_writer_wait(os_aio_context_t* context);
 
 extern bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size);
-extern uint64 fil_space_get_size(uint32 space_id);
+extern uint32 fil_space_get_size(uint32 space_id);
 
 
 //-----------------------------------------------------------------------------------------------------

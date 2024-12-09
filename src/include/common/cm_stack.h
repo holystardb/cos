@@ -5,6 +5,10 @@
 #include "securec.h"
 #include "cm_error.h"
 
+#define CM_MIN_KERNEL_RESERVE_SIZE (uint32)SIZE_K(256)
+#define CM_MIN_STACK_SIZE          (uint32)SIZE_K(512)
+
+
 #ifndef UNIV_MEMORY_DEBUG
 
 // reserved size to save the last push_offset
@@ -26,11 +30,11 @@ static inline void cm_stack_reset(cm_stack_t *stack)
     stack->heap_offset = 0;
 }
 
-static inline void *cm_push(cm_stack_t *stack, uint32 size)
+static inline void* cm_stack_push(cm_stack_t* stack, uint32 size)
 {
     uint32 last_offset;
-    uint32 actual_size = CM_ALIGN8(size) + CM_PUSH_RESERVE_SIZE;
-    uint8 *ptr = stack->buf + stack->push_offset - actual_size + CM_PUSH_RESERVE_SIZE;
+    uint32 actual_size = ut_align8(size) + CM_PUSH_RESERVE_SIZE;
+    uint8* ptr = stack->buf + stack->push_offset - actual_size + CM_PUSH_RESERVE_SIZE;
 
     if (stack->push_offset < (uint64)stack->heap_offset + actual_size) {
         return NULL;
@@ -48,7 +52,7 @@ static inline void *cm_push(cm_stack_t *stack, uint32 size)
     return ptr;
 }
 
-static inline void cm_pop(cm_stack_t *stack)
+static inline void cm_stack_pop(cm_stack_t* stack)
 {
     if (stack->push_offset == stack->size) {
         return;
@@ -64,7 +68,7 @@ static inline void cm_pop(cm_stack_t *stack)
 #endif
 }
 
-static inline void cm_pop_to(cm_stack_t *stack, uint32 push_offset)
+static inline void cm_stack_pop_to(cm_stack_t* stack, uint32 push_offset)
 {
     if (stack->push_offset >= push_offset) {
         return;
@@ -82,13 +86,13 @@ static inline void cm_pop_to(cm_stack_t *stack, uint32 push_offset)
 
 #define STACK_ALLOC_ADDR(stack) ((stack)->buf + (stack)->heap_offset)
 
-static inline status_t cm_stack_alloc(void *owner, uint32 size, void **ptr)
+static inline status_t cm_stack_alloc(void* owner, uint32 size, void** ptr)
 {
     uint32 actual_size;
-    cm_stack_t *stack;
+    cm_stack_t* stack;
 
     stack = (cm_stack_t *)owner;
-    actual_size = CM_ALIGN8(size);
+    actual_size = ut_align8(size);
     if ((uint64)stack->heap_offset + actual_size + CM_MIN_KERNEL_RESERVE_SIZE >= stack->push_offset) {
         CM_THROW_ERROR(ERR_STACK_OVERFLOW);
         return CM_ERROR;
@@ -99,17 +103,17 @@ static inline status_t cm_stack_alloc(void *owner, uint32 size, void **ptr)
     return CM_SUCCESS;
 }
 
-static inline void *cm_stack_heap_head(cm_stack_t *stack)
+static inline void* cm_stack_heap_head(cm_stack_t* stack)
 {
     return STACK_ALLOC_ADDR(stack);
 }
 
-static inline void cm_stack_heap_reset(cm_stack_t *stack, void *to)
+static inline void cm_stack_heap_reset(cm_stack_t* stack, void* to)
 {
     stack->heap_offset = (uint32)((uint8 *)to - stack->buf);
 }
 
-static inline void cm_stack_init(cm_stack_t *stack, char *buf, uint32 buf_size)
+static inline void cm_stack_init(cm_stack_t* stack, char* buf, uint32 buf_size)
 {
     CM_ASSERT(stack != NULL);
     MEMS_RETVOID_IFERR(memset_s(stack, sizeof(cm_stack_t), 0, sizeof(cm_stack_t)));
@@ -125,11 +129,11 @@ static inline void cm_stack_init(cm_stack_t *stack, char *buf, uint32 buf_size)
 
 #define CM_RESTORE_STACK(stack)                 \
     do {                                        \
-        cm_pop_to(stack, __push_offset__);      \
+        cm_stack_pop_to(stack, __push_offset__);      \
         (stack)->heap_offset = __heap_offset__; \
     } while (0)
 
-static inline void cm_keep_stack_variant(cm_stack_t *stack, char *buf)
+static inline void cm_keep_stack_variant(cm_stack_t* stack, char* buf)
 {
     if (buf == NULL) {
         return;
@@ -179,7 +183,7 @@ inline void cm_stack_reset(cm_stack_t *stack)
     stack->heap_offset = 0;
 }
 
-static inline void *cm_push(cm_stack_t *stack, uint32 size)
+static inline void* cm_stack_push(cm_stack_t* stack, uint32 size)
 {
     errno_t rc_memzero;
 
@@ -189,7 +193,7 @@ static inline void *cm_push(cm_stack_t *stack, uint32 size)
     if (size == 0) {
         return NULL;
     }
-    void *ptr = malloc(size);
+    void* ptr = malloc(size);
     if (ptr == NULL) {
         return NULL;
     }
@@ -211,7 +215,7 @@ static inline void *cm_push(cm_stack_t *stack, uint32 size)
     return ptr;
 }
 
-static inline void cm_pop(cm_stack_t *stack)
+static inline void cm_stack_pop(cm_stack_t* stack)
 {
     if (stack->push_depth == 0) {
         return;
@@ -220,7 +224,7 @@ static inline void cm_pop(cm_stack_t *stack)
     stack->push_depth--;
 }
 
-static inline void cm_pop_to(cm_stack_t *stack, uint32 to, uint32 push_offset)
+static inline void cm_stack_pop_to(cm_stack_t* stack, uint32 to, uint32 push_offset)
 {
     if (stack->push_depth <= to) {
         return;
@@ -231,7 +235,7 @@ static inline void cm_pop_to(cm_stack_t *stack, uint32 to, uint32 push_offset)
 
 #define STACK_ALLOC_ADDR(stack) ((stack)->heap_offset == 0 ? NULL : (stack)->heap_addr[(stack)->heap_offset - 1])
 
-static inline status_t cm_stack_alloc(void *owner, uint32 size, void **ptr)
+static inline status_t cm_stack_alloc(void* owner, uint32 size, void** ptr)
 {
     cm_stack_t *stack;
     errno_t errcode;
@@ -264,12 +268,12 @@ static inline status_t cm_stack_alloc(void *owner, uint32 size, void **ptr)
     return CM_SUCCESS;
 }
 
-static inline void *cm_stack_heap_head(cm_stack_t *stack)
+static inline void* cm_stack_heap_head(cm_stack_t* stack)
 {
     return STACK_ALLOC_ADDR(stack);
 }
 
-static inline void cm_stack_heap_reset(cm_stack_t *stack, void *to)
+static inline void cm_stack_heap_reset(cm_stack_t* stack, void* to)
 {
     while (stack->heap_offset > 0 && stack->heap_addr[stack->heap_offset - 1] != to) {
         free(stack->heap_addr[stack->heap_offset - 1]);
@@ -278,7 +282,7 @@ static inline void cm_stack_heap_reset(cm_stack_t *stack, void *to)
     }
 }
 
-static inline void cm_stack_init(cm_stack_t *stack, char *buf, uint32 buf_size)
+static inline void cm_stack_init(cm_stack_t* stack, char* buf, uint32 buf_size)
 {
     MEMS_RETVOID_IFERR(memset_s(stack, sizeof(cm_stack_t), 0, sizeof(cm_stack_t)));
     stack->buf = (uint8 *)buf;
@@ -291,11 +295,11 @@ static inline void cm_stack_init(cm_stack_t *stack, char *buf, uint32 buf_size)
 
 #define CM_RESTORE_STACK(stack)                             \
     do {                                                    \
-        cm_pop_to(stack, __stack_depth__, __push_offset__); \
+        cm_stack_pop_to(stack, __stack_depth__, __push_offset__); \
         (stack)->heap_offset = __heap_offset__;             \
     } while (0)
 
-static inline void cm_keep_stack_variant(cm_stack_t *stack, char *buf)
+static inline void cm_keep_stack_variant(cm_stack_t* stack, char* buf)
 {
     if (buf == NULL) {
         return;

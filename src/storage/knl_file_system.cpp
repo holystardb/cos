@@ -179,7 +179,7 @@ bool32 fil_system_flush_filnodes()
 }
 
 
-fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose)
+fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 flags)
 {
     fil_space_t *space, *tmp;
     uint32 size = ut_align8(sizeof(fil_space_t)) + (uint32)strlen(name) + 1;
@@ -195,8 +195,7 @@ fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 purpose)
     space->id = space_id;
     space->size_in_header = 0;
     space->free_limit = 0;
-    space->flags = 0;
-    space->purpose = purpose;
+    space->flags = flags;
     space->page_size = 0;
     space->n_reserved_extents = 0;
     space->magic_n = M_FIL_SPACE_MAGIC_N;
@@ -521,7 +520,7 @@ static bool32 fil_space_extend_node(fil_node_t* node,
 {
     uint32            timeout_seconds = 300;
     uchar             buf[UNIV_PAGE_SIZE];
-    const page_size_t page_size(0);
+    const page_size_t page_size(node->space->id);
     page_id_t         page_id;
     fil_node_extend_t node_extend;
 
@@ -773,10 +772,10 @@ err_exit:
     return FALSE;
 }
 
-uint64 fil_space_get_size(uint32 space_id)
+uint32 fil_space_get_size(uint32 space_id)
 {
-    fil_space_t *space;
-    uint64       size = 0;
+    fil_space_t* space;
+    uint32       size = 0;
 
     space = fil_system_get_space_by_id(space_id);
     if (space) {
@@ -823,32 +822,37 @@ static uint32 fsp_get_autoextend_increment(fil_space_t* space)
     } else {
     }
 
+    uint32 size, size_increase;
+    if (size < FSP_EXTENT_SIZE) {
+        size_increase = FSP_EXTENT_SIZE;
+    } else if (size < 32 * FSP_EXTENT_SIZE) {
+        size_increase = FSP_EXTENT_SIZE;
+    } else {
+        size_increase = FSP_FREE_ADD * FSP_EXTENT_SIZE;
+    }
+
     return FSP_EXTENT_SIZE * FSP_FREE_ADD;
 }
 
 // Tries to extend the last data file of a tablespace if it is auto-extending.
 static bool32 fsp_try_extend_data_file(
-    uint32       *actual_increase,/*!< out: actual increase in pages */
-    fil_space_t  *space,  /*!< in: space */
-    fsp_header_t *header,  /*!< in/out: space header */
-    mtr_t        *mtr)
+    uint32*       actual_increase,/*!< out: actual increase in pages */
+    fil_space_t*  space,  /*!< in: space */
+    fsp_header_t* header,  /*!< in/out: space header */
+    mtr_t*        mtr)
 {
-    uint32    size;  /* current number of pages in the datafile */
-    uint32    size_increase;  /* number of pages to extend this file */
-    uint32    actual_size;
-
-    //ut_d(fsp_space_modify_check(space->id, mtr));
-
-    size = mach_read_from_4(header + FSP_SIZE);
-    ut_ad(size == space->size_in_header);
-
-    const page_size_t page_size(mach_read_from_4(header + FSP_SPACE_FLAGS));
+    uint32 size;  /* current number of pages in the datafile */
+    uint32 size_increase;  /* number of pages to extend this file */
+    uint32 actual_size;
+    const page_size_t page_size(space->id);
 
     size_increase = fsp_get_autoextend_increment(space);
     if (size_increase == 0) {
         return FALSE;
     }
 
+    size = mach_read_from_4(header + FSP_SIZE);
+    ut_ad(size == space->size_in_header);
     if (!fil_space_extend(space, size + size_increase, &actual_size)) {
         return FALSE;
     }
@@ -859,7 +863,7 @@ static bool32 fsp_try_extend_data_file(
     return TRUE;
 }
 
-inline bool fil_addr_is_null(fil_addr_t addr) /*!< in: address */
+inline bool32 fil_addr_is_null(fil_addr_t addr) /*!< in: address */
 {
     return(addr.page == FIL_NULL);
 }
@@ -872,8 +876,6 @@ static inline bool32 fil_space_belongs_in_lru(fil_space_t *space)
 // Closes a file
 static bool32 fil_node_close_file(fil_node_t *node)
 {
-    bool32  ret;
-
     ut_ad(node->is_open);
     ut_ad(node->n_pending == 0);
     ut_ad(node->n_pending_flushes == 0);
@@ -1011,7 +1013,7 @@ open_retry:
 
     // check number of open files
     atomic32_t open_pending_num = atomic32_inc(&fil_system->open_pending_num);
-    if (open_pending_num > fil_system->max_n_open) {
+    if ((uint32)open_pending_num > fil_system->max_n_open) {
         LOGGER_INFO(LOGGER, LOG_MODULE_TABLESPACE,
             "Warning: open files %u exceeds the limit %u",
             open_pending_num, fil_system->max_n_open);

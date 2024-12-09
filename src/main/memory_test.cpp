@@ -187,9 +187,9 @@ err_exit:
 
 void test_free_page(uint32 page_no)
 {
-    uint64 slot_count_pre_page = 1024 * 128 / sizeof(vm_page_slot_t);
-    uint64 page_count_pre_slot = 64;
-    uint64 page_count_pre_slot_page = slot_count_pre_page * page_count_pre_slot;
+    uint32 slot_count_pre_page = 1024 * 128 / sizeof(vm_page_slot_t);
+    uint32 page_count_pre_slot = 64;
+    uint32 page_count_pre_slot_page = slot_count_pre_page * page_count_pre_slot;
 
     uint32 page_count, remain_page_count, page_index, slot_index, byte_index, bit_index;
 
@@ -223,9 +223,9 @@ void test_free_page(uint32 page_no)
 
 void do_test_free_page()
 {
-    uint64 slot_count_pre_page = 1024 * 128 / sizeof(vm_page_slot_t);
-    uint64 page_count_pre_slot = 64;
-    uint64 page_count_pre_slot_page = slot_count_pre_page * page_count_pre_slot;
+    uint32 slot_count_pre_page = 1024 * 128 / sizeof(vm_page_slot_t);
+    uint32 page_count_pre_slot = 64;
+    uint32 page_count_pre_slot_page = slot_count_pre_page * page_count_pre_slot;
     uint32 page_no;
 
     page_no = 63;

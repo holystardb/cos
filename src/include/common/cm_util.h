@@ -281,13 +281,13 @@ The following function is used to fetch data from 8 consecutive
 bytes. The most significant char is at the lowest address.
 @return 64-bit integer */
 extern inline uint64 mach_read_from_8(
-    const unsigned char*    b); /*!< in: pointer to 8 bytes */
+    const unsigned char* b); /*!< in: pointer to 8 bytes */
 
 /*********************************************************//**
 Writes a 64-bit integer in a compressed form (5..9 bytes).
 @return size in bytes */
 extern inline uint32 mach_ull_write_compressed(
-    unsigned char*      b,  /*!< in: pointer to memory where to store */
+    unsigned char* b,  /*!< in: pointer to memory where to store */
     uint64  n); /*!< in: 64-bit integer to be stored */
 
 /*********************************************************//**

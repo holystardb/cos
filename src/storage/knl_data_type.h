@@ -104,7 +104,7 @@ NOTE: the values must run from 0 up in the order given! All codes must be less t
 #define DATA_MBMAXLEN(mbminmaxlen)              ((uint32) ((mbminmaxlen) / DATA_MBMAX))
 
 
-// Structure for an SQL data type
+// 4 byte, Structure for an SQL data type
 typedef struct st_dtype {
     uint8  mtype         : 6;  // main data type
     uint8  is_null       : 1;  // null or not null

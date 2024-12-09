@@ -215,20 +215,20 @@ struct {\
         (BASE).count++;                            \
     }                                              \
 
-#define SLIST_APPEND_SLIST(NAME, BASE1, BASE2)          \
-    {                                                   \
-        if (UNLIKELY((BASE1).first == NULL)) {          \
-            ut_a((BASE1).count == 0);                   \
-            (BASE1).first = (BASE2).first;              \
-        }                                               \
-        if (LIKELY((BASE1).last != NULL)) {             \
-            ((BASE1).last->NAME).next = (BASE2).first;  \
-        }                                               \
-        if (LIKELY((BASE2).last != NULL)) {             \
-            (BASE1).last = (BASE2).last;                \
-        }                                               \
-        (BASE1).count += (BASE2).count;                 \
-    }                                                   \
+#define SLIST_APPEND_SLIST(NAME, BASE_FROM, BASE_TO)          \
+    {                                                         \
+        if (UNLIKELY((BASE_TO).first == NULL)) {              \
+            ut_a((BASE_TO).count == 0);                       \
+            (BASE_TO).first = (BASE_FROM).first;              \
+        }                                                     \
+        if (LIKELY((BASE_TO).last != NULL)) {                 \
+            ((BASE_TO).last->NAME).next = (BASE_FROM).first;  \
+        }                                                     \
+        if (LIKELY((BASE_FROM).last != NULL)) {               \
+            (BASE_TO).last = (BASE_FROM).last;                \
+        }                                                     \
+        (BASE_TO).count += (BASE_FROM).count;                 \
+    }                                                         \
 
 
 #ifdef __cplusplus

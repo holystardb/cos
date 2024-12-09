@@ -804,7 +804,7 @@ inline void os_aio_context_free_slot(os_aio_slot_t* slot)
 static int32 os_aio_windows_handle(
     os_aio_context_t* context,
     os_aio_slot_t**   slot, // in and out:
-    uint32            timeout_us, // in
+    uint64            timeout_us, // in
     void**            message1, // out: message to be passed along with the aio operation
     void**            message2, // out: message to be passed along with the aio operation
     uint32*           type) // out: OS_FILE_WRITE or OS_FILE_READ
@@ -814,7 +814,7 @@ static int32 os_aio_windows_handle(
     DWORD           dwMilliseconds = INFINITE;
 
     if (timeout_us != OS_WAIT_INFINITE_TIME) {
-        dwMilliseconds = timeout_us / 1000;
+        dwMilliseconds = (DWORD)(timeout_us / 1000);
     }
 
     if (slot && *slot) {
@@ -889,7 +889,7 @@ static int32 os_aio_windows_handle(
 
 static bool32 os_aio_linux_handle(
     os_aio_context_t* context,
-    uint32            timeout_us,
+    uint64            timeout_us,
     void**            message1, /* out: message to be passed along with the aio operation */
     void**            message2, /* out: message to be passed along with the aio operation */
     uint32*           type) /* out: OS_FILE_WRITE or OS_FILE_READ */
@@ -1063,7 +1063,7 @@ inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us)
 }
 
 // Waits for an aio operation to complete.
-inline int32 os_file_aio_context_wait(os_aio_context_t* context, os_aio_slot_t** slot, uint32 timeout_us)
+inline int32 os_file_aio_context_wait(os_aio_context_t* context, os_aio_slot_t** slot, uint64 timeout_us)
 {
     int32 ret;
 
@@ -1134,8 +1134,7 @@ inline os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uin
 }
 
 os_aio_array_t* os_aio_array_create(
-    uint32 io_pending_count_per_context, // in: maximum number of pending aio operations allowed;
-                             //     it must be divisible by n_segments
+    uint32 io_pending_count_per_context, // in: maximum number of pending aio operations allowed
     uint32 io_context_count) // in: number of io_context in the aio array
 {
     os_aio_array_t* array;

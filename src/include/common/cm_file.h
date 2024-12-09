@@ -179,8 +179,7 @@ extern inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us
 
 //Waits for an aio operation to complete.
 extern inline int32 os_file_aio_context_wait(os_aio_context_t* context,
-                                                       os_aio_slot_t** slot,
-                                                       uint32 timeout_us = OS_WAIT_INFINITE_TIME);
+    os_aio_slot_t** slot, uint64 timeout_us = OS_WAIT_INFINITE_TIME);
 
 #ifndef __WIN__
 extern void* os_aio_open_dl();

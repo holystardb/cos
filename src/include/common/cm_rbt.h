@@ -18,7 +18,7 @@ typedef struct ib_rbt_node_struct ib_rbt_node_t;
 /* FIXME: Iterator is a better name than _bound_ */
 typedef struct ib_rbt_bound_struct ib_rbt_bound_t;
 typedef void (*ib_rbt_print_node)(const ib_rbt_node_t* node);
-typedef int (*ib_rbt_compare)(const void* p1, const void* p2);
+typedef int32 (*ib_rbt_compare)(const void* p1, const void* p2);
 
 /** Red black tree color types */
 enum ib_rbt_color_enum {
@@ -63,7 +63,7 @@ struct	ib_rbt_struct {
 a speedy lookup and insert if key doesn't exist.*/
 struct ib_rbt_bound_struct {
 	const ib_rbt_node_t* last; /* Last node visited */
-	int result; /* Result of comparing with the last non-nil node that was visited */
+	int32 result; /* Result of comparing with the last non-nil node that was visited */
 };
 
 /* Size in elements (t is an rb tree instance) */
@@ -171,7 +171,7 @@ Search for the key, a node will be retuned in parent.last, whether it
 was found or not. If not found then parent.last will contain the
 parent node for the possibly new key otherwise the matching node.
 @return	result of last comparison */
-int rbt_search(
+int32 rbt_search(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: search bounds */
 	const void*	key);			/*!< in: key to search */
@@ -181,7 +181,7 @@ Search for the key, a node will be retuned in parent.last, whether it
 was found or not. If not found then parent.last will contain the
 parent node for the possibly new key otherwise the matching node.
 @return	result of last comparison */
-int rbt_search_cmp(
+int32 rbt_search_cmp(
 	const ib_rbt_t*	tree,			/*!< in: rb tree */
 	ib_rbt_bound_t*	parent,			/*!< in: search bounds */
 	const void*	key,			/*!< in: key to search */

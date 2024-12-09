@@ -54,9 +54,9 @@ typedef struct st_fsm_path_node
 
 typedef struct st_fsm_search_path
 {
-    int32 space_id;
-    uint8 category;
-    uint8 reserved[3];
+    uint32 space_id;
+    uint8  category;
+    uint8  reserved[3];
     fsm_path_node_t nodes[FSM_PATH_LEVEL_COUNT];
 } fsm_search_path_t;
 

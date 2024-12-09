@@ -8,7 +8,7 @@
 log_info    LOGGER;
 
 log_info::log_info()
-    : log_handle(OS_FILE_INVALID_HANDLE), log_level(LOG_LEVEL_CRITICAL),
+    : log_handle(OS_FILE_INVALID_HANDLE), log_level(LOG_LEVEL_DEFAULT),
       write_pos(0), write_to_buffer_flag(FALSE), log_file_size(0),
       log_file_create_time(0), batch_flush_flag(FALSE), batch_flush_pos(0)
 {
@@ -20,7 +20,7 @@ log_info::log_info()
     mutex_create(&mutex);
 
     for (uint32 i = 0; i < LOG_MODULE_END; i++) {
-        modules_log_level[i] = LOG_LEVEL_CRITICAL;
+        modules_log_level[i] = LOG_LEVEL_DEFAULT;
     }
 }
 
@@ -125,7 +125,7 @@ bool32 log_info::create_log_file()
     return TRUE;
 }
 
-void log_info::log_to_file(char* log_level_desc, uint32 module_id, const char *file, uint32 line, const char *fmt, ...)
+void log_info::log_to_file(char* log_level_desc, uint32 module_id, const char *fmt, ...)
 {
     int             len, write_size = 0;
     va_list         ap;
@@ -305,7 +305,7 @@ void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 }
 
 
-void log_info::log_to_stderr(char* log_level_desc, uint32 module_id, const char *file, uint32 line, const char *fmt, ...)
+void log_info::log_to_stderr(char* log_level_desc, uint32 module_id, const char *fmt, ...)
 {
     int             len;
     va_list         ap;

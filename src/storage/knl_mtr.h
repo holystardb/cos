@@ -6,7 +6,7 @@
 #include "cm_memory.h"
 #include "cm_rwlock.h"
 
-#include "knl_log.h"
+#include "knl_redo.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -146,16 +146,16 @@ enum mlog_id_t {
 	MLOG_UNDO_ERASE_END = 21,
 
 	/** initialize a page in an undo log */
-	MLOG_UNDO_INIT = 22,
+	MLOG_UNDO_PAGE_INIT = 22,
 
 	/** discard an update undo log header */
 	MLOG_UNDO_HDR_DISCARD = 23,
 
 	/** reuse an insert undo log header */
-	MLOG_UNDO_HDR_REUSE = 24,
+	MLOG_UNDO_PAGE_REUSE = 24,
 
 	/** create an undo log header */
-	MLOG_UNDO_HDR_CREATE = 25,
+	MLOG_UNDO_LOG_HDR_CREATE = 25,
 
 	/** mark an index record as the predefined minimum record */
 	MLOG_REC_MIN_MARK = 26,
@@ -435,6 +435,12 @@ extern bool32 mtr_memo_contains_page(mtr_t* mtr, const byte* ptr, uint32 type);
 
 extern inline void mtr_s_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
 extern inline void mtr_x_lock_func(rw_lock_t* lock, const char* file, uint32 line, mtr_t* mtr);
+
+extern inline byte* mlog_replay_nbytes(
+    uint32 type, // in: log record type: MLOG_1BYTE, ...
+    byte* log_rec_ptr, // in: buffer
+    byte* log_end_ptr, // in: buffer end
+    void* block); // in: block where to apply the log record, or NULL
 
 
 // This macro locks an rw-lock in s-mode

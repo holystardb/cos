@@ -30,6 +30,10 @@ constexpr uint32 MAX_PAGE_HASH_LOCKS = 4096;
 // Maximum number of concurrent buffer pool watches
 //#define BUF_POOL_WATCH_SIZE (srv_n_purge_threads + 1)
 
+#define BUF_PAGE_ACCESS_WINDOW    3000000     // us, increase touch_number if access interval > BUF_ACCESS_WINDOW
+#define BUF_HOT_PAGE_TCH          3           // consider buffer is hot if its touch_number >= BUF_TCH_AGE
+#define BUF_PAGE_AGE_DEC_FACTOR   2
+
 
 
 
@@ -86,11 +90,10 @@ typedef enum en_buf_page_state {
 
 /** Flags for io_fix types */
 typedef enum en_buf_io_fix {
-  BUF_IO_NONE = 0, /**< no pending I/O */
-  BUF_IO_READ,     /**< read pending */
-  BUF_IO_WRITE,    /**< write pending */
-  BUF_IO_PIN       /**< disallow relocation of
-                   block and its removal of from the flush_list */
+  BUF_IO_NONE = 0, // no pending I/O
+  BUF_IO_READ,     // read pending
+  BUF_IO_WRITE,    // write pending
+  BUF_IO_PIN       // disallow relocation of block and its removal of from the flush_list
 } buf_io_fix_t;
 
 
@@ -103,7 +106,7 @@ public:
     /** Page size. */
     page_size_t size;
 
-    /** Count of how manyfold this block is currently bufferfixed. */
+    // Count of how manyfold this block is currently bufferfixed
     atomic32_t buf_fix_count;
 
     /** type of pending I/O operation. */
@@ -112,29 +115,23 @@ public:
     /** Block state. */
     buf_page_state_t state;
 
-    bool32 is_resident;
-    bool32 in_page_hash;
-    bool32 in_flush_list;  // protected by buf_pool->flush_list_mutex
-    bool32 in_free_list;
-    bool32 in_LRU_list;
-    bool32 in_unzip_LRU_list;
-    bool32 in_withdraw_list;
+    // if this block is currently being flushed to disk,
+    // this tells the flush_type.
+    uint32 flush_type : 2;
+    // index number of the buffer pool that this block belongs to
+    uint32 buf_pool_index : 6;
+    uint32 is_resident : 1;
+    uint32 in_page_hash : 1;
+    uint32 in_flush_list : 1; // protected by buf_pool->flush_list_mutex
+    uint32 in_free_list : 1;
+    uint32 in_LRU_list : 1;
+    // this is set to TRUE when fsp frees a page in buffer pool;
+    // protected by buf_block_t::mutex
+    uint32 file_page_was_freed : 1;
+    uint32 reserved : 18;
 
-    spinlock_t lock;
-
-
-    /** if this block is currently being flushed to disk, this tells
-    the flush_type.  @see buf_flush_t */
-    unsigned flush_type : 2;
-
-    /** index number of the buffer pool that this block belongs to */
-    unsigned buf_pool_index : 6;
-
-    buf_page_t *hash; /*!< node used in chaining to buf_pool->page_hash or buf_pool->zip_hash */
-
-    spinlock_t spin_lock;      /*!< protecting this block:
-                         state (also protected by the buffer pool mutex), io_fix, buf_fix_count, and accessed; */
-    rw_lock_t rw_lock; /*!< read-write lock of the buffer frame */
+    // node used in chaining to buf_pool->page_hash or buf_pool->zip_hash
+    buf_page_t* hash;
 
     // based on state, this is a list node, protected either by buf_pool->mutex or by buf_pool->flush_list_mutex,
     // in one of the following lists in buf_pool:
@@ -150,22 +147,13 @@ public:
     // protected by block->mutex
     uint64 newest_modification;
 
-    UT_LIST_NODE_T(buf_page_t) LRU;
-    unsigned old:1; /*!< TRUE if the block is in the old blocks in buf_pool->LRU_old */
-    unsigned freed_page_clock:31;/*!< the value of
-					buf_pool->freed_page_clock
-					when this block was the last
-					time put to the head of the
-					LRU list; a thread is allowed
-					to read this for heuristic
-					purposes without holding any
-					mutex or latch */
+    UT_LIST_NODE_T(buf_page_t) LRU_list_node;
 
-    uint32 access_time; /*!< time of first access, or 0 if the block was never accessed in the buffer pool.
-                               Protected by block mutex */
+    uint16 touch_number;
+    // time of first access, or 0 if the block was never accessed in the buffer pool.
+    // Protected by block mutex
+    date_t access_time;
 
-    bool32 file_page_was_freed;  /*!< this is set to TRUE when fsp frees a page in buffer pool;
-                                      protected by buf_pool->zip_mutex or buf_block_t::mutex. */
 
 };
 
@@ -218,7 +206,7 @@ public:
     space_id_t get_space_id() const { return (page.id.space_id()); }
     page_no_t get_next_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_NEXT)); }
     page_no_t get_prev_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_PREV)); }
-    page_type_t get_page_type() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE)); }
+    page_type_t get_page_type() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE) & FIL_PAGE_TYPE_MASK); }
     bool32 is_resident() const { return page.is_resident; }
     uint32 get_fix_count() const { return page.buf_fix_count; }
 };
@@ -261,7 +249,7 @@ typedef struct st_buf_pool {
     mutex_t flush_state_mutex; /*!< Flush state protection mutex */
 
 
-    uint64         size;           /*!< size of frames[] and blocks[] */
+    uint32         size;  // size of frames[] and blocks[]
     unsigned char *mem;   /*!< pointer to the memory area which was allocated for the frames */
     buf_block_t   *blocks;  /*!< array of buffer control blocks */
     uint64         mem_size;
@@ -352,138 +340,73 @@ typedef struct st_buf_pool {
 
   uint32 withdraw_target; /*!< target length of withdraw block list, when withdrawing */
 
-  UT_LIST_BASE_NODE_T(buf_page_t) LRU;  /*!< base node of the LRU list */
+    UT_LIST_BASE_NODE_T(buf_page_t) LRU;  /*!< base node of the LRU list */
 
-  buf_page_t *LRU_old; /*!< pointer to the about
-                       LRU_old_ratio/BUF_LRU_OLD_RATIO_DIV
-                       oldest blocks in the LRU list;
-                       NULL if LRU length less than
-                       BUF_LRU_OLD_MIN_LEN;
-                       NOTE: when LRU_old != NULL, its length
-                       should always equal LRU_old_len */
-  uint32 LRU_old_len;   /*!< length of the LRU list from
-                       the block to which LRU_old points
-                       onward, including that block;
-                       see buf0lru.cc for the restrictions
-                       on this value; 0 if LRU_old == NULL;
-                       NOTE: LRU_old_len must be adjusted
-                       whenever LRU_old shrinks or grows! */
-
-  buf_page_t *watch;
-  /*!< Sentinel records for buffer
-  pool watches. Scanning the array is
-  protected by taking all page_hash
-  latches in X. Updating or reading an
-  individual watch page is protected by
-  a corresponding individual page_hash
-  latch. */
+    // pointer to the about LRU_old_ratio/BUF_LRU_OLD_RATIO_DIV oldest blocks in the LRU list;
+    // NULL if LRU length less than BUF_LRU_OLD_MIN_LEN;
+    // NOTE: when LRU_old != NULL, its length should always equal LRU_old_len
+    buf_page_t* LRU_old;
+    // length of the LRU list from the block to which LRU_old points onward, including that block;
+    // 0 if LRU_old == NULL;
+    // NOTE: LRU_old_len must be adjusted whenever LRU_old shrinks or grows!
+    uint32 LRU_old_len;
 
 } buf_pool_t;
 
 
 extern status_t buf_pool_init(uint64 total_size, uint32 n_instances, uint32 page_hash_lock_count);
 extern uint32 buf_pool_get_instances();
-extern buf_pool_t* buf_pool_get(uint32 id);
-extern buf_pool_t* buf_pool_from_page_id(const page_id_t &page_id);
-extern buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
-extern buf_pool_t* buf_pool_from_block(const buf_block_t *block);
-lsn_t buf_pool_get_recovery_lsn(void);
+extern inline buf_pool_t* buf_pool_get(uint32 id);
+extern inline buf_pool_t* buf_pool_from_page_id(const page_id_t &page_id);
+extern inline buf_pool_t* buf_pool_from_bpage(const buf_page_t *bpage);
+extern inline buf_pool_t* buf_pool_from_block(const buf_block_t *block);
+extern lsn_t buf_pool_get_recovery_lsn(void);
 
 
 
 
 // in: buffer pool instance, or NULL for round-robin selection of the buffer pool
-buf_block_t* buf_block_alloc(buf_pool_t* buf_pool);
-
+extern inline buf_block_t* buf_block_alloc(buf_pool_t* buf_pool);
 // Frees a buffer block which does not contain a file page
-void buf_block_free(buf_block_t* block);
+extern inline void buf_block_free(buf_pool_t* buf_pool, buf_block_t* block);
+extern buf_block_t* buf_block_align(const byte* ptr);
 
-buf_block_t* buf_block_align(const byte* ptr);
+extern inline void buf_block_lock_and_fix(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* mtr);
+extern inline void buf_block_unlock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* mtr);
 
-extern inline uint32 buf_block_fix(buf_block_t* block, mtr_t* mtr);
-extern inline void buf_block_unfix(buf_block_t* block, mtr_t* mtr);
-extern inline uint32 buf_page_fix(buf_page_t* bpage);
-extern inline void buf_page_unfix(buf_page_t* bpage);
-#define buf_block_mark_dirty(block, mtr)  buf_block_fix(block, mtr)
-
-extern inline void buf_block_lock(buf_block_t *block, rw_lock_type_t lock_type, mtr_t* mtr);
-extern inline void buf_block_unlock(buf_block_t *block, rw_lock_type_t lock_type, mtr_t* mtr);
+extern inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state);
+extern inline buf_page_state_t buf_block_get_state(const buf_block_t *block);
 
 
 // Initializes a page to the buffer buf_pool
 // not read from file even if it cannot be found in the buffer buf_pool
-buf_block_t* buf_page_create(    const page_id_t &page_id,   const page_size_t &page_size,
-    rw_lock_type_t rw_latch, Page_fetch mode, mtr_t *mtr);
-
+extern inline buf_block_t* buf_page_create(const page_id_t& page_id, const page_size_t& page_size,
+    rw_lock_type_t rw_latch, Page_fetch mode, mtr_t* mtr);
 
 // This is the general function used to get access to a database page
-buf_block_t *buf_page_get_gen(const page_id_t &page_id, const page_size_t &page_size,
-    rw_lock_type_t rw_latch, Page_fetch mode, mtr_t *mtr);
+extern inline buf_block_t* buf_page_get_gen(const page_id_t& page_id, const page_size_t& page_size,
+    rw_lock_type_t rw_latch, buf_block_t* guess, Page_fetch mode, mtr_t* mtr);
 
-#define buf_page_get(ID, SIZE, RW_LOCK, MTR) buf_page_get_gen(ID, SIZE, RW_LOCK, Page_fetch::NORMAL, MTR)
-
+#define buf_page_get(ID, SIZE, RW_LOCK, MTR) buf_page_get_gen(ID, SIZE, RW_LOCK, NULL, Page_fetch::NORMAL, MTR)
 
 
 // Completes an asynchronous read or write request of a file page to or from the buffer pool
-inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool32 evict);
-bool32 buf_page_can_relocate(const buf_page_t *bpage);
-buf_page_t *buf_page_alloc_descriptor(void);
-void buf_page_free_descriptor(buf_page_t *bpage);
-buf_page_t *buf_page_hash_get_low(buf_pool_t *buf_pool, const page_id_t &page_id);
+extern inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool32 evict);
+extern inline bool32 buf_page_can_relocate(buf_page_t* bpage);
+extern inline buf_page_t* buf_page_hash_get_low(buf_pool_t* buf_pool, const page_id_t& page_id);
 
-bool32 buf_page_in_file(const buf_page_t *bpage);
-bool32 buf_page_is_old(const buf_page_t* bpage);
-void buf_page_set_old(buf_page_t* bpage, bool32 old);
+extern inline bool32 buf_page_in_file(const buf_page_t* bpage);
 
-extern inline buf_io_fix_t buf_page_get_io_fix(const buf_page_t *bpage);
-extern inline void buf_page_set_io_fix(buf_page_t *bpage, buf_io_fix_t io_fix);
-
-extern inline buf_page_state_t buf_page_get_state(const buf_page_t *bpage);
-extern inline void buf_page_set_state(buf_page_t *bpage, buf_page_state_t state);
-
-
-
-
-uint32 buf_page_is_accessed(const buf_page_t *bpage);
-void buf_page_set_accessed(buf_page_t *bpage);
-
-/*******************************************************************//**
-Given a tablespace id and page number tries to get that page.
-If the page is not in the buffer pool it is not loaded and NULL is returned.
-Suitable for using when holding the lock_sys_t::mutex.
-@return pointer to a page or NULL */
-const buf_block_t* buf_page_try_get_func(
-    uint32      space_id,/*!< in: tablespace id */
-    uint32      page_no,/*!< in: page number */
-    const char* file,   /*!< in: file name */
-    uint32      line,   /*!< in: line where called */
-    mtr_t*      mtr);    /*!< in: mini-transaction */
-
-/********************************************************************//**
-Moves a page to the start of the buffer pool LRU list.
-This high-level function can be used to prevent an important page from slipping out of the buffer pool. */
-void buf_page_make_young(buf_page_t* bpage);  /*!< in: buffer block of a file page */
-
-/********************************************************************//**
-Moves a page to the start of the buffer pool LRU list if it is too old.
-This high-level function can be used to prevent an important page from slipping out of the buffer pool. */
-void buf_page_make_young_if_needed(buf_page_t* bpage);  /*!< in/out: buffer block of a file page */
-
-/********************************************************************//**
-Returns TRUE if the page can be found in the buffer pool hash table.
-NOTE that it is possible that the page is not yet read from disk, though.
-@return TRUE if found in the page hash table */
-bool32 buf_page_peek(
-    uint32  space,   /*!< in: space id */
-    uint32  offset); /*!< in: page number */
-
-void buf_ptr_get_fsp_addr(const void *ptr, uint32 *space,  fil_addr_t *addr);
-
-extern inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state);
-extern inline buf_page_state_t buf_block_get_state(const buf_block_t *block);
-extern mutex_t* buf_page_get_mutex(const buf_page_t* bpage);
-
-
+extern inline buf_io_fix_t buf_page_get_io_fix(const buf_page_t* bpage);
+extern inline void buf_page_set_io_fix(buf_page_t* bpage, buf_io_fix_t io_fix);
+extern inline buf_page_state_t buf_page_get_state(const buf_page_t* bpage);
+extern inline void buf_page_set_state(buf_page_t* bpage, buf_page_state_t state);
+extern inline uint32 buf_page_fix(buf_page_t* bpage);
+extern inline void buf_page_unfix(buf_page_t* bpage);
+extern inline date_t buf_page_is_accessed(const buf_page_t* bpage);
+extern inline void buf_page_set_accessed(buf_page_t* bpage, date_t access_time);
+extern inline mutex_t* buf_page_get_mutex(const buf_page_t* bpage);
+extern inline lsn_t buf_page_get_newest_modification(const buf_page_t* bpage);
 extern buf_page_t* buf_page_hash_get_locked(
     buf_pool_t* buf_pool,
     const page_id_t& page_id,

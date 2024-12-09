@@ -6,7 +6,6 @@
 #include "knl_buf.h"
 #include "knl_page.h"
 #include "knl_server.h"
-#include "knl_log.h"
 #include "knl_fsp.h"
 #include "knl_dblwrite.h"
 #include "knl_buf_flush.h"
@@ -211,7 +210,7 @@ inline void dyn_array_close(dyn_array_t* arr, byte* ptr)
 
     ut_ad(arr->buf_end + block->data >= ptr);
 
-    block->used = ptr - block->data;
+    block->used = (uint32)(ptr - block->data);
 
     ut_ad(block->used <= DYN_ARRAY_DATA_SIZE);
     ut_d(arr->buf_end = 0);
@@ -344,9 +343,11 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
     switch (slot->type) {
         case MTR_MEMO_PAGE_S_FIX:
             rw_lock_s_unlock(&((buf_block_t*)object)->rw_lock);
+            buf_page_unfix(&((buf_block_t*)object)->page);
             break;
         case MTR_MEMO_PAGE_X_FIX:
             rw_lock_x_unlock(&((buf_block_t*)object)->rw_lock);
+            buf_page_unfix(&((buf_block_t*)object)->page);
             break;
         case MTR_MEMO_BUF_FIX:
             buf_page_unfix(&((buf_block_t*)object)->page);
@@ -357,7 +358,7 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
         case MTR_MEMO_X_LOCK:
             rw_lock_x_unlock((rw_lock_t*)object);
             break;
-#ifdef UNIV_DEBUG1
+#ifdef UNIV_DEBUG
         default:
             ut_ad(slot->type == MTR_MEMO_MODIFY);
             ut_ad(mtr_memo_contains(mtr, object, MTR_MEMO_PAGE_X_FIX));
@@ -370,8 +371,6 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
 static inline bool32 mtr_block_dirtied(const buf_block_t* block)
 {
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad((block->is_resident() && block->page.buf_fix_count == 0) ||
-          (!block->is_resident() && block->page.buf_fix_count > 0));
 
     /* It is OK to read recovery_lsn because no
        other thread can be performing a write of it and it
@@ -515,8 +514,8 @@ static inline void mtr_memo_pop_all(mtr_t *mtr)
     for (dyn_block_t* block = dyn_array_get_last_block(&mtr->memo);
          block;
          block = dyn_array_get_prev_block(&mtr->memo, block)) {
-        const mtr_memo_slot_t *start = (mtr_memo_slot_t*)dyn_block_get_data(block);
-        mtr_memo_slot_t *slot = (mtr_memo_slot_t*)(dyn_block_get_data(block) + dyn_block_get_used(block));
+        const mtr_memo_slot_t* start = (mtr_memo_slot_t*)dyn_block_get_data(block);
+        mtr_memo_slot_t* slot = (mtr_memo_slot_t*)(dyn_block_get_data(block) + dyn_block_get_used(block));
 
         ut_ad(!(dyn_block_get_used(block) % sizeof(mtr_memo_slot_t)));
 
@@ -586,7 +585,7 @@ static inline void mtr_log_reserve_and_write(mtr_t *mtr)
     if (mtr->n_log_recs > 1) {
         mlog_catenate_uint32(mtr, MLOG_MULTI_REC_END, MLOG_1BYTE);
     } else {
-        byte* mlog_id = dyn_block_get_data(first_block) + 4 /* reserved 4bytes for length */;
+        byte* mlog_id = dyn_block_get_data(first_block) + MTR_LOG_LEN_SIZE /* reserved for length */;
         *mlog_id = *mlog_id | MLOG_SINGLE_REC_FLAG;
     }
 
@@ -600,8 +599,8 @@ static inline void mtr_log_reserve_and_write(mtr_t *mtr)
     // length for log
     mach_write_to_2(dyn_block_get_data(first_block), data_size - MTR_LOG_LEN_SIZE);
     LOGGER_TRACE(LOGGER, LOG_MODULE_MTR,
-        "mtr_log_reserve_and_write: start_lsn %llu, end_lsn %llu, original data_len %u, adjust data_len %u",
-        mtr->start_buf_lsn.val.lsn, mtr->end_lsn, data_size, mtr->start_buf_lsn.data_len);
+        "mtr_log_reserve_and_write: rec count %lu start_lsn %llu end_lsn %llu original data_len %lu adjust data_len %lu",
+        mtr->n_log_recs, mtr->start_buf_lsn.val.lsn, mtr->end_lsn, data_size, mtr->start_buf_lsn.data_len);
 
     // add dirtied pages to flush list
     mtr_add_dirtied_pages_to_flush_list(mtr);
@@ -640,12 +639,12 @@ inline byte* mlog_write_initial_log_record_fast(
 
     ut_ad(type <= MLOG_BIGGEST_TYPE);
     ut_ad(ptr && log_ptr);
+    ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
 #ifdef UNIV_DEBUG
     buf_block_t* block = (buf_block_t*) buf_block_align(ptr);
     if (block->is_resident()) {
         // refcount == 0 if page is redident
     } else {
-        ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_BUF_FIX));
         ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
     }
 #endif
@@ -661,7 +660,7 @@ inline byte* mlog_write_initial_log_record_fast(
 
     mtr->n_log_recs++;
 
-#ifdef UNIV_DEBUG1
+#ifdef UNIV_DEBUG
     /* We now assume that all x-latched pages have been modified! */
     if (!mtr_memo_contains(mtr, block, MTR_MEMO_MODIFY)) {
         mtr_memo_push(mtr, block, MTR_MEMO_MODIFY);
@@ -723,84 +722,76 @@ inline uint32 mlog_read_uint32(const byte* ptr, mlog_id_t type)
 Writes 1, 2 or 4 bytes to a file page. Writes the corresponding log
 record to the mini-transaction log if mtr is not NULL. */
 inline void mlog_write_uint32(
-	byte*		ptr,	/*!< in: pointer where to write */
-	uint32		val,	/*!< in: value to write */
-	mlog_id_t	type,	/*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
-	mtr_t*		mtr)	/*!< in: mini-transaction handle */
+    byte* ptr, /*!< in: pointer where to write */
+    uint32 val, /*!< in: value to write */
+    mlog_id_t type, /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
+    mtr_t* mtr) /*!< in: mini-transaction handle */
 {
-	switch (type) {
-	case MLOG_1BYTE:
-		mach_write_to_1(ptr, val);
-		break;
-	case MLOG_2BYTES:
-		mach_write_to_2(ptr, val);
-		break;
-	case MLOG_4BYTES:
-		mach_write_to_4(ptr, val);
-		break;
-	default:
-		ut_error;
-	}
+    switch (type) {
+    case MLOG_1BYTE:
+        mach_write_to_1(ptr, val);
+        break;
+    case MLOG_2BYTES:
+        mach_write_to_2(ptr, val);
+        break;
+    case MLOG_4BYTES:
+        mach_write_to_4(ptr, val);
+        break;
+    default:
+        ut_error;
+    }
 
-	if (mtr != NULL) {
-		byte*	log_ptr = mlog_open(mtr, 11 + 2 + 5);
-
-		/* If no logging is requested, we may return now */
-		if (log_ptr != 0) {
-			log_ptr = mlog_write_initial_log_record_fast(ptr, type, log_ptr, mtr);
-
-			mach_write_to_2(log_ptr, page_offset(ptr));
-			log_ptr += 2;
-
-			log_ptr += mach_write_compressed(log_ptr, val);
-
-			mlog_close(mtr, log_ptr);
-		}
-	}
+    if (mtr != NULL) {
+        byte* log_ptr = mlog_open(mtr, 11 + 2 + 5);
+        /* If no logging is requested, we may return now */
+        if (log_ptr != 0) {
+            log_ptr = mlog_write_initial_log_record_fast(ptr, type, log_ptr, mtr);
+            mach_write_to_2(log_ptr, page_offset(ptr));
+            log_ptr += 2;
+            log_ptr += mach_write_compressed(log_ptr, val);
+            mlog_close(mtr, log_ptr);
+        }
+    }
 }
 
 /********************************************************//**
 Writes 8 bytes to a file page. Writes the corresponding log
 record to the mini-transaction log, only if mtr is not NULL */
 inline void mlog_write_uint64(
-	byte*		ptr,	/*!< in: pointer where to write */
-	uint64      val,	/*!< in: value to write */
-	mtr_t*		mtr)	/*!< in: mini-transaction handle */
+    byte* ptr,  /*!< in: pointer where to write */
+    uint64 val, /*!< in: value to write */
+    mtr_t* mtr) /*!< in: mini-transaction handle */
 {
-	mach_write_to_8(ptr, val);
+    mach_write_to_8(ptr, val);
 
-	if (mtr != NULL) {
-		byte*	log_ptr = mlog_open(mtr, 11 + 2 + 9);
-
-		/* If no logging is requested, we may return now */
-		if (log_ptr != NULL) {
-			log_ptr = mlog_write_initial_log_record_fast(ptr, MLOG_8BYTES, log_ptr, mtr);
-
-			mach_write_to_2(log_ptr, page_offset(ptr));
-			log_ptr += 2;
-
-			log_ptr += mach_ull_write_compressed(log_ptr, val);
-
-			mlog_close(mtr, log_ptr);
-		}
-	}
+    if (mtr != NULL) {
+        byte* log_ptr = mlog_open(mtr, 11 + 2 + 9);
+        /* If no logging is requested, we may return now */
+        if (log_ptr != NULL) {
+            log_ptr = mlog_write_initial_log_record_fast(ptr, MLOG_8BYTES, log_ptr, mtr);
+            mach_write_to_2(log_ptr, page_offset(ptr));
+            log_ptr += 2;
+            log_ptr += mach_ull_write_compressed(log_ptr, val);
+            mlog_close(mtr, log_ptr);
+        }
+    }
 }
 
 /********************************************************//**
 Writes a string to a file page buffered in the buffer pool. Writes the
 corresponding log record to the mini-transaction log. */
 inline void mlog_write_string(
-	byte*		ptr,	/*!< in: pointer where to write */
-	const byte*	str,	/*!< in: string to write */
-	uint32		len,	/*!< in: string length */
-	mtr_t*		mtr)	/*!< in: mini-transaction handle */
+    byte*       ptr,	/*!< in: pointer where to write */
+    const byte* str,	/*!< in: string to write */
+    uint32      len,	/*!< in: string length */
+    mtr_t*      mtr)	/*!< in: mini-transaction handle */
 {
-	ut_ad(ptr && mtr);
-	ut_a(len < UNIV_PAGE_SIZE);
+    ut_ad(ptr && mtr);
+    ut_a(len < UNIV_PAGE_SIZE);
 
-	memcpy(ptr, str, len);
+    memcpy(ptr, str, len);
 
-	mlog_log_string(ptr, len, mtr);
+    mlog_log_string(ptr, len, mtr);
 }
 
 // Catenates n bytes to the mtr log.
@@ -933,7 +924,7 @@ inline void mlog_log_string(
 
 // Writes a log record
 inline void mlog_write_log(uint32 type, uint32 space_id, uint32 page_no,
-    byte  *str, /*!< in: string to write */
+    byte*  str, /*!< in: string to write */
     uint32 len, /*!< in: string length */
     mtr_t* mtr)
 {
@@ -1058,4 +1049,88 @@ inline void mtr_x_lock_func(rw_lock_t* lock, /*!< in: rw-lock */
     mtr_memo_push(mtr, lock, MTR_MEMO_X_LOCK);
 }
 
+
+// Parses a log record written by mlog_write_ulint or mlog_write_ull.
+// return parsed record end, NULL if not a complete record or a corrupt record */
+inline byte* mlog_replay_nbytes(
+    uint32 type, // in: log record type: MLOG_1BYTE, ...
+    byte* log_rec_ptr, // in: buffer
+    byte* log_end_ptr, // in: buffer end
+    void* block) // in: block where to apply the log record, or NULL
+{
+    uint32 offset;
+    uint32 val;
+    uint64 dval;
+    byte* page = block ? buf_block_get_frame((buf_block_t*)block) : NULL;
+
+    ut_a(type <= MLOG_8BYTES);
+
+    if (log_end_ptr < log_rec_ptr + 2) {
+        goto corrupt;
+    }
+
+    offset = mach_read_from_2(log_rec_ptr);
+    log_rec_ptr += 2;
+
+    if (offset >= UNIV_PAGE_SIZE) {
+        //recv_sys->found_corrupt_log = TRUE;
+        goto corrupt;
+    }
+
+    if (type == MLOG_8BYTES) {
+        log_rec_ptr = mach_ull_parse_compressed(log_rec_ptr, log_end_ptr, &dval);
+        if (log_rec_ptr == NULL) {
+            goto corrupt;
+        }
+        if (page) {
+            mach_write_to_8(page + offset, dval);
+        }
+        return log_rec_ptr;
+    }
+
+    log_rec_ptr = mach_parse_compressed(log_rec_ptr, log_end_ptr, &val);
+    if (log_rec_ptr == NULL) {
+        goto corrupt;
+    }
+
+    LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
+        "mlog_replay_nbytes: type %lu block (%p space_id %lu page_no %lu) offset %lu value %lu",
+        type, block, block ? ((buf_block_t *)block)->get_space_id() : INVALID_SPACE_ID,
+        block ? ((buf_block_t *)block)->get_page_no() : INVALID_PAGE_NO, offset, val);
+
+    switch (type) {
+    case MLOG_1BYTE:
+        if (UNLIKELY(val > 0xFFUL)) {
+            goto corrupt;
+        }
+        if (page) {
+            mach_write_to_1(page + offset, val);
+        }
+        break;
+    case MLOG_2BYTES:
+        if (UNLIKELY(val > 0xFFFFUL)) {
+            goto corrupt;
+        }
+        if (page) {
+            mach_write_to_2(page + offset, val);
+        }
+        break;
+    case MLOG_4BYTES:
+        if (page) {
+            mach_write_to_4(page + offset, val);
+        }
+        break;
+    default:
+corrupt:
+        LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
+            "mlog_replay_nbytes: invalid log, log_rec %p end_ptr %p data_len %lu, type %lu block (%p space_id %lu page_no %lu)",
+            log_rec_ptr, log_end_ptr, log_end_ptr - log_rec_ptr, type, block,
+            block ? ((buf_block_t *)block)->get_space_id() : INVALID_SPACE_ID,
+            block ? ((buf_block_t *)block)->get_page_no() : INVALID_PAGE_NO);
+        //recv_sys->found_corrupt_log = TRUE;
+        log_rec_ptr = NULL;
+    }
+
+    return log_rec_ptr;
+}
 

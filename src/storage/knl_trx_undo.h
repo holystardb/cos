@@ -8,10 +8,6 @@
 #include "knl_dict.h"
 #include "knl_session.h"
 
-/* Types of an undo log segment */
-#define TRX_UNDO_INSERT         1 /* contains undo entries for inserts */
-#define TRX_UNDO_UPDATE         2 /* contains undo entries for updates and delete markings */
-
 /* States of an undo log segment */
 #define TRX_UNDO_PAGE_STATE_ACTIVE         1 /* contains an undo log of an active transaction */
 #define TRX_UNDO_PAGE_STATE_CACHED         2 /* update cached for quick reuse */
@@ -21,57 +17,62 @@
 
 
 /* Operation type flags used in trx_undo_write */
-#define TRX_UNDO_INSERT_OP      1
-#define TRX_UNDO_MODIFY_OP      2
+enum undo_op_type {
+    UNDO_INSERT_OP = 1,
+    UNDO_MODIFY_OP = 2
+};
+
 
 //-----------------------------------------------------------------
+
+typedef byte    trx_undo_page_hdr_t;
 
 // The offset of the undo log page header on pages of the undo log
 #define TRX_UNDO_PAGE_HDR       FSEG_PAGE_DATA
 
-#define TRX_UNDO_PAGE_TYPE      0 // TRX_UNDO_INSERT or TRX_UNDO_UPDATE
-// Byte offset where the undo log records for the LATEST transaction start on this page
+#define TRX_UNDO_PAGE_TYPE          0 // TRX_UNDO_INSERT_OP or TRX_UNDO_MODIFY_OP
+// Byte offset where the undo log header for the FIRST transaction start on this page
 // (remember that in an update undo log, the first page can contain several undo logs)
-#define TRX_UNDO_PAGE_START     2
-// On each page of the undo log this field contains the byte offset of the first free byte on the page
-#define TRX_UNDO_PAGE_FREE      4
+#define TRX_UNDO_PAGE_START         2
+// byte offset of the first free byte on the page
+#define TRX_UNDO_PAGE_FREE          4
 // The file list node in the chain of undo log pages
-#define TRX_UNDO_PAGE_NODE      6
+#define TRX_UNDO_PAGE_FLST_NODE     6  // for base node TRX_UNDO_PAGE_LIST
 
 /* Size of the transaction undo log page header, in bytes */
-#define TRX_UNDO_PAGE_HDR_SIZE  (6 + FLST_NODE_SIZE)
+#define TRX_UNDO_PAGE_HDR_SIZE      (6 + FLST_NODE_SIZE)
 
 
 //-----------------------------------------------------------------
 
 // The offset of the undo log segment header on the first page of the undo log segment
+typedef byte    trx_undo_seg_hdr_t;
 
 /* Undo log segment header */
 #define TRX_UNDO_SEG_HDR        (TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_HDR_SIZE)
 
-#define TRX_UNDO_STATE          0   /* TRX_UNDO_ACTIVE, ... */
+#define TRX_UNDO_STATE          0   // TRX_UNDO_ACTIVE, ...
 // Offset of the last undo log header on the segment header page, 0 if none
 #define TRX_UNDO_LAST_LOG       2
-// Header for the file segment which the undo log segment occupies
-#define TRX_UNDO_FSEG_HEADER    4
 // Base node for the list of pages in the undo log segment;
 // defined only on the undo log segment's first page
-#define TRX_UNDO_PAGE_LIST      (4 + FSEG_HEADER_SIZE)
+#define TRX_UNDO_PAGE_LIST      4
 
 /* Size of the undo log segment header */
-#define TRX_UNDO_SEG_HDR_SIZE   (4 + FSEG_HEADER_SIZE + FLST_BASE_NODE_SIZE)
+#define TRX_UNDO_SEG_HDR_SIZE   (4 + FLST_BASE_NODE_SIZE)
 
 //-----------------------------------------------------------------
 
-// The undo log header.
+// The undo log header for transaction.
 // There can be several undo log headers on the first page of an update undo log segment.
+typedef byte    trx_undo_log_hdr_t;
 
 #define TRX_UNDO_LOG_HDR        (TRX_UNDO_SEG_HDR + TRX_UNDO_SEG_HDR_SIZE)
 
 #define TRX_UNDO_TRX_ID         0 // Transaction id
 // Transaction number of the transaction;
 // defined only if the log is in a history list
-#define TRX_UNDO_TRX_NO         8
+#define TRX_UNDO_TRX_SCN        8
 // Offset of the first undo log record of this log on the header page
 #define TRX_UNDO_LOG_START      16
 // TRUE if undo log header includes X/Open XA transaction identification XID
@@ -86,13 +87,27 @@
 #define TRX_UNDO_NEXT_LOG       28
 // Offset of the previous undo log header on this page, 0 if none
 #define TRX_UNDO_PREV_LOG       30
-// If the log is put to the history list, the file list node is here
-#define TRX_UNDO_HISTORY_NODE   32
 
-/* Size of the undo log header without XID information */
-#define TRX_UNDO_LOG_HDR_SIZE   (32 + FLST_NODE_SIZE)
+// Size of the undo log header without XID information
+#define TRX_UNDO_LOG_HDR_SIZE   32
 
 //-----------------------------------------------------------------
+
+// trx undo log record
+typedef byte    trx_undo_rec_hdr_t;
+
+#define TRX_UNDO_NEXT_REC       0
+#define TRX_UNDO_REC_TYPE       2 // TRX_UNDO_INSERT_REC
+#define TRX_UNDO_REC_TABLE_ID   3
+#define TRX_UNDO_REC_DATA       11
+#define TRX_UNDO_REC_START      13
+
+#define TRX_UNDO_REC_HDR_SIZE   13
+
+
+//-----------------------------------------------------------------
+
+
 
 /* X/Open XA Transaction Identification (XID) */
 
@@ -179,7 +194,7 @@ typedef enum en_undo_type {
     UNDO_LOB_TEMP_DELETE = 55,
 } undo_type_t;
 
-#define UNDO_DATA_HEADER_SIZE         OFFSET_OF(undo_data_t, data)
+#define UNDO_REC_HEADER_SIZE         OFFSET_OF(undo_rec_t, data)
 
 typedef struct st_undo_snapshot {
     uint64  scn; // commit scn or command id
@@ -187,10 +202,10 @@ typedef struct st_undo_snapshot {
     uint32  offsets;  // heap page offset and undo page offset
 } undo_snapshot_t;
 
-typedef struct st_undo_data {
-    undo_type_t     type; // TRX_UNDO_INSERT_OP or TRX_UNDO_MODIFY_OP
+typedef struct st_undo_rec {
+    undo_type_t     type;
     uint32          ssn;  // ssn generate current undo
-    undo_snapshot_t snapshot;
+    undo_snapshot_t snapshot;  // old dir value
 
     union {
         uint64 row_id; // rowid to locate row or itl
@@ -208,20 +223,21 @@ typedef struct st_undo_data {
 
     uint32  data_size;
     char*   data;
+} undo_rec_t;
+
+typedef struct st_undo_data {
+    uint64       query_min_scn;
+    undo_op_type undo_op;
+    uint32       undo_space_index;  // start from 0 (DB_UNDO_START_SPACE_ID)
+    uint32       undo_page_no;
+    uint32       undo_page_offset;
+    undo_rec_t   rec;
 } undo_data_t;
-
-
 
 //-----------------------------------------------------------------
 
-extern trx_undo_page_t* trx_undo_prepare(
-    que_sess_t *sess,
-    uint32 type,
-    uint32 size,
-    uint64 query_min_scn,
-    mtr_t* mtr);
-
-extern inline status_t trx_undo_write(que_sess_t *sess, undo_data_t* undo_data, mtr_t* mtr);
+extern inline status_t trx_undo_prepare(que_sess_t* sess, undo_data_t* undo_data, mtr_t* mtr);
+extern inline status_t trx_undo_write_log_rec(que_sess_t* sess, undo_data_t* undo_data, mtr_t* mtr);
 
 
 #endif  /* _KNL_TRX_UNDO_H */

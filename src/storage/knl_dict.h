@@ -10,28 +10,46 @@
 #include "knl_server.h"
 #include "knl_trx_types.h"
 #include "knl_data_type.h"
+#include "knl_session.h"
 
 /* Space id and page no where the dictionary header resides */
-#define DICT_HDR_SPACE      0   /* the SYSTEM tablespace */
-#define DICT_HDR_PAGE_NO    FSP_DICT_HDR_PAGE_NO
+#define DICT_HDR_SPACE_ID      0   // SYSTEM tablespace
+#define DICT_HDR_PAGE_NO       FSP_DICT_HDR_PAGE_NO
 
 #define DICT_INVALID_OBJECT_ID        UINT_MAX64
 #define DICT_TABLE_COLUMN_MAX_COUNT   1000
 #define DICT_INDEX_COLUMN_MAX_COUNT   30
 
+//
+#define DICT_INI_TRANS          (uint32)2
+#define DICT_MAX_TRANS          (uint32)255
+#define DICT_PCT_FREE           (uint32)8
+#define DICT_PCT_FREE_MAX       (uint32)80
+
+// consistent read mode
+#define DICT_CR_ROW             0
+#define DICT_CR_PAGE            1
+
 
 /* The ids for the basic system tables and their indexes */
+// ids for basic system tables
 #define DICT_TABLES_ID              1
 #define DICT_COLUMNS_ID             2
 #define DICT_INDEXES_ID             3
 #define DICT_FIELDS_ID              4
+#define DICT_USERS_ID               5
 
-/* The following is a secondary index on SYS_TABLES */
-#define DICT_TABLES_CLUST_ID        5
-#define DICT_TABLES_INDEX_ID_ID     6
-#define DICT_COLUMNS_CLUST_ID       7
-#define DICT_INDEXES_CLUST_ID       8
-#define DICT_FIELDS_CLUST_ID        9
+// ids for secondary index on base system tables
+#define DICT_TABLES_CLUST_ID        6
+#define DICT_TABLES_INDEX_ID_ID     7
+#define DICT_COLUMNS_CLUST_ID       8
+#define DICT_INDEXES_CLUST_ID       9
+#define DICT_FIELDS_CLUST_ID        10
+#define DICT_USERS_CLUST_ID         11
+#define DICT_USERS_INDEX_ID_ID      12
+
+/* id for sys user */
+#define DICT_SYS_USER_ID            0
 
 
 /* the ids for tables etc.
@@ -50,14 +68,18 @@
 #define DICT_HDR_MAX_SPACE_ID   24  /* The latest assigned space id,or 0*/
 #define DICT_HDR_MIX_ID_LOW     28  /* Obsolete,always DICT_HDR_FIRST_ID*/
 #define DICT_HDR_TABLES         32  /* Root of SYS_TABLES heap */
-#define DICT_HDR_TABLE_CLUST    36  /* Root of SYS_TABLE_CLUST clust index */
-#define DICT_HDR_TABLE_IDS      40  /* Root of SYS_TABLE_IDS sec index */
+#define DICT_HDR_TABLES_CLUST   36  /* Root of SYS_TABLE_CLUST clust index */
+#define DICT_HDR_TABLES_IDS     40  /* Root of SYS_TABLE_IDS sec index */
 #define DICT_HDR_COLUMNS        44  /* Root of SYS_COLUMNS heap */
 #define DICT_HDR_COLUMNS_CLUST  48  /* Root of SYS_COLUMNS clust index */
 #define DICT_HDR_INDEXES        52  /* Root of SYS_INDEXES heap */
 #define DICT_HDR_INDEXES_CLUST  56  /* Root of SYS_INDEXES clust index */
 #define DICT_HDR_FIELDS         60  /* Root of SYS_FIELDS heap */
 #define DICT_HDR_FIELDS_CLUST   64  /* Root of SYS_FIELDS clust index */
+#define DICT_HDR_USERS          68  /* Root of SYS_USERS heap */
+#define DICT_HDR_USERS_CLUST    72  /* Root of SYS_USERS clust index */
+#define DICT_HDR_USERS_IDS      76  /* Root of SYS_USERS id index */
+
 #define DICT_HDR_FSEG_HEADER    1024  /* Segment header for the tablespace segment
                                        into which the dictionary header is created */
 /*-------------------------------------------------------------*/
@@ -102,22 +124,47 @@ allows InnoDB to update_create_info() accordingly. */
 
 
 
-
-
-
+enum dict_col_sys_users_enum {
+    DICT_COL_SYS_USERS_ID              = 0,
+    DICT_COL_SYS_USERS_NAME            = 1,
+    DICT_COL_SYS_USERS_PASSWORD        = 2,
+    DICT_COL_SYS_USERS_CREATE_TIME     = 3,
+    DICT_COL_SYS_USERS_EXPIRED_TIME    = 4,
+    DICT_COL_SYS_USERS_LOCKED_TIME     = 5,
+    DICT_COL_SYS_USERS_OPTIONS         = 6,
+    DICT_COL_SYS_USERS_DATA_SPACE      = 7,
+    DICT_COL_SYS_USERS_TEMP_SPACE      = 8,
+    DICT_COL_SYS_USERS_STATUS          = 9,
+    DICT_NUM_COLS_SYS_USERS            = 10
+};
 
 /* The columns in SYS_TABLES */
 enum dict_col_sys_tables_enum {
-    DICT_COL__SYS_TABLES__NAME          = 0,
-    DICT_COL__SYS_TABLES__ID            = 1,
-    DICT_COL__SYS_TABLES__N_COLS        = 2,
-    DICT_COL__SYS_TABLES__TYPE          = 3,
-    DICT_COL__SYS_TABLES__MIX_ID        = 4,
-    DICT_COL__SYS_TABLES__MIX_LEN       = 5,
-    DICT_COL__SYS_TABLES__CLUSTER_ID    = 6,
-    DICT_COL__SYS_TABLES__SPACE         = 7,
-    DICT_NUM_COLS__SYS_TABLES           = 8
+    DICT_COL_SYS_TABLES_USER_ID         = 0,
+    DICT_COL_SYS_TABLES_ID              = 1,
+    DICT_COL_SYS_TABLES_NAME            = 2,
+    DICT_COL_SYS_TABLES_TYPE            = 3,
+    DICT_COL_SYS_TABLES_COLS            = 4,
+    DICT_COL_SYS_TABLES_INDEXES         = 5,
+    DICT_COL_SYS_TABLES_PARTITIONED     = 6,
+    DICT_COL_SYS_TABLES_INITRANS        = 7,
+    DICT_COL_SYS_TABLES_PCTFREE         = 8,
+    DICT_COL_SYS_TABLES_CRMODE          = 9,
+    DICT_COL_SYS_TABLES_RECYCLED        = 10,
+    DICT_COL_SYS_TABLES_APPEND_ONLY     = 11,
+    DICT_COL_SYS_TABLES_NUM_ROWS        = 12,
+    DICT_COL_SYS_TABLES_BLOCKS          = 13,
+    DICT_COL_SYS_TABLES_EMPTY_BLOCKS    = 14,
+    DICT_COL_SYS_TABLES_AVG_ROW_LEN     = 15,
+    DICT_COL_SYS_TABLES_SIMPLE_SIZE     = 16,
+    DICT_COL_SYS_TABLES_ANALYZE_TIME    = 17,
+    DICT_COL_SYS_TABLES_OPTIONS         = 18,
+    DICT_COL_SYS_TABLES_SPACE           = 19,
+    DICT_COL_SYS_TABLES_ENTRY           = 20,
+    DICT_COL_SYS_TABLES_FLAGS           = 21,
+    DICT_NUM_COLS_SYS_TABLES            = 22
 };
+
 /* The field numbers in the SYS_TABLES clustered index */
 enum dict_fld_sys_tables_enum {
 	DICT_FLD__SYS_TABLES__NAME		= 0,
@@ -352,7 +399,7 @@ struct st_dict_index{
     const char*     name; // index name
     dict_table_t*   table;
     uint32          space_id; // space where the index tree is placed
-    uint32          page_no; // index tree root page number
+    uint32          entry_page_no; // index tree root page number
     // index type (DICT_CLUSTERED, DICT_UNIQUE, DICT_UNIVERSAL, DICT_IBUF, DICT_CORRUPT)
     uint32          type:DICT_IT_BITS;
     uint32          field_index:5;
@@ -365,7 +412,7 @@ struct st_dict_index{
     HASH_NODE_T     name_hash; // hash chain node
     HASH_NODE_T     id_hash; // hash chain node
 
-    UT_LIST_NODE_T(dict_index_t) indexes; // list of indexes of the table
+    UT_LIST_NODE_T(dict_index_t) list_node; // list of indexes of the table
 
 	/** Statistics for query optimization */
 	uint64*	stat_n_diff_key_vals;
@@ -412,23 +459,37 @@ struct st_dict_index{
 #define DICT_IS_HOT(object)          ((object)->touch_number >= DICT_TOUCH_AGE)
 #define DICT_LRU_INTERVAL_WINDOW_US  3000000  // 3 seconds
 
+// table type
+#define TABLE_TYPE_HEAP            0
+#define TABLE_TYPE_IOT             1
+#define TABLE_TYPE_TRANS_TEMP      2
+#define TABLE_TYPE_SESSION_TEMP    3
+#define TABLE_TYPE_NOLOGGING       4
+#define TABLE_TYPE_EXTERNAL        5
+
 
 struct st_dict_table {
-    table_id_t      id;
+    uint64          user_id;
+    table_id_t      id; // table id
     char*           name; // table name
     space_id_t      space_id;
     page_no_t       entry_page_no;
-    uint32          type;
+
+    uint8          type;
 
     // array of column descriptions
     uint16          column_index;
     uint16          column_count;
     dict_col_t*     columns;
+    uint16          index_count;              // index count
+
     uchar*          default_values;
 
-    bool32          heap_io_in_progress;
     uint8           init_trans;
     uint8           pctfree;
+    uint8           cr_mode;
+    bool32          heap_io_in_progress;
+
     mutex_t         mutex;
 
     union {
@@ -451,7 +512,10 @@ struct st_dict_table {
             // after ONLINE_INDEX_ABORTED or ONLINE_INDEX_ABORTED_DROPPED
             uint32  drop_aborted : 1;
             uint32  in_lru_list : 1;
-            uint32  reserved : 24;
+            uint32  appendonly : 1;
+            uint32  recycled : 1;  // table in recycle bin
+            uint32  parted : 1;  // table is partitioned
+            uint32  reserved : 21;
         };
     };
 
@@ -468,7 +532,7 @@ struct st_dict_table {
     UT_LIST_NODE_T(dict_table_t) table_LRU; // node of the LRU list of tables
     HASH_NODE_T                  name_hash; // hash chain node
     HASH_NODE_T                  id_hash;   // hash chain node
-    memory_stack_context_t*      mem_stack_ctx;
+    memory_stack_context_t*      mcontext_stack;
 };
 
 #define DICT_TABLE_LRU_LIST_COUNT         16
@@ -478,6 +542,11 @@ struct st_dict_table {
 struct dict_sys_t {
     mutex_t             mutex;
     uint64              row_id;
+    uint64              table_id;
+    uint64              index_id;
+    uint64              max_space_id;
+    uint64              mix_id_low;
+
     // hash table of the tables, based on name
     HASH_TABLE*         table_hash;
     // hash table of the tables, based on id
@@ -636,25 +705,24 @@ struct dict_sys_t {
 #define dict_table_get_nth_col(table, pos) ((table)->columns + (pos))
 #define dict_index_get_nth_field(index, pos) ((index)->fields + (pos))
 
-extern status_t dict_init(memory_pool_t* mem_pool, uint64 memory_cache_size, uint32 table_hash_array_size);
-extern status_t dict_boot();
+extern status_t dict_boot(memory_pool_t* mem_pool, uint64 memory_cache_size, uint32 table_hash_array_size);
 extern status_t dict_create();
 
-extern dict_table_t* dict_mem_table_create(const char* name, table_id_t  table_id,
-    uint32 space_id, uint32 column_count, uint32 flags, uint32 flags2);
+extern dict_table_t* dict_mem_table_create(const char* name, table_id_t table_id,
+    uint64 user_id, uint32 space_id, uint16 column_count);
 extern status_t dict_mem_table_add_col(dict_table_t* table, const char* name,
     data_type_t mtype, uint32 precision, uint32 scale_or_len);
 extern dict_index_t* dict_mem_index_create(dict_table_t* table, const char* index_name,
     index_id_t index_id, uint32 space_id, uint32 type, uint32 field_count);
 extern status_t dict_mem_index_add_field(dict_index_t* index, const char* name, uint32 prefix_len);
 
-extern bool32 dict_add_table_to_cache(dict_table_t* table, bool32 can_be_evicted);
-extern uint32 dict_get_table_from_cache_by_name(char* table_name, dict_table_t** table);
-extern void dict_release_table(dict_table_t* table);
-extern bool32 dict_remove_table_from_cache(char* table_name);
+extern inline bool32 dict_add_table_to_cache(dict_table_t* table, bool32 can_be_evicted);
+extern inline uint32 dict_get_table_from_cache_by_name(uint64 user_id, char* table_name, dict_table_t** table);
+extern inline void dict_release_table(dict_table_t* table);
+extern inline bool32 dict_remove_table_from_cache(uint64 user_id, char* table_name);
 
-extern status_t dict_get_table(char* table_name, dict_table_t** table);
-extern status_t dict_drop_table(char* table_name);
+extern inline status_t dict_get_table(que_sess_t* sess, uint64 user_id, char* table_name, dict_table_t** table);
+extern inline status_t dict_drop_table(que_sess_t* sess, uint64 user_id, char* table_name);
 //------------------------------------------------------
 
 /** the dictionary system */

@@ -197,6 +197,10 @@ typedef unsigned long long      ULONGLONG;
 typedef unsigned long long      ulonglong;
 #endif
 
+typedef float                   float4;
+typedef float                   FLOAT4;
+typedef double                  float8;
+typedef double                  FLOAT8;
 
 #ifndef __WIN__
 typedef void*                   HANDLE;
@@ -226,8 +230,10 @@ typedef unsigned char*          PUCHAR;
 #define SIZEOF_CHARP            sizeof(char *)
 
 
-/** The 'undefined' value for a uint32 */
+// The 'undefined' value for a uint32
 #define UINT32_UNDEFINED        ((uint32)(-1))
+// The 'undefined' value for a uint64
+#define UINT64_UNDEFINED        ((uint64)(-1))
 
 #define INT_MIN64               (~0x7FFFFFFFFFFFFFFFLL)
 #define INT_MAX64               0x7FFFFFFFFFFFFFFFLL
@@ -281,6 +287,78 @@ typedef unsigned char*          PUCHAR;
 typedef int32                               os_file_t;
 #define OS_FILE_INVALID_HANDLE              -1
 #endif
+
+
+
+/*-----------------------------------------------------*/
+
+// A Datum contains either a value of a pass-by-value type
+// or a pointer to a value of a pass-by-reference type.
+// Therefore, we require:
+//      sizeof(Datum) == sizeof(void *) == 4 or 8
+typedef uintptr_t Datum;
+
+#define SIZEOF_DATUM sizeof(void *)
+
+#define DatumGetBool(X) ((bool32) ((X) != 0))
+#define BoolGetDatum(X) ((Datum) ((X) ? 1 : 0))
+
+#define DatumGetChar(X) ((char) (X))
+#define CharGetDatum(X) ((Datum) (X))
+
+#define DatumGetInt8(X) ((int8) (X))
+#define Int8GetDatum(X) ((Datum) (X))
+#define DatumGetUInt8(X) ((uint8) (X))
+#define UInt8GetDatum(X) ((Datum) (X))
+
+#define DatumGetInt16(X) ((int16) (X))
+#define Int16GetDatum(X) ((Datum) (X))
+#define DatumGetUInt16(X) ((uint16) (X))
+#define UInt16GetDatum(X) ((Datum) (X))
+
+#define DatumGetInt32(X) ((int32) (X))
+#define Int32GetDatum(X) ((Datum) (X))
+#define DatumGetUInt32(X) ((uint32) (X))
+#define UInt32GetDatum(X) ((Datum) (X))
+
+#define DatumGetInt64(X) ((int64) (X))
+#define Int64GetDatum(X) ((Datum) (X))
+#define DatumGetUInt64(X) ((uint64) (X))
+#define UInt64GetDatum(X) ((Datum) (X))
+
+#define DatumGetPointer(X) ((char *) (X))
+#define PointerGetDatum(X) ((Datum) (X))
+
+//for a C string (null-terminated string)
+#define DatumGetString(X) ((char *) DatumGetPointer(X))
+#define StringGetDatum(X) PointerGetDatum(X)
+
+inline float4 DatumGetFloat4(Datum X)
+{
+    union
+    {
+        int32 value;
+        float4 retval;
+    } myunion;
+
+    myunion.value = DatumGetInt32(X);
+    return myunion.retval;
+}
+
+inline Datum Float4GetDatum(float4 X)
+{
+    union
+    {
+        float4 value;
+        int32 retval;
+    } myunion;
+
+    myunion.value = X;
+    return Int32GetDatum(myunion.retval);
+}
+
+#define DatumGetFloat8(X) (*((float8 *) DatumGetPointer(X)))
+#define Float8GetDatum(X) PointerGetDatum(&(X))
 
 
 /***********************************************************************************************
@@ -341,9 +419,9 @@ typedef void (*callback_func) (callback_data_t *data);
 #endif
 
 typedef enum st_status {
-    CM_EAGAIN   = -2,
-    CM_ERROR    = -1,
-    CM_SUCCESS  = 0,
+    CM_EAGAIN = -2,
+    CM_ERROR = -1,
+    CM_SUCCESS = 0,
     CM_TIMEDOUT = 1,
 } status_t;
 
@@ -437,6 +515,13 @@ typedef enum st_status {
             return CM_ERROR;                           \
         }                                              \
     } while (0)
+
+#define securec_check(err)                                                \
+    LOGGER_PANIC_CHECK(LOGGER, LOG_MODULE_SECUREC, EOK==(err), "Secure C lib has thrown an error %d", (err));
+
+// Used in sprintf_s or scanf_s cluster function
+#define securec_check_s(err)                                                \
+    LOGGER_PANIC_CHECK(LOGGER, LOG_MODULE_SECUREC, -1==(err), "Secure C lib has thrown an error %d", (err));
 
 
 /***********************************************************************************************
