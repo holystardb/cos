@@ -681,13 +681,18 @@ static inline uint32 log_calc_data_size(uint64 start_lsn, uint32 len)
         // The string fits within the current log block
         data_len = len;
     } else {
-        uint32 first_part_len, left_part_len;
-        first_part_len = OS_FILE_LOG_BLOCK_SIZE - offset - LOG_BLOCK_TRL_SIZE;
-        left_part_len = len - first_part_len;
-        data_len = first_part_len + LOG_BLOCK_TRL_SIZE;
-        data_len += (left_part_len / LOG_BLOCK_DATA_SIZE) * OS_FILE_LOG_BLOCK_SIZE;
-        if (left_part_len % LOG_BLOCK_DATA_SIZE > 0) {
-            data_len += (left_part_len % LOG_BLOCK_DATA_SIZE) + LOG_BLOCK_HDR_SIZE;
+        uint32 first_block_len, other_blocks_len, full_blocks_count, last_block_len;
+        // first block
+        first_block_len = OS_FILE_LOG_BLOCK_SIZE - offset - LOG_BLOCK_TRL_SIZE;
+        other_blocks_len = len - first_block_len;
+        data_len = first_block_len + LOG_BLOCK_TRL_SIZE;
+        // middle block
+        full_blocks_count = other_blocks_len / LOG_BLOCK_DATA_SIZE;
+        data_len += full_blocks_count * OS_FILE_LOG_BLOCK_SIZE;
+        // last block
+        last_block_len = other_blocks_len - full_blocks_count * LOG_BLOCK_DATA_SIZE;
+        if (last_block_len > 0) {
+            data_len += last_block_len + LOG_BLOCK_HDR_SIZE;
         }
     }
 
@@ -768,6 +773,7 @@ inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len)
     uint32       len;
     uint32       data_len;
     byte*        log_block;
+    uint32       loop = 0;
 
     ut_ad(!recv_no_log_write);
 
@@ -778,6 +784,8 @@ inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len)
     log_wait_for_write(start_lsn, str_len);
 
     buf_free = (start_lsn - log_sys->buf_base_lsn) % log_sys->buf_size;
+    ut_ad((buf_free % OS_FILE_LOG_BLOCK_SIZE) >= LOG_BLOCK_HDR_SIZE);
+    ut_ad((buf_free % OS_FILE_LOG_BLOCK_SIZE) < OS_FILE_LOG_BLOCK_SIZE - LOG_BLOCK_TRL_SIZE);
 
 part_loop:
 
@@ -797,6 +805,7 @@ part_loop:
             buf_free, len);
         memcpy(log_sys->buf + buf_free, str, len);
         str_len -= len;
+        ut_ad(str_len >= 0);
         str = str + len;
     }
 
@@ -805,8 +814,21 @@ part_loop:
         log_block = (byte*)ut_align_down(log_sys->buf + buf_free, OS_FILE_LOG_BLOCK_SIZE);
         log_block_set_data_len(log_block, OS_FILE_LOG_BLOCK_SIZE);
         log_block_set_checkpoint_no(log_block, log_sys->next_checkpoint_no);
+
         // set start position for next block
-        len += LOG_BLOCK_HDR_SIZE + LOG_BLOCK_TRL_SIZE;
+        if (loop == 0) {
+            // first block
+            if (str_len > 0) {
+                len += LOG_BLOCK_TRL_SIZE;
+            }
+        } else if (str_len == 0) {
+            // last block
+            len += LOG_BLOCK_HDR_SIZE;
+        } else {
+            // middle block
+            ut_ad(len == LOG_BLOCK_DATA_SIZE);
+            len = OS_FILE_LOG_BLOCK_SIZE;
+        }
         start_lsn += len;
 
         LOGGER_DEBUG(LOGGER, LOG_MODULE_REDO,
@@ -817,7 +839,13 @@ part_loop:
         // Initialize the next block header
         log_block_init(log_block + OS_FILE_LOG_BLOCK_SIZE, start_lsn);
     } else {
-        start_lsn += len;
+        if (loop == 0) {
+            // first block
+            start_lsn += len;
+        } else {
+            ut_ad(str_len == 0);
+            start_lsn += LOG_BLOCK_HDR_SIZE + len;
+        }
     }
 
     //
@@ -829,6 +857,7 @@ part_loop:
     }
 
     if (str_len > 0) {
+        loop++;
         goto part_loop;
     }
 
