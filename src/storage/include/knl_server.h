@@ -272,7 +272,7 @@ extern status_t srv_create_user_data_files();
 extern bool32 db_ctrl_create_database(char *database_name, char *charset_name);
 extern bool32 db_ctrl_init_database();
 extern bool32 db_ctrl_add_system(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
-extern bool32 db_ctrl_add_systrans(char* data_file_name, uint64 size);
+extern bool32 db_ctrl_add_systrans(char* data_file_name, uint32 rseg_count);
 extern bool32 db_ctrl_add_redo(char *data_file_name, uint64 size);
 extern bool32 db_ctrl_add_dbwr(char* data_file_name, uint64 size);
 extern bool32 db_ctrl_add_undo(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);

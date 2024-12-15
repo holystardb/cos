@@ -16,6 +16,7 @@ extern "C" {
 extern status_t trx_sysf_create();
 extern inline trx_sysf_t* trx_sysf_get(mtr_t* mtr);
 
+extern status_t trx_sys_reserve_systrans_space();
 
 extern status_t trx_rseg_open_trx_slots(trx_rseg_t* rseg);
 extern status_t trx_rseg_create_trx_slots(trx_rseg_t* rseg);
@@ -30,7 +31,7 @@ extern inline scn_t trx_rseg_set_end(trx_t* trx, bool32 is_commit);
 extern inline uint64 trx_get_next_scn();
 extern inline void trx_get_status_by_itl(trx_slot_id_t trx_slot_id, trx_status_t* trx_status);
 
-extern byte* trx_rseg_replay_init_page(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* trx_rseg_replay_trx_slot_page_init(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
 extern byte* trx_rseg_replay_begin_slot(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
 extern byte* trx_rseg_replay_end_slot(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
 //-----------------------------------------------------------------

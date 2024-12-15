@@ -39,7 +39,7 @@ struct st_recovery_sys{
     byte*       last_log_block;
     uint64      last_log_block_writed_offset;
 
-    byte        log_rec_buf[UNIV_PAGE_SIZE];
+    byte        log_rec_buf[65536];
     byte*       log_rec;
     lsn_t       log_rec_start_lsn;
     lsn_t       log_rec_end_lsn;

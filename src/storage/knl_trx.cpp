@@ -10,13 +10,10 @@
 trx_sys_t    g_trx_sys, *trx_sys = &g_trx_sys;
 
 
-
-// Creates the trx_sys instance and initializes ib_bh and mutex.
-status_t trx_sys_init_at_db_start(memory_pool_t* mem_pool, uint32 undo_space_count, bool32 is_create_database)
+// Creates the trx_sys instance
+status_t trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count, uint32 undo_space_count)
 {
-    status_t err;
-    trx_rseg_t* rseg;
-    trx_t* trx;
+    ut_a(rseg_count >= TRX_RSEG_MIN_COUNT && rseg_count <= TRX_RSEG_MAX_COUNT);
 
     mutex_create(&trx_sys->mutex);
     mutex_create(&trx_sys->used_pages_mutex);
@@ -24,21 +21,36 @@ status_t trx_sys_init_at_db_start(memory_pool_t* mem_pool, uint32 undo_space_cou
     SLIST_INIT(trx_sys->free_undo_page_list);
     trx_sys->extend_in_process = FALSE;
     trx_sys->mem_pool = mem_pool;
+    trx_sys->rseg_count = rseg_count;
+    trx_sys->undo_space_count = undo_space_count;
     trx_sys->context = mcontext_stack_create(trx_sys->mem_pool);
     if (trx_sys->context == NULL) {
         return CM_ERROR;
     }
 
+    return CM_SUCCESS;
+}
+
+// Creates and initializes transaction slots
+status_t trx_sys_init_at_db_start(bool32 is_create_database)
+{
+    status_t err;
+    trx_rseg_t* rseg;
+    trx_t* trx;
+
     if (is_create_database) {
         err = trx_sysf_create();
         CM_RETURN_IF_ERROR(err);
+
+        err = trx_sys_reserve_systrans_space();
+        CM_RETURN_IF_ERROR(err);
     }
 
-    for (uint32 rseg_id = 0; rseg_id < TRX_RSEG_COUNT; rseg_id++) {
+    for (uint32 rseg_id = 0; rseg_id < trx_sys->rseg_count; rseg_id++) {
         rseg = TRX_GET_RSEG(rseg_id);
 
         rseg->id = rseg_id;
-        rseg->undo_space_id = rseg_id % undo_space_count;
+        rseg->undo_space_id = rseg_id % trx_sys->undo_space_count;
         rseg->undo_cached_max_count = 1024;
         rseg->extend_undo_in_process = FALSE;
         mutex_create(&rseg->trx_mutex);
@@ -59,7 +71,7 @@ status_t trx_sys_init_at_db_start(memory_pool_t* mem_pool, uint32 undo_space_cou
 
     // add trx to rseg trx_list
     for (uint32 slot_idx = 0; slot_idx < TRX_SLOT_COUNT_PER_RSEG; slot_idx++) {
-        for (uint32 rseg_id = 0; rseg_id < TRX_RSEG_COUNT; rseg_id++) {
+        for (uint32 rseg_id = 0; rseg_id < trx_sys->rseg_count; rseg_id++) {
             rseg = TRX_GET_RSEG(rseg_id);
             trx = &rseg->trx_list[slot_idx];
             if (trx->is_active) {
@@ -70,25 +82,38 @@ status_t trx_sys_init_at_db_start(memory_pool_t* mem_pool, uint32 undo_space_cou
         }
     }
 
+    return CM_SUCCESS;
+}
+
+status_t trx_sys_recovery_at_db_start()
+{
+    status_t err;
+    trx_rseg_t* rseg;
+    trx_t* trx;
+
     // rollback transaction
-    trx = SLIST_GET_FIRST(rseg->trx_need_recovery_list);
-    while (trx) {
-        SLIST_REMOVE_FIRST(list_node, rseg->trx_need_recovery_list);
-
-        //
-        
-
+    for (uint32 rseg_id = 0; rseg_id < trx_sys->rseg_count; rseg_id++) {
+        rseg = TRX_GET_RSEG(rseg_id);
         trx = SLIST_GET_FIRST(rseg->trx_need_recovery_list);
+        while (trx) {
+            SLIST_REMOVE_FIRST(list_node, rseg->trx_need_recovery_list);
+
+            //
+
+
+            trx = SLIST_GET_FIRST(rseg->trx_need_recovery_list);
+        }
     }
 
     // undo tablespace
-    for (uint32 i = 0; i < undo_space_count; i++) {
+    for (uint32 i = 0; i < trx_sys->undo_space_count; i++) {
         err = undo_fsm_recovery_fsp_pages(FIL_UNDO_START_SPACE_ID + i);
         CM_RETURN_IF_ERROR(err);
     }
 
     return CM_SUCCESS;
 }
+
 
 void trx_undo_insert_cleanup(trx_t* trx)
 {

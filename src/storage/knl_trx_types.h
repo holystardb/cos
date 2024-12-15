@@ -205,9 +205,9 @@ struct st_trx_rseg {
 };
 
 
-#define TRX_RSEG_COUNT                    64
+#define TRX_RSEG_MAX_COUNT                    256
+#define TRX_RSEG_MIN_COUNT                    32
 
-#define TRX_RSEG_UNDO_PAGE_MAX_COUNT      16384 // 256GB
 
 // The transaction system central memory data structure
 typedef struct st_trx_sys {
@@ -215,8 +215,9 @@ typedef struct st_trx_sys {
     mutex_t        used_pages_mutex;
 
     uint64         max_trx_id;
+    uint32         undo_space_count;
     uint32         rseg_count;
-    trx_rseg_t     rseg_array[TRX_RSEG_COUNT];
+    trx_rseg_t     rseg_array[TRX_RSEG_MAX_COUNT];
 
     bool32         extend_in_process;
     UT_LIST_BASE_NODE_T(memory_page_t) used_pages;

@@ -270,6 +270,14 @@ static status_t server_create_table_spaces()
     err = fsp_reserve_system_space();
     CM_RETURN_IF_ERROR(err);
 
+    // systrans
+    uint64 rseg_count = srv_ctrl_file.systrans.max_size;
+    ut_a(rseg_count >= TRX_RSEG_MIN_COUNT && rseg_count <= TRX_RSEG_MAX_COUNT);
+    uint64 size = (FSP_FIRST_RSEG_PAGE_NO + rseg_count * TRX_SLOT_PAGE_COUNT_PER_RSEG) * UNIV_SYSTRANS_PAGE_SIZE;
+    ut_a(srv_ctrl_file.systrans.size == size);
+    err = fsp_init_space(FIL_SYSTRANS_SPACE_ID, srv_ctrl_file.systrans.size, srv_ctrl_file.systrans.size, 0);
+    CM_RETURN_IF_ERROR(err);
+
     // undo tablespace
     for (uint32 i = 0; i < srv_ctrl_file.undo_count; i++) {
         ut_a(srv_ctrl_file.undo_group[i].size >= 4 * 1024 * 1024);
@@ -307,7 +315,7 @@ static status_t server_open_tablespace_data_files()
     if (system_space == NULL) {
         return CM_ERROR;
     }
-    fil_node_t *node = fil_node_create(system_space, 0, srv_ctrl_file.system.name,
+    fil_node_t *node = fil_node_create(system_space, DB_SYSTEM_FILNODE_ID, srv_ctrl_file.system.name,
         (uint32)(srv_ctrl_file.system.max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, srv_ctrl_file.system.autoextend);
     if (!node) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
@@ -321,8 +329,7 @@ static status_t server_open_tablespace_data_files()
         return CM_ERROR;
     }
     node = fil_node_create(trans_space, DB_SYSTRANS_FILNODE_ID, srv_ctrl_file.systrans.name,
-        (uint32)(srv_ctrl_file.systrans.max_size / UNIV_SYSTRANS_PAGE_SIZE), UNIV_SYSTRANS_PAGE_SIZE,
-        srv_ctrl_file.systrans.autoextend);
+        (uint32)(srv_ctrl_file.systrans.size / UNIV_SYSTRANS_PAGE_SIZE), UNIV_SYSTRANS_PAGE_SIZE, FALSE);
     if (!node) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
             "Failed to create fil_node for systrans tablespace, name %s", srv_ctrl_file.systrans.name);
@@ -353,7 +360,7 @@ static status_t server_open_tablespace_data_files()
     // undo tablespace
     for (uint32 i = 0; i < srv_ctrl_file.undo_count; i++) {
         char undo_space_name[DB_OBJECT_NAME_MAX_LEN];
-        sprintf_s(undo_space_name, DB_OBJECT_NAME_MAX_LEN, "undo%02u", i);
+        sprintf_s(undo_space_name, DB_OBJECT_NAME_MAX_LEN, "undo%02u", i+1);
         db_data_file_t* data_file = &srv_ctrl_file.undo_group[i];
         fil_space_t* space = fil_space_create(undo_space_name, data_file->space_id, 0);
         if (space == NULL) {
@@ -439,6 +446,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     bool32 is_create_new_db = FALSE;
     err = server_is_create_new_db(&is_create_new_db);
     CM_RETURN_IF_ERROR(err);
+    //is_create_new_db = TRUE;
 
     if (is_create_new_db) {
         LOGGER_NOTICE(LOGGER, LOG_MODULE_STARTUP, "Creating data file");
@@ -456,10 +464,6 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     // Create i/o-handler threads
     err = read_write_threads_startup();
     CM_RETURN_IF_ERROR(err);
-
-    // Creates a session system at a database start
-    //sess_sys_init_at_db_start();
-
 
     if (!is_create_new_db) {
         /* If we are using the doublewrite method, we will
@@ -479,8 +483,13 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     // checkpoint init
     err = checkpoint_init(srv_ctrl_file.dbwr.name, (uint32)srv_ctrl_file.dbwr.max_size);
     CM_RETURN_IF_ERROR(err);
-    // Create checkpoint thread
-    err = checkpoint_thread_startup();
+    // Create and startup checkpoint thread
+    //err = checkpoint_thread_startup();
+    CM_RETURN_IF_ERROR(err);
+
+    // Creates trx_sys at a database start
+    uint32 rseg_count = (uint32)srv_ctrl_file.systrans.max_size;
+    err = trx_sys_create(srv_common_mpool, rseg_count, srv_ctrl_file.undo_count);
     CM_RETURN_IF_ERROR(err);
 
     //
@@ -488,7 +497,9 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
         err = server_create_table_spaces();
         CM_RETURN_IF_ERROR(err);
 
-        err = trx_sys_init_at_db_start(srv_common_mpool, srv_ctrl_file.undo_count, is_create_new_db);
+        // Creates transaction slots at a database start
+        uint32 rseg_count = (uint32)srv_ctrl_file.systrans.max_size;
+        err = trx_sys_init_at_db_start(is_create_new_db);
         CM_RETURN_IF_ERROR(err);
 
         // Data Dictionary Header
@@ -522,7 +533,6 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
         err = server_open_table_spaces();
         CM_RETURN_IF_ERROR(err);
 
-
         recovery_sys_t* recv_sys = recovery_init(srv_common_mpool);
         if (recv_sys == NULL) {
             return CM_ERROR;
@@ -531,6 +541,8 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
         err = recovery_from_checkpoint_start(recv_sys);
         CM_RETURN_IF_ERROR(err);
 
+        LOGGER_NOTICE(LOGGER, LOG_MODULE_STARTUP, "recovery done1");
+
         // Create dict_sys and hash tables, load basic system table
         ut_ad(srv_dictionary_mem_pool);
         err = dict_boot(srv_dictionary_mem_pool,
@@ -538,13 +550,17 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
                         attr->attr_memory.table_hash_array_size);
         CM_RETURN_IF_ERROR(err);
 
-        // The following needs trx lists which are initialized in trx_sys_init_at_db_start
-        //srv_startup_is_before_trx_rollback_phase = FALSE;
-        err = trx_sys_init_at_db_start(srv_common_mpool, srv_ctrl_file.undo_count, is_create_new_db);
+        // load transaction slots at a database start
+        err = trx_sys_init_at_db_start(is_create_new_db);
+        CM_RETURN_IF_ERROR(err);
+        err = trx_sys_recovery_at_db_start();
         CM_RETURN_IF_ERROR(err);
 
         err = recovery_from_checkpoint_finish(recv_sys);
         CM_RETURN_IF_ERROR(err);
+
+        //srv_startup_is_before_trx_rollback_phase = FALSE;
+        LOGGER_NOTICE(LOGGER, LOG_MODULE_STARTUP, "recovery done");
     }
 
     // Create the thread which watches the timeouts for lock waits and prints monitor info
@@ -561,8 +577,9 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
 
     if (is_create_new_db) {
         log_checkpoint(LOG_BLOCK_HDR_SIZE);
+        log_checkpoint(LOG_BLOCK_HDR_SIZE);
         // Makes a checkpoint at a given lsn or later
-        log_make_checkpoint_at(ut_duint64_max);
+        //log_make_checkpoint_at(ut_duint64_max);
     }
 
     LOGGER_NOTICE(LOGGER, LOG_MODULE_STARTUP,

@@ -340,6 +340,11 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
     void *object = slot->object;
     slot->object = NULL;
 
+    if (((buf_block_t*)object)->page.id.space_id() == 0 && ((buf_block_t*)object)->page.id.page_no() == 322) {
+        printf("    mtr_memo_slot_release: lock %lu page no %lu fix count %lu\n",
+            slot->type, ((buf_block_t*)object)->page.id.page_no(), ((buf_block_t*)object)->page.buf_fix_count);
+    }
+
     switch (slot->type) {
         case MTR_MEMO_PAGE_S_FIX:
             rw_lock_s_unlock(&((buf_block_t*)object)->rw_lock);
@@ -360,6 +365,11 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
             break;
 #ifdef UNIV_DEBUG
         default:
+            if (((buf_block_t*)object)->page.id.space_id() == 0 && ((buf_block_t*)object)->page.id.page_no() == 322) {
+                printf("pop MTR_MEMO_MODIFY: page no %lu fix count %lu\n",
+                    ((buf_block_t*)object)->page.id.page_no(), ((buf_block_t*)object)->page.buf_fix_count);
+            }
+
             ut_ad(slot->type == MTR_MEMO_MODIFY);
             ut_ad(mtr_memo_contains(mtr, object, MTR_MEMO_PAGE_X_FIX));
 #endif // UNIV_DEBUG
@@ -465,34 +475,56 @@ inline mtr_memo_slot_t* mtr_memo_push(mtr_t *mtr,	/*!< in: mtr */
     return slot;
 }
 
+static inline void mtr_memo_release_slot(dyn_block_t* dyn_block,
+    uint32 dyn_block_used, mtr_memo_slot_t* slot, uint32 slot_count, mtr_t* mtr)
+{
+    mtr_memo_slot_release(mtr, slot);
+    if (slot_count > 0) {
+        memmove((char *)slot, (char *)(slot + 1), slot_count * sizeof(mtr_memo_slot_t));
+    }
+    dyn_block_set_used(dyn_block, dyn_block_used - sizeof(mtr_memo_slot_t));
+
+    if (dyn_block_used - sizeof(mtr_memo_slot_t) == 0) {
+        dyn_array_release_block(&mtr->memo, dyn_block);
+    }
+}
+
 // Releases an object in the memo stack
 inline bool32 mtr_memo_release(mtr_t* mtr, void* object, uint32 type)
 {
     ut_ad(mtr->magic_n == MTR_MAGIC_N);
     ut_ad(mtr->state == MTR_ACTIVE);
 
-    for (dyn_block_t* block = dyn_array_get_last_block(&mtr->memo);
-         block;
-         block = dyn_array_get_prev_block(&mtr->memo, block)) {
+    for (dyn_block_t* dyn_block = dyn_array_get_last_block(&mtr->memo);
+         dyn_block;
+         dyn_block = dyn_array_get_prev_block(&mtr->memo, dyn_block)) {
 
-        uint32 used = dyn_block_get_used(block);
+        uint32 used = dyn_block_get_used(dyn_block);
         ut_ad(!(used % sizeof(mtr_memo_slot_t)));
 
-        const mtr_memo_slot_t* start = (mtr_memo_slot_t*)dyn_block_get_data(block);
-        mtr_memo_slot_t* slot  = (mtr_memo_slot_t*)(dyn_block_get_data(block) + used);
+        const mtr_memo_slot_t* start = (mtr_memo_slot_t*)dyn_block_get_data(dyn_block);
+        mtr_memo_slot_t* slot  = (mtr_memo_slot_t*)(dyn_block_get_data(dyn_block) + used);
 
         uint32 count = 0;
         while (slot-- != start) {
+
+#ifdef UNIV_DEBUG
+            if (object == slot->object && type == MTR_MEMO_PAGE_X_FIX && slot->type == MTR_MEMO_MODIFY) {
+                mtr_memo_release_slot(dyn_block, used, slot, count, mtr);
+                continue;
+            }
+#endif
+            //
             if (object == slot->object && type == slot->type) {
                 mtr_memo_slot_release(mtr, slot);
 
                 if (count > 0) {
                     memmove((char *)slot, (char *)(slot + 1), count * sizeof(mtr_memo_slot_t));
                 }
-                dyn_block_set_used(block, used - sizeof(mtr_memo_slot_t));
+                dyn_block_set_used(dyn_block, used - sizeof(mtr_memo_slot_t));
 
                 if (used - sizeof(mtr_memo_slot_t) == 0) {
-                    dyn_array_release_block(&mtr->memo, block);
+                    dyn_array_release_block(&mtr->memo, dyn_block);
                 }
                 return TRUE;
             }
@@ -640,14 +672,6 @@ inline byte* mlog_write_initial_log_record_fast(
     ut_ad(type <= MLOG_BIGGEST_TYPE);
     ut_ad(ptr && log_ptr);
     ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
-#ifdef UNIV_DEBUG
-    buf_block_t* block = (buf_block_t*) buf_block_align(ptr);
-    if (block->is_resident()) {
-        // refcount == 0 if page is redident
-    } else {
-        ut_ad(mtr_memo_contains_page(mtr, ptr, MTR_MEMO_PAGE_X_FIX));
-    }
-#endif
 
     page = (const byte*) ut_align_down((void *)ptr, UNIV_PAGE_SIZE);
     space = mach_read_from_4(page + FIL_PAGE_SPACE);
@@ -661,8 +685,13 @@ inline byte* mlog_write_initial_log_record_fast(
     mtr->n_log_recs++;
 
 #ifdef UNIV_DEBUG
+    buf_block_t* block = (buf_block_t*) buf_block_align(ptr);
     /* We now assume that all x-latched pages have been modified! */
     if (!mtr_memo_contains(mtr, block, MTR_MEMO_MODIFY)) {
+        if (block->get_space_id() == 0 && block->get_page_no() == 322) {
+            printf("push MTR_MEMO_MODIFY: page no %lu fix count %lu\n",
+                block->page.id.page_no(), block->page.buf_fix_count);
+        }
         mtr_memo_push(mtr, block, MTR_MEMO_MODIFY);
     }
 #endif
@@ -988,6 +1017,7 @@ inline void mtr_commit(mtr_t *mtr)
     ut_d(mtr->state = MTR_COMMITTING);
 
     if (mtr->modifications && mtr->n_log_recs) {
+        ut_ad(!srv_recovery_on);
         mtr_log_reserve_and_write(mtr);
     }
 

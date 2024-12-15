@@ -52,8 +52,6 @@ The space for this header is reserved in every extent descriptor page, but used 
 /*-------------------------------------*/
 /* File space header size */
 #define FSP_HEADER_SIZE     (32 + 5 * FLST_BASE_NODE_SIZE)
-#define FSP_FREE_ADD        4   /* this many free extents are added to the free list
-                                   from above FSP_FREE_LIMIT at a time */
 
 
 /* FILE SEGMENT INODE
@@ -179,6 +177,7 @@ typedef byte fseg_header_t;
 =================
 */
 
+// SYSTEM tablespace
 #define FSP_XDES_OFFSET             0   // extent descriptor
 #define FSP_FIRST_INODE_PAGE_NO     1   // in every tablespace,
                                         // The following pages exist in the system tablespace (space 0).
@@ -187,13 +186,13 @@ typedef byte fseg_header_t;
 #define FSP_IBUF_BITMAP_OFFSET      4   // insert buffer bitmap
                                         // The ibuf bitmap pages are the ones whose page number is the number
                                         // above plus a multiple of XDES_DESCRIBED_PER_PAGE
-#define FSP_IBUF_HEADER_PAGE_NO     5   // insert buffer header page, in tablespace 0
-#define FSP_IBUF_TREE_ROOT_PAGE_NO  6   // insert buffer B-tree root page in tablespace 0
-                                        // The ibuf tree root page number in tablespace 0;
-                                        // its fseg inode is on the page number FSP_FIRST_INODE_PAGE_NO
-#define FSP_FIRST_RSEG_PAGE_NO      32  // first rollback segment page, in tablespace 0
-                                        // total = TRX_RSEG_MAX_COUNT(96) * TRX_SLOT_PAGE_COUNT_PER_RSEG(4)
-#define FSP_DYNAMIC_FIRST_PAGE_NO   320
+#define FSP_DYNAMIC_FIRST_PAGE_NO   64
+
+
+// SYSTRANS tablespace
+#define FSP_FIRST_RSEG_PAGE_NO      64  // first rollback segment page no
+
+
 
 //-----------------------------------------------
 

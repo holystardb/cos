@@ -19,7 +19,7 @@ static mlog_dispatch_t g_mlog_replay_table[MLOG_BIGGEST_TYPE] = {
     {MLOG_8BYTES, mlog_replay_nbytes, mlog_replay_check},
 
     {MLOG_INIT_FILE_PAGE2, fsp_replay_init_file_page, mlog_replay_check},
-    {MLOG_TRX_RSEG_PAGE_INIT, trx_rseg_replay_init_page, mlog_replay_check},
+    {MLOG_TRX_RSEG_PAGE_INIT, trx_rseg_replay_trx_slot_page_init, mlog_replay_check},
     {MLOG_TRX_RSEG_SLOT_BEGIN, trx_rseg_replay_begin_slot, mlog_replay_check},
     {MLOG_TRX_RSEG_SLOT_END, trx_rseg_replay_end_slot, mlog_replay_check},
 
@@ -105,9 +105,11 @@ bool32 log_recovery()
 // Looks for the maximum consistent checkpoint from the log groups.
 static status_t recv_find_max_checkpoint(uint32* max_field) // out: LOG_CHECKPOINT_1 or LOG_CHECKPOINT_2
 {
-    uint64  checkpoint_no, max_checkpoint_no = 0, group_write_offset, lsn;
-    uint32  group_id, field, fold;
-    byte*   buf = log_sys->checkpoint_buf;
+    uint64 checkpoint_no, max_checkpoint_no = 0, group_write_offset, lsn;
+    uint32 group_id, field, fold;
+    byte*  buf = log_sys->checkpoint_buf;
+
+    *max_field = 0;
 
     for (field = LOG_CHECKPOINT_1; field <= LOG_CHECKPOINT_2; field += LOG_CHECKPOINT_2 - LOG_CHECKPOINT_1) {
 
@@ -180,23 +182,26 @@ static status_t recovery_read_log_blocks(recovery_sys_t* recv_sys)
     offset = recv_sys->cur_group_offset;
     ut_ad(recv_sys->recovered_buf_size > recv_sys->recovered_buf_data_len);
     if (recv_sys->recovered_buf_data_len + read_len > recv_sys->recovered_buf_size) {
+        // adjust read_len by recv_sys->recovered_buf
         read_len = recv_sys->recovered_buf_size - recv_sys->recovered_buf_data_len;
     }
     ut_ad(group->file_size >= recv_sys->cur_group_offset);
     if (group->file_size < recv_sys->cur_group_offset + read_len) {
-        // no remaining data in the current group, switch to next group file
+        // adjust read_len by group->file_size
         read_len = (uint32)(group->file_size - recv_sys->cur_group_offset);
-        recv_sys->cur_group_id = (recv_sys->cur_group_id + 1) % log_sys->group_count;
-        recv_sys->cur_group_offset = LOG_BUF_WRITE_MARGIN;
     }
 
     // 3 read file
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_RECOVERY,
+        "log_group_file_read: group %s offset %llu read len %lu", group->name, offset, read_len);
+    ut_ad(offset % OS_FILE_LOG_BLOCK_SIZE == 0);
+    ut_ad(read_len % OS_FILE_LOG_BLOCK_SIZE == 0);
+    ut_ad(recv_sys->recovered_buf_data_len % OS_FILE_LOG_BLOCK_SIZE == 0);
     err = log_group_file_read(group, recv_sys->recovered_buf + recv_sys->recovered_buf_data_len, read_len, offset);
     if (err != CM_SUCCESS) {
         return CM_ERROR;
     }
-
-
+    
     // 4 check for valid log block
     for (uint32 i = 0; i < recv_sys->recovered_buf_data_len + read_len; i += OS_FILE_LOG_BLOCK_SIZE) {
         recv_sys->last_log_block = recv_sys->recovered_buf + i;
@@ -212,13 +217,20 @@ static status_t recovery_read_log_blocks(recovery_sys_t* recv_sys)
             recv_sys->is_read_log_done = TRUE;
             return CM_SUCCESS;
         }
-
+        // recv_sys->last_hdr_no may be equal to hdr_no,
+        // because the last REC is incomplete, the log blocks is reserved.
         recv_sys->last_hdr_no = hdr_no;
         recv_sys->last_checkpoint_no = checkpoint_no;
     }
 
     recv_sys->recovered_buf_data_len += read_len;
     recv_sys->cur_group_offset += read_len;
+
+    // switch to next group file
+    if (recv_sys->cur_group_offset == group->file_size) {
+        recv_sys->cur_group_id = (recv_sys->cur_group_id + 1) % log_sys->group_count;
+        recv_sys->cur_group_offset = LOG_BUF_WRITE_MARGIN;
+    }
 
     return CM_SUCCESS;
 }
@@ -318,7 +330,7 @@ retry_copy_remain:
     // a new log_rec
     if (recv_sys->log_rec_len == 0) {
         recv_sys->log_rec_len = recovery_parse_next_log_rec_size(recv_sys) + MTR_LOG_LEN_SIZE;
-        ut_ad(recv_sys->log_rec_len > 0);
+        ut_a(recv_sys->log_rec_len > 0 && recv_sys->log_rec_len <= 0xFFFF);
         recv_sys->log_rec_offset = 0;
         recv_sys->log_rec_start_lsn = recv_sys->log_block_lsn + recv_sys->log_block_read_offset;
         recv_sys->log_rec_end_lsn = recv_sys->log_rec_start_lsn;
@@ -370,15 +382,25 @@ retry_copy_remain:
     return CM_SUCCESS;
 }
 
-static bool32 recovery_is_need_get_block(uint32 type)
+static bool32 recovery_is_need_get_block(uint32 type, bool32* is_create_page)
 {
-    bool32 result = TRUE;
+    bool32 result = FALSE;
+    *is_create_page = FALSE;
 
     switch (type) {
     case MLOG_1BYTE:
     case MLOG_2BYTES:
+    case MLOG_4BYTES:
+    case MLOG_8BYTES:
         result = TRUE;
         break;
+
+    case MLOG_INIT_FILE_PAGE2:
+    case MLOG_TRX_RSEG_PAGE_INIT:
+        result = TRUE;
+        *is_create_page = TRUE;
+        break;
+
     default:
         break;
     }
@@ -391,6 +413,7 @@ static status_t recovery_replay_log_rec(recovery_sys_t* recv_sys)
     status_t ret = CM_SUCCESS;
     mtr_t mtr;
     uint32 type;
+    date_t begin_time = cm_now();
 
     ut_ad(recv_sys->log_rec_len > MTR_LOG_LEN_SIZE);
     ut_ad(recv_sys->log_rec != NULL);
@@ -419,8 +442,9 @@ static status_t recovery_replay_log_rec(recovery_sys_t* recv_sys)
     while (log_rec_ptr < end_ptr) {
         //
         type = (byte)((uint32)*log_rec_ptr & ~MLOG_SINGLE_REC_FLAG);
+        ut_ad(type > 0 && type <= MLOG_BIGGEST_TYPE);
         log_rec_ptr++;
-        ut_ad(type <= MLOG_BIGGEST_TYPE);
+
         if (type == MLOG_MULTI_REC_END) {
             // Found the end mark for the records
             LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
@@ -431,20 +455,31 @@ static status_t recovery_replay_log_rec(recovery_sys_t* recv_sys)
             break;
         }
 
+
         //
         buf_block_t* block = NULL;
+        bool32 is_create_page = FALSE;
         space_id_t space_id = INVALID_SPACE_ID;
         page_no_t page_no = INVALID_PAGE_NO;
-        if (recovery_is_need_get_block(type)) {
+        if (recovery_is_need_get_block(type, &is_create_page)) {
             space_id = mach_read_compressed(log_rec_ptr);
             log_rec_ptr += mach_get_compressed_size(space_id);
             page_no = mach_read_compressed(log_rec_ptr);
             log_rec_ptr += mach_get_compressed_size(page_no);
-
+            //
+            Page_fetch mode;
+            if (is_create_page) {
+                uint32 page_type = mach_read_from_2(log_rec_ptr);
+                mode = (page_type & FIL_PAGE_TYPE_RESIDENT_FLAG) ? Page_fetch::RESIDENT : Page_fetch::NORMAL;
+            }
             //
             const page_id_t page_id(space_id, page_no);
             const page_size_t page_size(space_id);
-            block = buf_page_get(page_id, page_size, RW_X_LATCH, &mtr);
+            if (is_create_page) {
+                block = buf_page_create(page_id, page_size, RW_X_LATCH, mode, &mtr);
+            } else {
+                block = buf_page_get(page_id, page_size, RW_X_LATCH, &mtr);
+            }
             if (block == NULL) {
                 LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
                     "recovery_replay_log_rec: cannot find block(space id %u, page no %u)",
@@ -496,10 +531,11 @@ err_exit:
 
     rbt_clear(recv_sys->block_rbt);
 
-    LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
-        "replay batch completed: lsn (%llu - %llu) in group %s",
-        recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn,
-        log_sys->groups[recv_sys->cur_group_id].name);
+    date_t end_time = cm_now();
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_RECOVERY,
+        "replay batch completed: len %u lsn (%llu - %llu) in group %s, total time %llu micro-seconds",
+        recv_sys->log_rec_len, recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn,
+        log_sys->groups[recv_sys->cur_group_id].name, end_time - begin_time);
 
     return ret;
 }
@@ -507,11 +543,15 @@ err_exit:
 static status_t recovery_get_last_checkpoint_info(recovery_sys_t* recv_sys)
 {
     status_t err;
-    uint32 max_ckpt_field = LOG_GROUP_MAX_COUNT;
+    uint32 max_ckpt_field = 0;
 
     // 1 Look for the latest checkpoint from any of the log groups
     err = recv_find_max_checkpoint(&max_ckpt_field);
     if (err != CM_SUCCESS) {
+        return CM_ERROR;
+    }
+    if (max_ckpt_field != LOG_CHECKPOINT_1 && max_ckpt_field != LOG_CHECKPOINT_2) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY, "No valid checkpoint was found");
         return CM_ERROR;
     }
 
@@ -584,9 +624,16 @@ static void recovery_reset_log_sys(recovery_sys_t* recv_sys)
     log_sys->slot_write_pos = 0;
     // position for writer thread and flusher thread
     log_sys->writer_writed_lsn = recv_sys->limit_lsn;
-    log_sys->current_write_group = recv_sys->cur_group_id;
+    log_sys->current_write_group_id = recv_sys->cur_group_id;
     log_sys->flusher_flushed_lsn = recv_sys->limit_lsn;
-    log_sys->current_flush_group = recv_sys->cur_group_id;
+    log_sys->current_flush_group_id = recv_sys->cur_group_id;
+    for (uint32 i = 0; i < log_sys->group_count; i++) {
+        if (i == log_sys->current_write_group_id) {
+            log_sys->groups[log_sys->group_count].status = LogGroupStatus::CURRENT;
+        } else {
+            log_sys->groups[log_sys->group_count].status = LogGroupStatus::INACTIVE;
+        }
+    }
 }
 
 
@@ -596,7 +643,7 @@ static void recovery_reset_log_sys(recovery_sys_t* recv_sys)
 // the recovery and free the resources used in it.
 status_t recovery_from_checkpoint_start(recovery_sys_t* recv_sys)
 {
-    status_t        err;
+    status_t err;
 
     // 1
     err = recovery_get_last_checkpoint_info(recv_sys);

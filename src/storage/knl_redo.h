@@ -147,6 +147,7 @@ typedef struct st_log_group {
     uint32            status;
     os_file_t         handle;
     uint64            file_size; // individual log file size in bytes, including the log file header
+    uint64            capacity;
     uint64            base_lsn;  // starting lsn of group, the starting postion of third block
     UT_LIST_NODE_T(struct st_log_group) list_node;
 } log_group_t;
@@ -170,8 +171,8 @@ typedef struct st_log {
 
     //
     uint8             group_count; // number of log file
-    uint8             current_write_group;
-    uint8             current_flush_group;
+    uint8             current_write_group_id;
+    uint8             current_flush_group_id;
     log_group_t       groups[LOG_GROUP_MAX_COUNT];
     UT_LIST_BASE_NODE_T(log_group_t) log_groups;  // base list of groups
 
@@ -212,7 +213,7 @@ typedef struct st_log {
 
 extern status_t log_init(uint32 log_buffer_size);
 extern bool32 log_group_add(char *name, uint64 file_size);
-extern inline lsn_t log_group_get_capacity(const log_group_t* group);
+extern inline uint64 log_group_get_capacity(const log_group_t* group);
 
 extern inline void log_buffer_reserve(log_buf_lsn_t* buf_lsn, uint32 len);
 extern inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len);

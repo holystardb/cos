@@ -4,6 +4,7 @@
 #include "cm_log.h"
 #include "knl_fsp.h"
 #include "knl_redo.h"
+#include "knl_trx_types.h"
 
 #include "m_ctype.h"
 
@@ -229,6 +230,10 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
     mach_write_to_1(ptr, ctrl->undo_count);
     ptr += 1;
     for (uint32 i = 0; i < ctrl->undo_count; i++) {
+        mach_write_to_4(ptr, ctrl->undo_group[i].node_id);
+        ptr += 4;
+        mach_write_to_4(ptr, ctrl->undo_group[i].space_id);
+        ptr += 4;
         memcpy(ptr, ctrl->undo_group[i].name, strlen(ctrl->undo_group[i].name) + 1);
         ptr += strlen(ctrl->undo_group[i].name) + 1;
         mach_write_to_8(ptr, ctrl->undo_group[i].size);
@@ -257,7 +262,7 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
     mach_write_to_4(ptr, ctrl->user_space_count);
     ptr += 4;
     for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
-        if (ctrl->user_spaces[i].space_id == DB_SPACE_INALID_ID) {
+        if (ctrl->user_spaces[i].space_id == DB_SPACE_INVALID_ID) {
             continue;
         }
         memcpy(ptr, ctrl->user_spaces[i].name, strlen(ctrl->user_spaces[i].name) + 1);
@@ -275,7 +280,7 @@ static status_t write_ctrl_file(char *name, db_ctrl_t *ctrl)
     ptr += 4;
     ut_ad(ctrl->user_space_data_file_count <= DB_SPACE_DATA_FILE_MAX_COUNT);
     for (uint32 i = 0; i < ctrl->user_space_data_file_count; i++) {
-        if (ctrl->user_space_data_files[i].node_id == DB_DATA_FILNODE_INALID_ID) {
+        if (ctrl->user_space_data_files[i].node_id == DB_DATA_FILNODE_INVALID_ID) {
             continue;
         }
 
@@ -457,6 +462,10 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
     ctrl->undo_count = mach_read_from_1(ptr);
     ptr += 1;
     for (uint32 i = 0; i < ctrl->undo_count; i++) {
+        ctrl->undo_group[i].node_id = mach_read_from_4(ptr);
+        ptr += 4;
+        ctrl->undo_group[i].space_id = mach_read_from_4(ptr);
+        ptr += 4;
         memcpy(ctrl->undo_group[i].name, ptr, strlen((const char*)ptr) + 1);
         ptr += strlen((const char*)ptr) + 1;
         ctrl->undo_group[i].size = mach_read_from_8(ptr);
@@ -501,7 +510,7 @@ status_t read_ctrl_file(char* name, db_ctrl_t* ctrl)
     ctrl->user_space_data_files = (db_data_file_t *)ut_malloc_zero(sizeof(db_data_file_t) * ctrl->user_space_data_file_array_size);
     for (uint32 i = 0; i < ctrl->user_space_data_file_count; i++) {
         uint32 node_id = mach_read_from_4(ptr);
-        ut_a(node_id != DB_DATA_FILNODE_INALID_ID);
+        ut_a(node_id != DB_DATA_FILNODE_INVALID_ID);
         ut_a(node_id >= DB_USER_DATA_FILE_FIRST_NODE_ID && node_id < DB_SPACE_DATA_FILE_MAX_COUNT);
         node_id -= DB_USER_DATA_FILE_FIRST_NODE_ID;
 
@@ -608,15 +617,19 @@ bool32 db_ctrl_add_system(char* data_file_name, uint64 size, uint64 max_size, bo
     return TRUE;
 }
 
-bool32 db_ctrl_add_systrans(char* data_file_name, uint64 size)
+bool32 db_ctrl_add_systrans(char* data_file_name, uint32 rseg_count)
 {
     db_data_file_t *file = &srv_ctrl_file.systrans;
 
-    size = (size / UNIV_PAGE_SIZE) * UNIV_PAGE_SIZE;
-    if (size < 1024 * 1024 || size > 1024 * 1024 * 8) {
-        return FALSE;
+    if (rseg_count < TRX_RSEG_MIN_COUNT) {
+        rseg_count = TRX_RSEG_MIN_COUNT;
     }
-    db_ctrl_set_file(file, DB_SYSTRANS_SPACE_ID, DB_SYSTRANS_FILNODE_ID, data_file_name, size, size, FALSE);
+    if (rseg_count > TRX_RSEG_MAX_COUNT) {
+        rseg_count = TRX_RSEG_MAX_COUNT;
+    }
+
+    uint64 size = (FSP_FIRST_RSEG_PAGE_NO + rseg_count * TRX_SLOT_PAGE_COUNT_PER_RSEG) * UNIV_SYSTRANS_PAGE_SIZE;
+    db_ctrl_set_file(file, DB_SYSTRANS_SPACE_ID, DB_SYSTRANS_FILNODE_ID, data_file_name, size, rseg_count, FALSE);
 
     return TRUE;
 }
@@ -631,7 +644,7 @@ bool32 db_ctrl_add_redo(char* data_file_name, uint64 size)
     db_data_file_t *file = &srv_ctrl_file.redo_group[srv_ctrl_file.redo_count];
     srv_ctrl_file.redo_count++;
 
-    db_ctrl_set_file(file, DB_REDO_SPACE_ID, DB_DATA_FILNODE_INALID_ID, data_file_name, size, size, FALSE);
+    db_ctrl_set_file(file, DB_REDO_SPACE_ID, DB_DATA_FILNODE_INVALID_ID, data_file_name, size, size, FALSE);
 
     return TRUE;
 }
@@ -654,7 +667,7 @@ bool32 db_ctrl_add_undo(char* data_file_name, uint64 size, uint64 max_size, bool
 
     db_data_file_t *file = &srv_ctrl_file.undo_group[srv_ctrl_file.undo_count];
     db_ctrl_set_file(file, DB_UNDO_START_SPACE_ID + srv_ctrl_file.undo_count,
-        DB_DATA_FILNODE_INALID_ID, data_file_name, size, max_size, autoextend);
+        DB_UNDO_START_FILNODE_ID + srv_ctrl_file.undo_count, data_file_name, size, max_size, autoextend);
 
     srv_ctrl_file.undo_count++;
 
@@ -671,7 +684,7 @@ bool32 db_ctrl_add_temp(char* data_file_name, uint64 size, uint64 max_size, bool
     db_data_file_t *file = &srv_ctrl_file.temp_group[srv_ctrl_file.temp_count];
     srv_ctrl_file.temp_count++;
 
-    db_ctrl_set_file(file, DB_TEMP_SPACE_ID, DB_DATA_FILNODE_INALID_ID, data_file_name, size, max_size, autoextend);
+    db_ctrl_set_file(file, DB_TEMP_SPACE_ID, DB_DATA_FILNODE_INVALID_ID, data_file_name, size, max_size, autoextend);
 
     return TRUE;
 }
@@ -701,7 +714,7 @@ bool32 db_ctrl_add_system_space(char* space_name, uint32 space_id)
         }
     }
 
-    if (srv_ctrl_file.system_spaces[space_id].space_id != DB_SPACE_INALID_ID) {
+    if (srv_ctrl_file.system_spaces[space_id].space_id != DB_SPACE_INVALID_ID) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE,
             "db_ctrl_add_system_space: Error, id of system space already exists, name %s id %lu",
             space_name, space_id);
@@ -745,19 +758,19 @@ bool32 db_ctrl_add_user_space(char* space_name)
     }
 
     // user space
-    uint32 space_id = DB_SPACE_INALID_ID;
+    uint32 space_id = DB_SPACE_INVALID_ID;
     for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
         if (strlen(space_name) == strlen(srv_ctrl_file.user_spaces[i].name) &&
             strcmp(space_name, srv_ctrl_file.user_spaces[i].name) == 0) {
             LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_user_space: Error, name of user space already exists, name %s", space_name);
             return FALSE;
         }
-        if (space_id == DB_SPACE_INALID_ID &&
-            srv_ctrl_file.user_spaces[i].space_id == DB_SPACE_INALID_ID) {
+        if (space_id == DB_SPACE_INVALID_ID &&
+            srv_ctrl_file.user_spaces[i].space_id == DB_SPACE_INVALID_ID) {
             space_id = i;
         }
     }
-    if (space_id == DB_SPACE_INALID_ID) {
+    if (space_id == DB_SPACE_INVALID_ID) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_user_space: Error, user space has reached the maximum limit");
         return FALSE;
     }
@@ -782,7 +795,7 @@ bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 siz
     }
 
     // check user space
-    uint32 space_id = DB_SPACE_INALID_ID;
+    uint32 space_id = DB_SPACE_INVALID_ID;
     for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
         if (strlen(space_name) == strlen(srv_ctrl_file.user_spaces[i].name) &&
             strcmp(space_name, srv_ctrl_file.user_spaces[i].name) == 0) {
@@ -790,7 +803,7 @@ bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 siz
             break;
         }
     }
-    if (space_id == DB_SPACE_INALID_ID) {
+    if (space_id == DB_SPACE_INVALID_ID) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, invalid space name %s", space_name);
         return FALSE;
     }
@@ -809,7 +822,7 @@ bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 siz
         db_data_file_t* data_files =
             (db_data_file_t *)ut_malloc_zero(sizeof(db_data_file_t) * srv_ctrl_file.user_space_data_file_array_size);
         for (uint32 i = srv_ctrl_file.user_space_data_file_count; i < srv_ctrl_file.user_space_data_file_array_size; i++) {
-            data_files[i].node_id = DB_DATA_FILNODE_INALID_ID;
+            data_files[i].node_id = DB_DATA_FILNODE_INVALID_ID;
         }
         // copy data
         if (srv_ctrl_file.user_space_data_file_count > 0) {
@@ -821,14 +834,14 @@ bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 siz
         srv_ctrl_file.user_space_data_files = data_files;
     }
     // find a free cell of data file array
-    uint32 node_id = DB_DATA_FILNODE_INALID_ID;
+    uint32 node_id = DB_DATA_FILNODE_INVALID_ID;
     for (uint32 i = 0; i < srv_ctrl_file.user_space_data_file_array_size; i++) {
-        if (srv_ctrl_file.user_space_data_files[i].node_id == DB_DATA_FILNODE_INALID_ID) {
+        if (srv_ctrl_file.user_space_data_files[i].node_id == DB_DATA_FILNODE_INVALID_ID) {
             node_id = i;
             break;
         }
     }
-    if (node_id == DB_DATA_FILNODE_INALID_ID) {
+    if (node_id == DB_DATA_FILNODE_INVALID_ID) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_CTRLFILE, "db_ctrl_add_space_file: Error, data file has reached the maximum limit");
         return FALSE;
     }
@@ -999,7 +1012,7 @@ status_t srv_create_double_write_file()
 status_t srv_create_user_data_files()
 {
     for (uint32 i = 0; i < srv_ctrl_file.user_space_data_file_array_size && i < DB_SPACE_DATA_FILE_MAX_COUNT; i++) {
-        if (srv_ctrl_file.user_space_data_files[i].node_id == DB_DATA_FILNODE_INALID_ID) {
+        if (srv_ctrl_file.user_space_data_files[i].node_id == DB_DATA_FILNODE_INVALID_ID) {
             continue;
         }
 
@@ -1025,7 +1038,7 @@ static bool32 db_ctrl_create_database_low(char* database_name, char* charset_nam
     ctrl_file->ver_num = DB_CTRL_FILE_VERSION_NUM;
 
     for (uint32 i = 0; i < DB_SYSTEM_SPACE_MAX_COUNT; i++) {
-        ctrl_file->system_spaces[i].space_id = DB_SPACE_INALID_ID;
+        ctrl_file->system_spaces[i].space_id = DB_SPACE_INVALID_ID;
     }
     db_ctrl_add_system_space("system", DB_SYSTEM_SPACE_ID);
     db_ctrl_add_system_space("systrans", DB_SYSTRANS_SPACE_ID);
@@ -1041,7 +1054,7 @@ static bool32 db_ctrl_create_database_low(char* database_name, char* charset_nam
     db_ctrl_add_system_space("dbwr", DB_DBWR_SPACE_ID);
 
     for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
-        ctrl_file->user_spaces[i].space_id = DB_SPACE_INALID_ID;
+        ctrl_file->user_spaces[i].space_id = DB_SPACE_INVALID_ID;
     }
 
     ctrl_file->user_space_data_file_count = 0;
@@ -1056,7 +1069,7 @@ static bool32 db_ctrl_create_database_low(char* database_name, char* charset_nam
     }
 
     if (charset_name) {
-        (ctrl_file->charset_name, strlen(charset_name) + 1, "%s", charset_name);
+        sprintf_s(ctrl_file->charset_name, strlen(charset_name) + 1, "%s", charset_name);
         ctrl_file->charset_name[strlen(charset_name)] = '\0';
     } else {
         ctrl_file->charset_name[0] = '\0';

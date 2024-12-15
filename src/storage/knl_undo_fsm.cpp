@@ -26,6 +26,7 @@ static inline undo_fsm_header_t* undo_fsm_get_fsm_header(uint32 space_id, mtr_t*
 
     // get block
     buf_block_t* guess_block = undo_fsm_hdr_block[space_id - FIL_UNDO_START_SPACE_ID];
+    ut_ad(guess_block);
 #ifdef UNIV_DEBUG
     page_id_t page_id(space_id, UNDO_FSM_HEADER_PAGE_NO);
     buf_block_t* block = buf_page_get_gen(page_id, undo_log_page_size,
@@ -280,25 +281,29 @@ status_t undo_fsm_recovery_fsp_pages(uint32 space_id)
 
     mtr_start(mtr);
 
+    // 1 load fsm_header page and get fsm_header
+    page_id_t hdr_page_id(space_id, UNDO_FSM_HEADER_PAGE_NO);
+    buf_block_t* block = buf_page_get(hdr_page_id, undo_log_page_size, RW_X_LATCH, mtr);
+    ut_a(block);
+    ut_a(block->is_resident());
+    ut_ad(block->get_page_no() == UNDO_FSM_HEADER_PAGE_NO);
+
+    ut_a(undo_fsm_hdr_block[space_id - FIL_UNDO_START_SPACE_ID] == NULL);
+    undo_fsm_hdr_block[space_id - FIL_UNDO_START_SPACE_ID] = block;
+
     undo_fsm_header_t* fsm_header = undo_fsm_get_fsm_header(space_id, mtr);
 
-    // load fsm page
+    // 2 load fsm page for resident
     uint32 fsm_page_count = mlog_read_uint32(fsm_header + UNDO_FSM_FSM_PAGE_COUNT, MLOG_4BYTES);
-    for (uint32 i = 0; i < fsm_page_count + 1; i++) {
-        page_id_t page_id(space_id, i + 1);
-        buf_block_t* block = buf_page_get(page_id, undo_log_page_size, RW_X_LATCH, mtr);
+    for (uint32 i = 0; i < fsm_page_count; i++) {
+        page_id_t page_id(space_id, i + UNDO_FSM_HEADER_PAGE_NO + 1);
+        block = buf_page_get(page_id, undo_log_page_size, RW_X_LATCH, mtr);
         ut_a(block);
-        ut_a(block->get_page_no() == i + 1);
+        ut_ad(block->get_page_no() == i + UNDO_FSM_HEADER_PAGE_NO + 1);
         //buf_block_dbg_add_level(fsm_root_block, SYNC_RSEG_HEADER_NEW);
-
-        //
-        if (i == 0) {
-            ut_a(undo_fsm_hdr_block[space_id - FIL_UNDO_START_SPACE_ID] == NULL);
-            undo_fsm_hdr_block[space_id - FIL_UNDO_START_SPACE_ID] = block;
-        }
     }
 
-    // 
+    // 3 recovery
     fil_addr_t node_addr = flst_get_first(fsm_header + UNDO_FSM_USED_LIST, mtr);
     while (!fil_addr_is_null(node_addr)) {
         // get node by node_addr

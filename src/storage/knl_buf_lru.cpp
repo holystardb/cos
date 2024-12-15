@@ -200,16 +200,21 @@ static inline buf_block_t *buf_LRU_get_free_only(buf_pool_t* buf_pool)
 
     block = (buf_block_t *)(UT_LIST_GET_FIRST(buf_pool->free_pages));
     if (block != NULL) {
-        ut_ad(block->page.in_free_list);
         ut_ad(!block->page.in_flush_list);
         ut_ad(!block->page.in_LRU_list);
         ut_ad(!buf_page_in_file(&block->page));
+
+        ut_ad(block->page.in_free_list);
+        block->page.in_free_list = FALSE;
 
         UT_LIST_REMOVE(list_node, buf_pool->free_pages, block);
 
         mutex_exit(&buf_pool->free_list_mutex);
 
+        mutex_enter(&block->mutex);
         buf_block_set_state(block, BUF_BLOCK_READY_FOR_USE);
+        ut_ad(buf_pool_from_block(block) == buf_pool);
+        mutex_exit(&block->mutex);
 
         return block;
     }

@@ -25,6 +25,7 @@ uint32 heap_create_entry(uint32 space_id)
 {
     mtr_t mtr;
     uint32 page_no = fsm_create(space_id);
+    printf("\n\n\n\n\n");
 
     mtr_start(&mtr);
 

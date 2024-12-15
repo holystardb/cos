@@ -451,6 +451,13 @@ typedef enum st_status {
         }                                       \
     } while (0)
 
+#define CM_RETURN_IF_NULL(ret)                 \
+    do {                                       \
+        if (UNLIKELY((ret) == NULL)) {         \
+            return NULL;                       \
+        }                                      \
+    } while (0)
+
 #define CM_RETURN_VOID_IF_FALSE(ret)      \
     do {                                  \
         if ((ret) == FALSE) {             \

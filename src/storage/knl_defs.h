@@ -53,18 +53,20 @@ typedef uint32              command_id_t;
 #define DB_USER_SPACE_FIRST_ID          DB_SYSTEM_SPACE_MAX_COUNT
 #define DB_USER_SPACE_MAX_COUNT         256
 
-#define DB_SPACE_INALID_ID              0xFFFFFFFF
+#define DB_SPACE_INVALID_ID             0xFFFFFFFF
 
 #define DB_SYSTEM_FILNODE_ID            0
 #define DB_SYSTRANS_FILNODE_ID          1
 #define DB_SYSAUX_FILNODE_ID            2
 #define DB_DBWR_FILNODE_ID              3
+#define DB_UNDO_START_FILNODE_ID        4
+#define DB_UNDO_END_FILNODE_ID          19
 
 
 #define DB_SYSTEM_DATA_FILE_MAX_COUNT   128
 #define DB_USER_DATA_FILE_FIRST_NODE_ID 128
 
-#define DB_DATA_FILNODE_INALID_ID       0xFFFFFFFF
+#define DB_DATA_FILNODE_INVALID_ID      0xFFFFFFFF
 
 
 #define DB_DATA_FILE_NAME_MAX_LEN       256

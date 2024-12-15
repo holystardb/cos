@@ -167,7 +167,7 @@ static inline void buf_flush_insert_sorted_into_flush_list(
     // However, while a block is in the flush list, it is dirty and cannot be discarded,
     // not from the page_hash or from the LRU list.
 
-    ut_ad(block->page.is_resident || block->page.in_LRU_list);
+    ut_ad(block->is_resident() || block->page.in_LRU_list);
     ut_ad(block->page.in_page_hash);
     ut_ad(!block->page.in_flush_list);
 
@@ -203,7 +203,7 @@ inline void buf_flush_recv_note_modification(
 
     ut_ad(!srv_read_only_mode);
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
-    ut_ad(block->page.is_resident || block->page.buf_fix_count > 0);
+    ut_ad(block->is_resident() || block->page.buf_fix_count > 0);
     ut_ad(rw_lock_own(&(block->rw_lock), RW_LOCK_EXCLUSIVE));
 
     //ut_ad(!buf_pool_mutex_own(buf_pool));

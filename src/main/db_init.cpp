@@ -35,8 +35,8 @@ status_t create_database(char* base_dir, attribute_t* attr)
 {
     db_ctrl_create_database("cosdb", "utf8mb4_bin");
 
-    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf", 5 * 1024 * 1024, 100 * 1024 * 1024, TRUE);
-    db_ctrl_add_systrans("D:\\MyWork\\cos\\data\\systrans", 4 * 1024 * 1024);
+    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf", 1024 * 1024, 100 * 1024 * 1024, TRUE);
+    db_ctrl_add_systrans("D:\\MyWork\\cos\\data\\systrans", 64);
 
     db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01", 4 * 1024 * 1024);
     db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02", 4 * 1024 * 1024);
@@ -180,16 +180,18 @@ int main(int argc, const char *argv[])
     os_file_init();
 
     // 2.
+    //bool32 batch_flush = FALSE;
     bool32 batch_flush = TRUE;
     char* log_path = "D:\\MyWork\\cos\\data\\";
     uint32 log_level = LOG_LEVEL_ALL;
     //log_level = LOG_LEVEL_DEFAULT;
 
     LOGGER.log_init(log_level, log_path, "initdb", batch_flush);
-    //LOGGER.set_module_log_level(LOG_MODULE_REDO, LOG_LEVEL_ALL);
-    //LOGGER.set_module_log_level(LOG_MODULE_RECOVERY, LOG_LEVEL_ALL);
+    //LOGGER.set_module_log_level(LOG_MODULE_REDO, LOG_LEVEL_ALL & (~LOG_LEVEL_TRACE));
+    LOGGER.set_module_log_level(LOG_MODULE_RECOVERY, LOG_LEVEL_ALL & (~LOG_LEVEL_TRACE));
     //LOGGER.set_module_log_level(LOG_MODULE_MTR, LOG_LEVEL_ALL);
-
+    //LOGGER.set_module_log_level(LOG_MODULE_CHECKPOINT, LOG_LEVEL_ALL);
+    
     if (batch_flush) {
         os_thread_id_t thread_id;
         os_thread_create(log_flush_thread, NULL, &thread_id);
@@ -215,11 +217,11 @@ int main(int argc, const char *argv[])
     cm_start_timer(timer);
 
     // 6.
-    err = create_database(base_dir, &attr);
-    //err = start_database(base_dir, &attr);
+    //err = create_database(base_dir, &attr);
+    err = start_database(base_dir, &attr);
     if (err != CM_SUCCESS) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to create database, Service exited");
-        goto err_exit;
+        //goto err_exit;
     }
 
     //
@@ -227,13 +229,13 @@ int main(int argc, const char *argv[])
 
     uint32 sess_count = 100;
     uint32 session_stack_size  = SIZE_M(1);
-    sess_pool_create(sess_count, session_stack_size);
+    //sess_pool_create(sess_count, session_stack_size);
 
     //
-    que_sess_t* sess = que_sess_alloc();
-    create_user(sess);
+    //que_sess_t* sess = que_sess_alloc();
+    //create_user(sess);
 
-    que_sess_free(sess);
+    //que_sess_free(sess);
 
     while (TRUE) {
         os_thread_sleep(100000);

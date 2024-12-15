@@ -199,6 +199,7 @@ typedef struct st_fil_system {
     memory_area_t      *mem_area;
     memory_pool_t      *mem_pool;
     memory_context_t   *mem_context;
+    byte                extend_page_buf[UNIV_PAGE_SIZE];
 
     uint32              aio_pending_count_per_context;
     uint32              aio_context_count;

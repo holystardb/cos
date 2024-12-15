@@ -258,7 +258,7 @@ fil_node_t* fil_node_create(fil_space_t *space, uint32 node_id,
 {
     fil_node_t *node, *tmp;
 
-    if (node_id != DB_DATA_FILNODE_INALID_ID && node_id >= DB_SPACE_DATA_FILE_MAX_COUNT) {
+    if (node_id != DB_DATA_FILNODE_INVALID_ID && node_id >= DB_SPACE_DATA_FILE_MAX_COUNT) {
         return NULL;
     }
 
@@ -297,7 +297,7 @@ fil_node_t* fil_node_create(fil_space_t *space, uint32 node_id,
     
     // insert into filnodes array
     mutex_enter(&fil_system->mutex, NULL);
-    if (node_id == DB_DATA_FILNODE_INALID_ID) {
+    if (node_id == DB_DATA_FILNODE_INVALID_ID) {
         for (uint32 i = 0; i < fil_system->fil_node_max_count; i++) {
             if (fil_system->fil_nodes[i] == NULL) {
                 node->id = i;
@@ -519,7 +519,7 @@ static bool32 fil_space_extend_node(fil_node_t* node,
     uint32 page_hwm, uint32 size_increase, uint32 *actual_size)
 {
     uint32            timeout_seconds = 300;
-    uchar             buf[UNIV_PAGE_SIZE];
+    //uchar             buf[UNIV_PAGE_SIZE];
     const page_size_t page_size(node->space->id);
     page_id_t         page_id;
     fil_node_extend_t node_extend;
@@ -538,16 +538,16 @@ static bool32 fil_space_extend_node(fil_node_t* node,
     node_extend.is_disk_full = FALSE;
     node_extend.extend_page_count = 0;
 
-    memset(buf, 0x00, UNIV_PAGE_SIZE);
+    //memset(buf, 0x00, UNIV_PAGE_SIZE);
 
     for (uint32 page_no = page_hwm; page_no < page_hwm + size_increase; page_no++) {
         // page header
-        mach_write_to_4(buf + FIL_PAGE_SPACE, node->space->id);
-        mach_write_to_4(buf + FIL_PAGE_OFFSET, page_no);
+        //mach_write_to_4(buf + FIL_PAGE_SPACE, node->space->id);
+        //mach_write_to_4(buf + FIL_PAGE_OFFSET, page_no);
         // write to file
         page_id.reset(node->space->id, page_no);
         status_t err = fil_write(FALSE, page_id, page_size, page_size.physical(),
-            (void *)buf, fil_space_extend_node_callback, &node_extend);
+            (void *)fil_system->extend_page_buf, fil_space_extend_node_callback, &node_extend);
         if (err != CM_SUCCESS) {
             LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: fail to write file, name %s", node->name);
             goto err_exit;
@@ -588,129 +588,6 @@ static bool32 fil_space_extend_node(fil_node_t* node,
     }
 
     return node_extend.is_disk_full ? FALSE : TRUE;
-
-err_exit:
-
-    LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: A fatal error occurred, service exited.");
-    ut_error;
-
-    return FALSE;
-}
-
-
-static bool32 fil_space_extend_node1(fil_space_t *space,
-    fil_node_t *node, uint32 page_hwm, uint32 size_increase, uint32 *actual_size)
-{
-    os_aio_context_t *aio_ctx = NULL;
-    uint32            timeout_seconds = 300;
-    memory_page_t    *page = NULL;
-    uchar            *buf;
-    uint32            size;
-    uint64            offset;
-    bool32            is_disk_full = FALSE;
-
-    ut_ad(fil_space_is_pinned(space));
-
-    *actual_size = 0;
-    if (size_increase == 0) {
-        return TRUE ;
-    }
-
-    size = page_hwm + size_increase;
-    ut_a(node->page_max_count >= size);
-
-    // The purpose of fil_system_pin_space here is to call fil_node_complete_io later,
-    // fil_node_complete_io will perform UNPIN SPACE operation.
-    fil_system_pin_space(space);
-
-    if (!fil_node_prepare_for_io(node)) {
-        fil_system_unpin_space(space);
-        return FALSE;
-    }
-
-    aio_ctx = os_aio_array_alloc_context(fil_system->aio_array);
-    page = marea_alloc_page(fil_system->mem_area, UNIV_PAGE_SIZE);
-    buf = (uchar *)MEM_PAGE_DATA_PTR(page);
-    memset(buf, 0x00, UNIV_PAGE_SIZE);
-
-    for (uint32 loop = 0; loop < size_increase && !is_disk_full; loop += OS_AIO_N_PENDING_IOS_PER_THREAD) {
-        uint32 io_count = 0;
-        for (uint32 i = page_hwm + loop; i < page_hwm + loop + OS_AIO_N_PENDING_IOS_PER_THREAD; i++) {
-            offset = i * UNIV_PAGE_SIZE;
-            mach_write_to_4(buf + FIL_PAGE_SPACE, space->id);
-            mach_write_to_4(buf + FIL_PAGE_OFFSET, i);
-            if (os_file_aio_submit(aio_ctx, OS_FILE_WRITE, node->name, node->handle,
-                                   (void *)buf, UNIV_PAGE_SIZE, offset) == NULL) {
-                char err_info[CM_ERR_MSG_MAX_LEN];
-                os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-                LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
-                    "fil_space_extend: fail to write file, name %s error %s",
-                    node->name, err_info);
-                goto err_exit;
-            }
-            io_count++;
-        }
-
-        // wait for io-complete
-        uint32 timeout_seconds = 300; // 300 seconds
-        os_aio_slot_t* aio_slot = NULL;
-        while (io_count > 0) {
-            int32 err = os_file_aio_context_wait(aio_ctx, &aio_slot, timeout_seconds * 1000000);
-            switch (err) {
-            case OS_FILE_IO_COMPLETION:
-                break;
-            case OS_FILE_DISK_FULL:
-                LOGGER_DEBUG(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: disk is full, name %s", node->name);
-                is_disk_full = TRUE;
-                break;
-            case OS_FILE_IO_TIMEOUT:
-                LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
-                    "fil_space_extend: IO timeout for writing file, name %s timeout %u seconds",
-                    node->name, timeout_seconds);
-                goto err_exit;
-            default:
-                char err_info[CM_ERR_MSG_MAX_LEN];
-                os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-                LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
-                    "fil_space_extend: failed to write file, name %s error %s",
-                    node->name, err_info);
-                goto err_exit;
-            }
-
-            //
-            ut_a(aio_slot);
-            os_aio_context_free_slot(aio_slot);
-
-            io_count--;
-        }
-
-    }
-
-    if (!os_fsync_file(node->handle)) {
-        int32 err = os_file_get_last_error();
-        if (err == OS_FILE_DISK_FULL) {
-            is_disk_full = TRUE;
-            LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: disk is full, name %s", node->name);
-        } else {
-            char err_info[CM_ERR_MSG_MAX_LEN];
-            os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-            LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
-                "fil_space_extend: fail to sync file, name = %s error = %s",
-                node->name, err_info);
-            goto err_exit;
-        }
-    }
-
-    if (!is_disk_full) {
-        *actual_size = size_increase;
-    }
-
-    os_aio_array_free_context(aio_ctx);
-    marea_free_page(fil_system->mem_area, page, UNIV_PAGE_SIZE);
-
-    fil_node_complete_io(node, OS_FILE_WRITE);
-
-    return is_disk_full ? FALSE : TRUE;
 
 err_exit:
 
@@ -784,83 +661,6 @@ uint32 fil_space_get_size(uint32 space_id)
     }
 
     return(size);
-}
-
-
-static bool32 fsp_try_extend_data_file_with_pages(
-	fil_space_t*  space,
-	uint32        page_no,
-	fsp_header_t* header,
-	mtr_t*        mtr)
-{
-	bool32  success;
-	uint32  size, actual_size = 0;
-
-	ut_a(!is_system_tablespace(space->id));
-	//ut_d(fsp_space_modify_check(space->id, mtr));
-
-	size = mach_read_from_4(header + FSP_SIZE);
-	ut_ad(size == space->size_in_header);
-
-	ut_a(page_no >= size);
-
-	success = fil_space_extend(space, page_no + 1, &actual_size);
-	/* The size may be less than we wanted if we ran out of disk space. */
-	mlog_write_uint32(header + FSP_SIZE, actual_size, MLOG_4BYTES, mtr);
-	space->size_in_header = actual_size;
-
-	return(success);
-}
-
-
-static uint32 fsp_get_autoextend_increment(fil_space_t* space)
-{
-    if (space->id >= FIL_USER_SPACE_ID) {
-        
-    } else if (space->id == FIL_SYSTEM_SPACE_ID) {
-        return FSP_EXTENT_SIZE * FSP_FREE_ADD;
-    } else {
-    }
-
-    uint32 size, size_increase;
-    if (size < FSP_EXTENT_SIZE) {
-        size_increase = FSP_EXTENT_SIZE;
-    } else if (size < 32 * FSP_EXTENT_SIZE) {
-        size_increase = FSP_EXTENT_SIZE;
-    } else {
-        size_increase = FSP_FREE_ADD * FSP_EXTENT_SIZE;
-    }
-
-    return FSP_EXTENT_SIZE * FSP_FREE_ADD;
-}
-
-// Tries to extend the last data file of a tablespace if it is auto-extending.
-static bool32 fsp_try_extend_data_file(
-    uint32*       actual_increase,/*!< out: actual increase in pages */
-    fil_space_t*  space,  /*!< in: space */
-    fsp_header_t* header,  /*!< in/out: space header */
-    mtr_t*        mtr)
-{
-    uint32 size;  /* current number of pages in the datafile */
-    uint32 size_increase;  /* number of pages to extend this file */
-    uint32 actual_size;
-    const page_size_t page_size(space->id);
-
-    size_increase = fsp_get_autoextend_increment(space);
-    if (size_increase == 0) {
-        return FALSE;
-    }
-
-    size = mach_read_from_4(header + FSP_SIZE);
-    ut_ad(size == space->size_in_header);
-    if (!fil_space_extend(space, size + size_increase, &actual_size)) {
-        return FALSE;
-    }
-
-    space->size_in_header += actual_size;
-    mlog_write_uint32(header + FSP_SIZE, space->size_in_header, MLOG_4BYTES, mtr);
-
-    return TRUE;
 }
 
 inline bool32 fil_addr_is_null(fil_addr_t addr) /*!< in: address */
@@ -1137,6 +937,7 @@ inline status_t fil_io(
 
     // 1. get fil_space by page_id and pin
     space = fil_system_get_space_by_id(page_id.space_id());
+    ut_ad(space);
 
     // 2. get fil_node by page_id
 

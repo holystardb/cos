@@ -312,7 +312,7 @@ static config_int64 ConfigureNamesInt64[] =
          "memory size of redo buffer.",
          GUC_CONTEXT_POSTMASTER, GUC_TYPE_INT64, GUC_UNIT_MB
         },
-        &g_guc_options.attr_storage.redo_log_buffer_size, 16, 1, 1024,
+        &g_guc_options.attr_storage.redo_log_buffer_size, 16, 1, 16384,
         guc_memory_check_hook, guc_memory_assign_hook, guc_memory_init_hook, NULL
     },
 

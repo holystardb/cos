@@ -86,7 +86,7 @@ static status_t trx_sys_extend_free_undo_page()
     mutex_exit(&trx_sys->used_pages_mutex);
 
     memory_page_t* page = mpool_alloc_page(trx_sys->mem_pool);
-    if (page) {
+    if (page == NULL) {
         mutex_enter(&trx_sys->used_pages_mutex, NULL);
         trx_sys->extend_in_process = FALSE;
         mutex_exit(&trx_sys->used_pages_mutex);
@@ -154,9 +154,8 @@ status_t trx_rseg_undo_page_init(trx_rseg_t* rseg)
     SLIST_INIT(rseg->update_undo_cache);
 
     //
-    if (!trx_rseg_extend_free_undo_page(rseg)) {
-        return CM_ERROR;
-    }
+    status_t err = trx_rseg_extend_free_undo_page(rseg);
+    CM_RETURN_IF_ERROR(err);
 
     return CM_SUCCESS;
 }
@@ -230,10 +229,11 @@ status_t trx_rseg_open_trx_slots(trx_rseg_t* rseg)
 
     for (uint32 i = 0; i < TRX_SLOT_PAGE_COUNT_PER_RSEG; i++) {
         // get block
-        uint32 page_no = rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG + i;
+        uint32 page_no = rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG + (i + FSP_FIRST_RSEG_PAGE_NO);
         page_id_t page_id(DB_SYSTRANS_SPACE_ID, page_no);
         rseg->trx_slot_blocks[i] = buf_page_get(page_id, systrans_page_size, RW_X_LATCH, mtr);
         ut_a(rseg->trx_slot_blocks[i]->get_page_no() == page_no);
+        ut_a(rseg->trx_slot_blocks[i]->is_resident());
         //buf_block_dbg_add_level(rseg->trx_slot_blocks[i], SYNC_RSEG_HEADER_NEW);
 
         //
@@ -264,6 +264,37 @@ status_t trx_rseg_open_trx_slots(trx_rseg_t* rseg)
     return CM_SUCCESS;
 }
 
+static void trx_rseg_trx_slot_page_init(trx_rseg_t* rseg, uint32 slot_page_index, buf_block_t* block)
+{
+    page_t* page = buf_block_get_frame(block);
+    mach_write_to_2(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_TRX_SYS | FIL_PAGE_TYPE_RESIDENT_FLAG);
+
+    //
+    trx_slot_page_hdr_t* header = page + TRX_SLOT_PAGE_HDR;
+    mach_write_to_8(header + TRX_SLOT_PAGE_OWSCN, INVALID_SCN);
+    rseg->page_ow_scn[slot_page_index] = INVALID_SCN;
+
+    //
+    trx_slot_t* slot;
+    for (uint32 i = 0; i < TRX_SLOT_COUNT_PER_PAGE; i++) {
+        slot = (trx_slot_t *)(header + TRX_SLOT_PAGE_HEADER_SIZE + i * sizeof(trx_slot_t));
+        slot->scn = INVALID_SCN;
+        slot->insert_page_no = FIL_NULL;
+        slot->update_page_no = FIL_NULL;
+        slot->status = XACT_END;
+        slot->reserved = 0;
+        slot->xnum = 0;
+
+        uint32 slot_idx = slot_page_index * TRX_SLOT_COUNT_PER_PAGE + i;
+        rseg->trx_slot_list[slot_idx] = slot;
+
+        trx_t* trx = &rseg->trx_list[slot_idx];
+        trx->trx_slot_id.rseg_id = rseg->id;
+        trx->trx_slot_id.slot = slot_idx;
+        trx->trx_slot_id.xnum = 0;
+        trx->is_active = FALSE;
+    }
+}
 
 status_t trx_rseg_create_trx_slots(trx_rseg_t* rseg)
 {
@@ -272,46 +303,22 @@ status_t trx_rseg_create_trx_slots(trx_rseg_t* rseg)
     mtr_start(mtr);
 
     for (uint32 i = 0; i < TRX_SLOT_PAGE_COUNT_PER_RSEG; i++) {
-        // get block
-        uint32 page_no = rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG + i;
-        page_id_t page_id(DB_SYSTRANS_SPACE_ID, page_no);
-        rseg->trx_slot_blocks[i] = buf_page_create(page_id, systrans_page_size, RW_X_LATCH, Page_fetch::RESIDENT, mtr);
-        ut_a(rseg->trx_slot_blocks[i]->get_page_no() == page_no);
-        //buf_block_dbg_add_level(rseg->trx_slot_blocks[i], SYNC_RSEG_HEADER_NEW);
+        // 1 get block
+        uint32 page_no = rseg->id * TRX_SLOT_PAGE_COUNT_PER_RSEG + (i + FSP_FIRST_RSEG_PAGE_NO);
+        buf_block_t* block = fsp_alloc_free_page(DB_SYSTRANS_SPACE_ID, systrans_page_size, Page_fetch::RESIDENT, mtr);
+        ut_a(block->get_page_no() == page_no);
+        ut_a(block->is_resident());
+        //buf_block_dbg_add_level(block], SYNC_RSEG_HEADER_NEW);
 
-        //
-        page_t* page = buf_block_get_frame(rseg->trx_slot_blocks[i]);
-        mach_write_to_2(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_TRX_SYS | FIL_PAGE_TYPE_RESIDENT_FLAG);
+        // 2 init page
+        rseg->trx_slot_blocks[i] = block;
+        trx_rseg_trx_slot_page_init(rseg, i, block);
 
-        //
-        trx_slot_page_hdr_t* header = page + TRX_SLOT_PAGE_HDR;
-        mach_write_to_8(header + TRX_SLOT_PAGE_OWSCN, INVALID_SCN);
-        rseg->page_ow_scn[i] = INVALID_SCN;
-
-        //
-        for (uint32 j = 0; j < TRX_SLOT_COUNT_PER_PAGE; j++) {
-            trx_slot_t* slot = (trx_slot_t *)(header + TRX_SLOT_PAGE_HEADER_SIZE + j * sizeof(trx_slot_t));
-            slot->scn = INVALID_SCN;
-            slot->insert_page_no = FIL_NULL;
-            slot->update_page_no = FIL_NULL;
-            slot->status = XACT_END;
-            slot->reserved = 0;
-            slot->xnum = 0;
-
-            uint32 slot_idx = i * TRX_SLOT_COUNT_PER_PAGE + j;
-            rseg->trx_slot_list[slot_idx] = slot;
-
-            trx_t* trx = &rseg->trx_list[slot_idx];
-            trx->trx_slot_id.rseg_id = rseg->id;
-            trx->trx_slot_id.slot = slot_idx;
-            trx->trx_slot_id.xnum = 0;
-            trx->is_active = FALSE;
-        }
-
-        // redo
-        mlog_write_initial_log_record(page, MLOG_TRX_RSEG_PAGE_INIT, mtr);
+        // 3 redo
+        mlog_write_initial_log_record(buf_block_get_frame(block), MLOG_TRX_RSEG_PAGE_INIT, mtr);
         mlog_catenate_uint32(mtr, rseg->id, MLOG_1BYTE);
-        mlog_catenate_uint32(mtr, page_no, MLOG_4BYTES);
+        mlog_catenate_uint32(mtr, block->get_page_no(), MLOG_4BYTES);
+        mlog_catenate_uint32(mtr, i, MLOG_1BYTE);
     }
 
     mtr_commit(mtr);
@@ -319,39 +326,19 @@ status_t trx_rseg_create_trx_slots(trx_rseg_t* rseg)
     return CM_SUCCESS;
 }
 
-// Creates and initializes the transaction system at the database creation.
-status_t trx_sys_create_or_open_undo_rsegs(bool32 is_create_database)
+status_t trx_sys_reserve_systrans_space()
 {
-    status_t err;
+    mtr_t mtr;
+    mtr_start(&mtr);
 
-    LOGGER_INFO(LOGGER, LOG_MODULE_ROLLSEGMENT, "trx_sys_create_or_open_undo_rsegs: initializing ...");
-
-    // Create all rollback segment in the SYSTRANS tablespace
-    for (uint32 rseg_id = 0; rseg_id < TRX_RSEG_COUNT; rseg_id++) {
-        trx_rseg_t* rseg = TRX_GET_RSEG(rseg_id);
-        ut_ad(rseg->id == rseg_id);
-
-        err = is_create_database ? trx_rseg_create_trx_slots(rseg) : trx_rseg_open_trx_slots(rseg);
-        if (err != CM_SUCCESS) {
-            LOGGER_INFO(LOGGER, LOG_MODULE_ROLLSEGMENT,
-                "trx_sys_create_or_open_undo_rsegs: Failed to initialize rseg, rseg_id = %u", rseg_id);
-            return CM_ERROR;
-        }
+    for (uint32 i = 1; i < FSP_FIRST_RSEG_PAGE_NO; i++) {
+        buf_block_t* block = fsp_alloc_free_page(DB_SYSTRANS_SPACE_ID, systrans_page_size, Page_fetch::NORMAL, &mtr);
+        ut_a(block->get_page_no() == i);
     }
 
-    LOGGER_INFO(LOGGER, LOG_MODULE_ROLLSEGMENT, "trx_sys_create_or_open_undo_rsegs: initialized");
+    mtr_commit(&mtr);
 
     return CM_SUCCESS;
-}
-
-static inline buf_block_t* trx_rseg_xlock_slot_page(trx_slot_id_t trx_slot_id, mtr_t* mtr)
-{
-    page_id_t page_id(TRX_SYS_SPACE, TRX_GET_RSEG_TRX_SLOT_PAGE_NO(trx_slot_id));
-    buf_block_t* guess_block = TRX_GET_RSEG_TRX_SLOT_BLOCK(trx_slot_id);
-    buf_block_t* block = buf_page_get_gen(page_id, systrans_page_size, RW_X_LATCH, guess_block, Page_fetch::NORMAL, mtr);
-    ut_ad(block == TRX_GET_RSEG_TRX_SLOT_BLOCK(trx_slot_id));
-
-    return block;
 }
 
 static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg)
@@ -374,7 +361,7 @@ static inline trx_t* trx_rseg_alloc_trx(trx_rseg_t* rseg)
     mtr_start(&mtr);
 
     // get slot
-    ut_ad(trx->trx_slot_id.rseg_id < TRX_RSEG_COUNT);
+    ut_ad(trx->trx_slot_id.rseg_id < trx_sys->rseg_count);
     ut_ad(trx->trx_slot_id.slot < TRX_SLOT_COUNT_PER_PAGE * TRX_SLOT_PAGE_COUNT_PER_RSEG);
     trx_slot_t* slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
     ut_a(slot->status == XACT_END);
@@ -431,8 +418,8 @@ inline trx_t* trx_rseg_assign_and_alloc_trx()
     trx_t* trx = NULL;
     uint64 index = ut_rnd_gen_uint64();
 
-    for (uint32 i = 0; i < TRX_RSEG_COUNT; i++) {
-        trx_rseg_t* rseg = &trx_sys->rseg_array[(index + i) & (TRX_RSEG_COUNT - 1)];
+    for (uint32 i = 0; i < trx_sys->rseg_count; i++) {
+        trx_rseg_t* rseg = &trx_sys->rseg_array[(index + i) & (trx_sys->rseg_count - 1)];
         trx = trx_rseg_alloc_trx(rseg);
         if (trx) {
             break;
@@ -484,7 +471,7 @@ inline scn_t trx_rseg_set_end(trx_t* trx, bool32 is_commit)
     mtr_start(&mtr);
 
     // get slot
-    ut_ad(trx->trx_slot_id.rseg_id < TRX_RSEG_COUNT);
+    ut_ad(trx->trx_slot_id.rseg_id < trx_sys->rseg_count);
     ut_ad(trx->trx_slot_id.slot < trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
     slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx->trx_slot_id);
 
@@ -575,14 +562,15 @@ inline void trx_get_status_by_itl(trx_slot_id_t trx_slot_id, trx_status_t* trx_s
 
 // ---------------------------------------------------------
 
-byte* trx_rseg_replay_init_page(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block)
+byte* trx_rseg_replay_trx_slot_page_init(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block)
 {
     ut_ad(type == MLOG_TRX_RSEG_PAGE_INIT);
-    ut_a(log_end_ptr - log_rec_ptr >= 5);
+    ut_a(log_end_ptr - log_rec_ptr >= 6);
+    ut_a(block);
 
     uint32 rseg_id = mach_read_from_1(log_rec_ptr);
     log_rec_ptr += 1;
-    ut_ad(rseg_id < TRX_RSEG_COUNT);
+    ut_ad(rseg_id < trx_sys->rseg_count);
 
     uint32 page_no = mach_read_from_4(log_rec_ptr);
     log_rec_ptr += 4;
@@ -590,12 +578,19 @@ byte* trx_rseg_replay_init_page(uint32 type, byte* log_rec_ptr, byte* log_end_pt
     ut_ad(page_no < FSP_FIRST_RSEG_PAGE_NO + (rseg_id + 1) * TRX_SLOT_PAGE_COUNT_PER_RSEG);
     ut_ad(((buf_block_t*)block)->get_page_no() == page_no);
 
-    LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
-        "trx_rseg_replay_init_page: type %lu block (%p space_id %lu page_no %lu) rseg_id %lu",
-        type, block, block ? ((buf_block_t *)block)->get_space_id() : INVALID_SPACE_ID,
-        block ? ((buf_block_t *)block)->get_page_no() : INVALID_PAGE_NO, rseg_id);
+    uint32 slot_page_index = mach_read_from_1(log_rec_ptr);
+    log_rec_ptr += 1;
+    ut_ad(slot_page_index < TRX_SLOT_PAGE_COUNT_PER_RSEG);
 
-    //trx_rseg_t* rseg = &trx_sys->rseg_array[rseg_id];
+    LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
+        "trx_rseg_replay_init_page: type %lu block (%p space_id %lu page_no %lu) rseg_id %lu slot_page_index %u",
+        type, block, ((buf_block_t *)block)->get_space_id(),
+        ((buf_block_t *)block)->get_page_no(), rseg_id, slot_page_index);
+
+    trx_rseg_t* rseg = &trx_sys->rseg_array[rseg_id];
+    rseg->trx_slot_blocks[slot_page_index] = (buf_block_t *)block;
+
+    trx_rseg_trx_slot_page_init(rseg, slot_page_index, (buf_block_t *)block);
 
     return log_rec_ptr;
 }
@@ -610,7 +605,7 @@ byte* trx_rseg_replay_begin_slot(uint32 type, byte* log_rec_ptr, byte* log_end_p
 
     trx_slot_id.id = mach_read_from_8(log_rec_ptr);
     log_rec_ptr += 8;
-    ut_ad(trx_slot_id.rseg_id < TRX_RSEG_COUNT);
+    ut_ad(trx_slot_id.rseg_id < trx_sys->rseg_count);
     ut_ad(trx_slot_id.slot < trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
 
     slot = (trx_slot_t *)TRX_GET_RSEG_TRX_SLOT(trx_slot_id);
@@ -637,7 +632,7 @@ byte* trx_rseg_replay_end_slot(uint32 type, byte* log_rec_ptr, byte* log_end_ptr
 
     trx_slot_id.id = mach_read_from_8(log_rec_ptr);
     log_rec_ptr += 8;
-    ut_ad(trx_slot_id.rseg_id < TRX_RSEG_COUNT);
+    ut_ad(trx_slot_id.rseg_id < trx_sys->rseg_count);
     ut_ad(trx_slot_id.slot < trx_slot_count_per_page * TRX_SLOT_PAGE_COUNT_PER_RSEG);
 
     scn = mach_read_from_8(log_rec_ptr);

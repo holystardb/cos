@@ -275,13 +275,12 @@ inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool
     buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
 
     ut_a(buf_page_in_file(bpage));
+    ut_ad(bpage->id.page_no() == mach_read_from_4(((buf_block_t*)bpage)->frame + FIL_PAGE_OFFSET));
+    ut_ad(bpage->id.space_id() == mach_read_from_4(((buf_block_t*)bpage)->frame + FIL_PAGE_SPACE));
 
     switch (io_type) {
     case BUF_IO_READ: {
-        byte* frame = ((buf_block_t*)bpage)->frame;
-        uint32 read_page_no = mach_read_from_4(frame + FIL_PAGE_OFFSET);
-        uint32 read_space_id = mach_read_from_4(frame + FIL_PAGE_SPACE);
-        bpage->is_resident = (mach_read_from_2(frame + FIL_PAGE_TYPE) & FIL_PAGE_TYPE_RESIDENT_FLAG);
+        //byte* frame = ((buf_block_t*)bpage)->frame;
 
         block_mutex = buf_page_get_mutex(bpage);
         mutex_enter(block_mutex);
@@ -290,7 +289,7 @@ inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool
         mutex_exit(block_mutex);
 
         // The block must be put to the LRU list, to the begining of LRU list
-        if (UNLIKELY(bpage->is_resident)) {
+        if (UNLIKELY(!((buf_block_t*)bpage)->is_resident())) {
             mutex_enter(&buf_pool->LRU_list_mutex);
             buf_LRU_insert_block_to_lru_list(buf_pool, bpage);
             mutex_exit(&buf_pool->LRU_list_mutex);
@@ -564,7 +563,7 @@ retry:
         buf_block_wait_complete_io(block, BUF_IO_READ);
     }
 
-    if (!block->page.is_resident && mode != Page_fetch::PEEK_IF_IN_POOL) {
+    if (!block->is_resident() && mode != Page_fetch::PEEK_IF_IN_POOL) {
         buf_page_update_touch_number(&block->page);
     }
 
@@ -584,7 +583,6 @@ void buf_page_init_low(buf_page_t* bpage) /*!< in: block to init */
     bpage->flush_type = BUF_FLUSH_LRU;
     bpage->io_fix = BUF_IO_NONE;
     bpage->buf_fix_count = 0;
-    bpage->is_resident = FALSE;
     bpage->touch_number = 0;
     bpage->access_time = 0;
     bpage->newest_modification = 0;
@@ -651,12 +649,12 @@ inline buf_block_t* buf_page_create(const page_id_t& page_id, const page_size_t&
     block = (buf_block_t *)buf_page_hash_get_low(buf_pool, page_id);
     if (block && buf_page_in_file(&block->page)) {
         ut_d(block->page.file_page_was_freed = FALSE);
-
         // Page can be found in buf_pool
         rw_lock_x_unlock(hash_lock);
 
         buf_block_free(buf_pool, free_block);
-        return buf_page_get_gen(page_id, page_size, rw_latch, NULL, mode, mtr);
+
+        return buf_page_get_gen(page_id, page_size, rw_latch, block, mode, mtr);
     }
 
     // If we get here, the page was not in buf_pool: init it there
@@ -673,10 +671,6 @@ inline buf_block_t* buf_page_create(const page_id_t& page_id, const page_size_t&
 
     rw_lock_x_unlock(hash_lock);
 
-    if (UNLIKELY(mode == Page_fetch::RESIDENT)) {
-        block->page.is_resident = TRUE;
-    }
-
     buf_page_fix(&block->page);
     buf_page_set_accessed(&block->page, g_timer()->now_us);
 
@@ -686,7 +680,7 @@ inline buf_block_t* buf_page_create(const page_id_t& page_id, const page_size_t&
     buf_block_lock(block, rw_latch, mtr);
 
     // The block must be put to the LRU list
-    if (UNLIKELY(!block->page.is_resident)) {
+    if (LIKELY(mode != Page_fetch::RESIDENT)) {
         mutex_enter(&buf_pool->LRU_list_mutex, NULL);
         buf_LRU_insert_block_to_lru_list(buf_pool, &block->page);
         mutex_exit(&buf_pool->LRU_list_mutex);
@@ -837,10 +831,18 @@ inline void buf_page_unfix(buf_page_t* bpage)
 {
     ut_a(bpage->buf_fix_count > 0);
     atomic32_dec(&bpage->buf_fix_count);
+    if (bpage->id.space_id() == 0 && bpage->id.page_no() == 322) {
+        printf("buf_page_unfix: page no %lu fix count %lu\n",
+            bpage->id.page_no(), bpage->buf_fix_count);
+    }
 }
 
 inline void buf_block_lock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* mtr)
 {
+    if (block->page.id.space_id() == 0 && block->page.id.page_no() == 322) {
+        printf("buf_block_lock: lock %lu page no %lu fix count %lu\n",
+            lock_type, block->page.id.page_no(), block->page.buf_fix_count);
+    }
     if (lock_type == RW_S_LATCH) {
         rw_lock_s_lock(&(block->rw_lock));
         mtr_memo_push(mtr, block, MTR_MEMO_PAGE_S_FIX);
@@ -848,6 +850,7 @@ inline void buf_block_lock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* 
         rw_lock_x_lock(&(block->rw_lock));
         mtr_memo_push(mtr, block, MTR_MEMO_PAGE_X_FIX);
     } else {
+        ut_ad(lock_type == RW_NO_LATCH);
         mtr_memo_push(mtr, block, MTR_MEMO_BUF_FIX);
     }
 }
@@ -866,6 +869,10 @@ inline void buf_block_unlock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t
         mtr_memo_release(mtr, block, MTR_MEMO_PAGE_X_FIX);
     } else {
         mtr_memo_release(mtr, block, MTR_MEMO_BUF_FIX);
+    }
+    if (block->page.id.space_id() == 0 && block->page.id.page_no() == 322) {
+        printf("buf_block_unlock: lock %lu page no %lu fix count %lu\n",
+            lock_type, block->page.id.page_no(), block->page.buf_fix_count);
     }
 }
 
@@ -891,8 +898,10 @@ inline buf_block_t *buf_block_alloc(buf_pool_t *buf_pool)
 
 inline void buf_block_free(buf_pool_t* buf_pool, buf_block_t* block) // in, own: block to be freed
 {
+    mutex_enter(&block->mutex);
     ut_a(buf_block_get_state(block) != BUF_BLOCK_FILE_PAGE);
     buf_LRU_insert_block_to_free_list(buf_pool, block);
+    mutex_exit(&block->mutex);
 }
 
 inline buf_page_state_t buf_block_get_state(const buf_block_t *block)

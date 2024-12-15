@@ -11,7 +11,7 @@
 static uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset);
 //static bool32 fil_node_prepare_for_io(fil_node_t *node);
 static void fsp_space_modify_check(uint32 id, const mtr_t* mtr);
-static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr);
+//static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr);
 //static void fil_node_complete_io(fil_node_t* node, uint32 type);
 
 // Gets the page number from the nth fragment page slot.
@@ -339,15 +339,21 @@ uint32 xdes_calc_descriptor_page(const page_size_t& page_size, uint32 offset)
 	return(ut_2pow_round(offset, page_size.physical()));
 }
 
-
 static uint32 fsp_get_autoextend_increment(fil_space_t* space)
 {
-    if (space->id >= FIL_USER_SPACE_ID) {
-        
-    } else if (space->id == FIL_SYSTEM_SPACE_ID) {
+    uint32 size_increase;
+
+    if (space->size_in_header < 32 * FSP_EXTENT_SIZE) {
+        size_increase = FSP_EXTENT_SIZE;
+    } else if (space->size_in_header < 128 * FSP_EXTENT_SIZE) {
+        size_increase = FSP_EXTENT_SIZE * 4;
+    } else if (space->size_in_header < 512 * FSP_EXTENT_SIZE) {
+        size_increase = FSP_EXTENT_SIZE * 8;
     } else {
+        size_increase = FSP_EXTENT_SIZE * 64;
     }
-    return FSP_EXTENT_SIZE * FSP_FREE_ADD;
+
+    return size_increase;
 }
 
 // Tries to extend the last data file of a tablespace if it is auto-extending.
@@ -415,27 +421,17 @@ static void fsp_space_modify_check(uint32 id, const mtr_t* mtr)
 	ut_ad(0);
 }
 
-
-static void fsp_init_file_page_low(buf_block_t* block)
-{
-    page_t* page = buf_block_get_frame(block);
-
-    if (!fsp_is_system_temporary(block->page.id.space_id())) {
-        memset(page, 0, UNIV_PAGE_SIZE);
-    }
-
-    mach_write_to_4(page + FIL_PAGE_OFFSET, block->get_page_no());
-    mach_write_to_4(page + FIL_PAGE_SPACE, block->get_space_id());
-}
-
 // Initialize a file page.
-static void fsp_init_file_page(buf_block_t* block, mtr_t* mtr)
+static void fsp_init_file_page(buf_block_t* block, Page_fetch mode, mtr_t* mtr)
 {
     //ut_d(fsp_space_modify_check(block->page.id.space(), mtr));
     mlog_write_initial_log_record(buf_block_get_frame(block), MLOG_INIT_FILE_PAGE2, mtr);
+    if (mode == Page_fetch::RESIDENT) {
+        mlog_catenate_uint32(mtr, FIL_PAGE_TYPE_ALLOCATED | FIL_PAGE_TYPE_RESIDENT_FLAG, MLOG_2BYTES);
+    } else {
+        mlog_catenate_uint32(mtr, FIL_PAGE_TYPE_ALLOCATED, MLOG_2BYTES);
+    }
 }
-
-
 
 // Gets a buffer block for an allocated page.
 // NOTE:
@@ -460,7 +456,7 @@ buf_block_t* fsp_page_create(
            (In this case, we would want to allocate another page that has not been freed in mtr.) */
         ut_ad(init_mtr == mtr || !mtr_memo_contains(mtr, block, MTR_MEMO_PAGE_X_FIX));
 
-        fsp_init_file_page(block, init_mtr);
+        fsp_init_file_page(block, mode, init_mtr);
     }
 
     return(block);
@@ -1113,7 +1109,7 @@ static void fsp_fill_extent_free_list(fil_space_t* space, fsp_header_t* header, 
             if (i > 0) {
                 const page_id_t page_id(space->id, i);
                 block = buf_page_create(page_id, page_size, RW_X_LATCH, Page_fetch::NORMAL, mtr);
-                fsp_init_file_page(block, mtr);
+                fsp_init_file_page(block, Page_fetch::NORMAL, mtr);
                 mlog_write_uint32(buf_block_get_frame(block) + FIL_PAGE_TYPE, FIL_PAGE_TYPE_XDES, MLOG_2BYTES, mtr);
             }
         }
@@ -1313,8 +1309,6 @@ buf_block_t* fsp_alloc_free_page(uint32 space_id, const page_size_t& page_size, 
     uint32 frag_n_used;
     uint32 page_no;
 
-    ut_ad(mtr);
-
     header = fsp_get_space_header(space_id, page_size, mtr);
 
     /* take the first extent in free_frag list */
@@ -1375,7 +1369,7 @@ buf_block_t* fsp_alloc_free_page(uint32 space_id, const page_size_t& page_size, 
     buf_block_t* block = buf_page_create(page_id, page_size, RW_X_LATCH, mode, mtr);
 
     /* Prior contents of the page should be ignored */
-    fsp_init_file_page(block, mtr);
+    fsp_init_file_page(block, mode, mtr);
 
     return block;
 }
@@ -1386,7 +1380,7 @@ static fsp_header_t* fsp_header_init(fil_space_t* space, uint64 max_size, mtr_t*
     const page_id_t page_id(space->id, 0);
     const page_size_t page_size(space->id);
     buf_block_t* block = buf_page_create(page_id, page_size, RW_X_LATCH, Page_fetch::NORMAL, mtr);
-    fsp_init_file_page(block, mtr);
+    fsp_init_file_page(block, Page_fetch::NORMAL, mtr);
 
     page_t* page = buf_block_get_frame(block);
     mlog_write_uint32(page + FIL_PAGE_TYPE, FIL_PAGE_TYPE_FSP_HDR, MLOG_2BYTES, mtr);
@@ -1472,6 +1466,7 @@ status_t fsp_init_space(uint32 space_id, uint64 init_size, uint64 max_size, uint
         }
         page_size_in_header = mtr_read_uint32(header + FSP_SIZE, MLOG_4BYTES, &mtr);
     }
+    ut_ad(page_size_in_header == space->size_in_header);
 
     // set used for page0
     xdes_t* descr = xdes_get_descriptor_with_space_hdr(header, FIL_SYSTEM_SPACE_ID, 0, &mtr);
@@ -1503,85 +1498,34 @@ err_exit:
     return ret;
 }
 
-
 // Parses a redo log record of a file page init.
 byte* fsp_replay_init_file_page(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block)
 {
-    ut_ad(log_rec_ptr);
+    ut_ad(type == MLOG_INIT_FILE_PAGE2);
+    ut_a(log_end_ptr >= log_rec_ptr + 2);
+    ut_a(block);
+
+    uint32 page_type = mach_read_from_2(log_rec_ptr);
+    log_rec_ptr += 2;
 
     LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
         "fsp_replay_init_file_page: type %lu block (%p space_id %lu page_no %lu)",
-        type, block, block ? ((buf_block_t *)block)->get_space_id() : INVALID_SPACE_ID,
-        block ? ((buf_block_t *)block)->get_page_no() : INVALID_PAGE_NO);
+        type, block, ((buf_block_t *)block)->get_space_id(),  ((buf_block_t *)block)->get_page_no());
 
-    if (block) {
-        fsp_init_file_page_low((buf_block_t *)block);
+    page_t* page = buf_block_get_frame((buf_block_t *)block);
+    mach_write_to_4(page + FIL_PAGE_SPACE, ((buf_block_t *)block)->get_space_id());
+    mach_write_to_4(page + FIL_PAGE_OFFSET, ((buf_block_t *)block)->get_page_no());
+    mach_write_to_2(page + FIL_PAGE_TYPE, page_type);
+    memset(page + FIL_PAGE_PREV, FIL_NULL, 4);
+    memset(page + FIL_PAGE_NEXT, FIL_NULL, 4);
+
+    if (((buf_block_t *)block)->get_space_id() == 1) {
+        int a;
+        if (((buf_block_t *)block)->get_page_no() == 64) {
+            a = 4;
+        }
     }
 
     return log_rec_ptr;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#if 0
-status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no)
-{
-    mtr_t mtr;
-
-    LOGGER_INFO(LOGGER, LOG_MODULE_FSP, "system space extend");
-
-    mtr_start(&mtr);
-
-    const page_size_t page_size(0);
-    fsp_header_t* header = fsp_get_space_header(FIL_SYSTEM_SPACE_ID, page_size, &mtr);
-
-    for (uint32 i = 0; i <= reserved_max_page_no; i++) {
-        xdes_t* descr = xdes_get_descriptor_with_space_hdr(header, FIL_SYSTEM_SPACE_ID, i, &mtr);
-        ut_ad (descr);
-
-        if (xdes_get_bit(descr, XDES_FREE_BIT, i % FSP_EXTENT_SIZE) == FALSE) {
-            continue;
-        }
-
-        xdes_set_bit(descr, XDES_FREE_BIT, i % FSP_EXTENT_SIZE, FALSE, &mtr);
-        if (xdes_get_state(descr, &mtr) == XDES_FREE) {
-            flst_remove(header + FSP_FREE, descr + XDES_FLST_NODE, &mtr);
-            //
-            xdes_set_state(descr, XDES_FREE_FRAG, &mtr);
-            flst_add_last(header + FSP_FREE_FRAG, descr + XDES_FLST_NODE, &mtr);
-            uint32 frag_n_used = mach_read_from_4(header + FSP_FRAG_N_USED);
-            mlog_write_uint32(header + FSP_FRAG_N_USED, frag_n_used + 1, MLOG_4BYTES, &mtr);
-        } else {
-            uint32 frag_n_used = mach_read_from_4(header + FSP_FRAG_N_USED);
-            frag_n_used++;
-            mlog_write_uint32(header + FSP_FRAG_N_USED, frag_n_used, MLOG_4BYTES, &mtr);
-            if (xdes_is_full(descr, &mtr)) {
-                /* The fragment is full: move it to another list */
-                flst_remove(header + FSP_FREE_FRAG, descr + XDES_FLST_NODE, &mtr);
-                xdes_set_state(descr, XDES_FULL_FRAG, &mtr);
-                flst_add_last(header + FSP_FULL_FRAG, descr + XDES_FLST_NODE, &mtr);
-                mlog_write_uint32(header + FSP_FRAG_N_USED, frag_n_used - FSP_EXTENT_SIZE, MLOG_4BYTES, &mtr);
-            }
-        }
-    }
-
-    mtr_commit(&mtr);
-
-    return CM_SUCCESS;
-}
-#endif

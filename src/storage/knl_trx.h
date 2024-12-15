@@ -105,7 +105,9 @@ typedef struct st_xa_id {
 
 //-----------------------------------------------------------------
 
-extern status_t trx_sys_init_at_db_start(memory_pool_t* mem_pool, uint32 undo_space_count, bool32 is_create_database);
+extern status_t trx_sys_create(memory_pool_t* mem_pool, uint32 rseg_count, uint32 undo_space_count);
+extern status_t trx_sys_init_at_db_start(bool32 is_create_database);
+extern status_t trx_sys_recovery_at_db_start();
 extern status_t trx_sys_create(memory_pool_t* mem_pool);
 
 extern inline trx_t* trx_begin(que_sess_t* sess);

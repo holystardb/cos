@@ -120,7 +120,6 @@ public:
     uint32 flush_type : 2;
     // index number of the buffer pool that this block belongs to
     uint32 buf_pool_index : 6;
-    uint32 is_resident : 1;
     uint32 in_page_hash : 1;
     uint32 in_flush_list : 1; // protected by buf_pool->flush_list_mutex
     uint32 in_free_list : 1;
@@ -128,7 +127,7 @@ public:
     // this is set to TRUE when fsp frees a page in buffer pool;
     // protected by buf_block_t::mutex
     uint32 file_page_was_freed : 1;
-    uint32 reserved : 18;
+    uint32 reserved : 19;
 
     // node used in chaining to buf_pool->page_hash or buf_pool->zip_hash
     buf_page_t* hash;
@@ -161,7 +160,7 @@ class buf_block_t {
 public:
     buf_page_t page; /*!< page information; this must be the first field,
                           so that buf_pool->page_hash can point to buf_page_t or buf_block_t */
-    byte *frame;     /*!< pointer to buffer frame which
+    byte* frame;     /*!< pointer to buffer frame which
                           is of size UNIV_PAGE_SIZE, and aligned to an address divisible by UNIV_PAGE_SIZE */
 
     rw_lock_t        rw_lock; /*!< read-write lock of the buffer frame */
@@ -207,7 +206,7 @@ public:
     page_no_t get_next_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_NEXT)); }
     page_no_t get_prev_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_PREV)); }
     page_type_t get_page_type() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE) & FIL_PAGE_TYPE_MASK); }
-    bool32 is_resident() const { return page.is_resident; }
+    bool32 is_resident() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE) & FIL_PAGE_TYPE_RESIDENT_FLAG) == FIL_PAGE_TYPE_RESIDENT_FLAG; }
     uint32 get_fix_count() const { return page.buf_fix_count; }
 };
 
@@ -376,7 +375,6 @@ extern inline void buf_block_unlock(buf_block_t* block, rw_lock_type_t lock_type
 
 extern inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state);
 extern inline buf_page_state_t buf_block_get_state(const buf_block_t *block);
-
 
 // Initializes a page to the buffer buf_pool
 // not read from file even if it cannot be found in the buffer buf_pool

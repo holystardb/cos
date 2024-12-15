@@ -67,15 +67,14 @@ static void checkpoint_copy_item(checkpoint_t* checkpoint,
     buf_pool_t* buf_pool, buf_block_t* block)
 {
     // 1 copy data
-    // if it is transaction slot page, 
     rw_lock_s_lock(&(block->rw_lock));
     memcpy(checkpoint->group.buf + UNIV_PAGE_SIZE * checkpoint->group.item_count,
         block->frame, block->page.size.physical());
-    //knl_securec_check(ret);
     rw_lock_s_unlock(&(block->rw_lock));
+    //knl_securec_check(ret);
 
     // 2 reset page.recovery_lsn and remove block from buf_pool->flush_list
-    mutex_enter(&block->mutex);
+    mutex_enter(&block->mutex, NULL);
     mutex_enter(&buf_pool->flush_list_mutex);
     block->page.recovery_lsn = 0;
     block->page.in_flush_list = FALSE;
@@ -110,6 +109,8 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
     if (high > fil_space_get_size(block->get_space_id())) {
         high = fil_space_get_size(block->get_space_id());
     }
+    ut_ad(high > 0);
+    ut_ad(high > low);
 
     for (uint32 page_no = low; page_no < high; page_no++) {
 
@@ -138,6 +139,9 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
 
         if (bpage->recovery_lsn == 0 ||
             bpage->recovery_lsn > least_recovery_point) {
+            LOGGER_DEBUG(LOGGER, LOG_MODULE_CHECKPOINT,
+                "checkpoint_copy_item_and_neighbors: block (space id %lu, page no %lu) skiped, recovery %llu last_recovery_point %llu",
+                page_id.space_id(), page_id.page_no(), bpage->recovery_lsn, least_recovery_point);
             mutex_exit(block_mutex);
             continue;
         }
@@ -269,8 +273,10 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
     for (uint32 i = begin; i < end; i++) {
         item = &checkpoint->group.items[i];
         const page_size_t page_size(item->page_id.space_id());
+
+        // checkpoint->group.buf is aligned by UNIV_PAGE_SIZE
         err = fil_write(FALSE, item->page_id, page_size, page_size.physical(),
-            checkpoint->group.buf + page_size.physical() * item->buf_id,
+            checkpoint->group.buf + UNIV_PAGE_SIZE * item->buf_id,
             checkpoint_flush_callback, item);
         if (err != CM_SUCCESS) {
             LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT,
