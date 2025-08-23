@@ -82,6 +82,8 @@ bool32 test_hash_table()
 {
     bool32 ret = FALSE;
     status_t err;
+    bool32 is_found = FALSE;
+    void* data;
 
     hash_table_t table;
     uint32 bucket_count = 1024;
@@ -104,8 +106,7 @@ bool32 test_hash_table()
     ele2.data.refcount = 1;
     ele2.data.data = 2000;
 
-    bool32 is_found = FALSE;
-    void* data = hash_table_search(&table, &ele1.key, &is_found);
+    data = hash_table_search(&table, &ele1.key, &is_found);
     if (is_found) goto err_exit;
 
     err = hash_table_insert(&table, &ele1.key, &ele1.data);
@@ -177,7 +178,7 @@ err_exit:
     return ret;
 }
 
-int main_ht(int argc, char *argv[])
+int hash_table_main(int argc, char *argv[])
 {
     bool32 ret;
     char *log_path = "D:\\MyWork\\cos\\data\\";

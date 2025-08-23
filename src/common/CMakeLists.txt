@@ -16,7 +16,7 @@ add_library (libcommon.lib STATIC ${COMMON_LIB_SRCS})
 add_library (libcommon.dll SHARED ${COMMON_LIB_SRCS})
 
 #
-set_target_properties (libcommon.lib PROPERTIES OUTPUT_NAME "common_lib")
+set_target_properties (libcommon.lib PROPERTIES OUTPUT_NAME "common")
 set_target_properties (libcommon.dll PROPERTIES OUTPUT_NAME "common")
 
 set_target_properties (libcommon.lib PROPERTIES CLEAN_DIRECT_OUTPUT 1)

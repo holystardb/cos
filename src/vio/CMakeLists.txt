@@ -17,7 +17,7 @@ add_library (libvio.lib STATIC ${VIO_LIB_SRCS})
 add_library (libvio.dll SHARED ${VIO_LIB_SRCS})
 
 #
-set_target_properties (libvio.lib PROPERTIES OUTPUT_NAME "vio_lib")
+set_target_properties (libvio.lib PROPERTIES OUTPUT_NAME "vio")
 set_target_properties (libvio.dll PROPERTIES OUTPUT_NAME "vio")
 
 set_target_properties (libvio.lib PROPERTIES CLEAN_DIRECT_OUTPUT 1)

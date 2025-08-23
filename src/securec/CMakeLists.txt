@@ -16,7 +16,7 @@ add_library (libsecurec.lib STATIC ${SECUREC_LIB_SRCS})
 add_library (libsecurec.dll SHARED ${SECUREC_LIB_SRCS})
 
 #
-set_target_properties (libsecurec.lib PROPERTIES OUTPUT_NAME "securec_lib")
+set_target_properties (libsecurec.lib PROPERTIES OUTPUT_NAME "securec")
 set_target_properties (libsecurec.dll PROPERTIES OUTPUT_NAME "securec")
 
 set_target_properties (libsecurec.lib PROPERTIES CLEAN_DIRECT_OUTPUT 1)

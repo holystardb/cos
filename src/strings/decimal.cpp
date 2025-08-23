@@ -1042,7 +1042,7 @@ int double2decimal(double from, decimal_t *to)
   DBUG_ENTER("double2decimal");
   end= buff + my_gcvt(from, MY_GCVT_ARG_DOUBLE, (int)sizeof(buff) - 1, buff, NULL);
   res= string2decimal(buff, to, &end);
-  DBUG_PRINT("exit", ("res: %d", res));
+  DBUG_PRINT("exit, res: %d", res);
   DBUG_RETURN(res);
 }
 

@@ -75,9 +75,10 @@ but not format or unused which we use quite a lot.
 */
 #ifndef MY_ATTRIBUTE
 #if defined(__GNUC__) || defined(__clang__)
-#define MY_ATTRIBUTE(A)     __attribute__((A))
+//#define MY_ATTRIBUTE(A)     __attribute__((A))
+#define MY_ATTRIBUTE(A)
 #else
-#define MY_ATTRIBUTE(A)     
+#define MY_ATTRIBUTE(A)
 #endif
 #endif
 

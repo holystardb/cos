@@ -17,7 +17,7 @@ add_library (libstrings.lib STATIC ${STRINGS_LIB_SRCS})
 add_library (libstrings.dll SHARED ${STRINGS_LIB_SRCS})
 
 #
-set_target_properties (libstrings.lib PROPERTIES OUTPUT_NAME "strings_lib")
+set_target_properties (libstrings.lib PROPERTIES OUTPUT_NAME "strings")
 set_target_properties (libstrings.dll PROPERTIES OUTPUT_NAME "strings")
 
 set_target_properties (libstrings.lib PROPERTIES CLEAN_DIRECT_OUTPUT 1)

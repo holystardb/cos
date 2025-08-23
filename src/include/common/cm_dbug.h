@@ -77,25 +77,25 @@ extern int do_debug;
 
 #define DBUG_ASSERT(x) assert(x)
 
-#define DBUG_PRINT(a, ...)             \
-    if (do_debug) dbug_print(__FILE__, __LINE__, &_db_stack_frame_, a, __VA_ARGS__)
+#define DBUG_PRINT(str, ...)             \
+    if (do_debug) dbug_print(__FILE__, __LINE__, &_db_stack_frame_, str, __VA_ARGS__)
 
-#define DBUG_ENTER(a)                                                   \
-    _dbug_stack_frame_ _db_stack_frame_;                               \
-    if (do_debug) dbug_enter(__FILE__, __LINE__, &_db_stack_frame_, a)
+#define DBUG_ENTER(str)                                                   \
+    _dbug_stack_frame_ _db_stack_frame_;                                  \
+    if (do_debug) dbug_enter(__FILE__, __LINE__, &_db_stack_frame_, str)
 
 #define DBUG_LEAVE                     \
     if (do_debug) dbug_leave(__FILE__, __LINE__, &_db_stack_frame_)
 
-#define DBUG_RETURN(a)         \
+#define DBUG_RETURN(str)        \
     do {                        \
-        DBUG_LEAVE;            \
-        return (a);             \
+        DBUG_LEAVE;             \
+        return (str);           \
     } while (0)
 
 #define DBUG_VOID_RETURN        \
     do {                        \
-        DBUG_LEAVE;            \
+        DBUG_LEAVE;             \
         return;                 \
     } while (0)
 
@@ -117,9 +117,9 @@ extern int do_debug;
 #endif // UNIV_DEBUG_OUTPUT
 
 extern bool32 dbug_init(char *log_path, char *file_name, int level);
-extern void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...);
-extern void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_);
-extern void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, char *func);
+extern void dbug_print(const char *_file_, uint32 _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...);
+extern void dbug_leave(const char *_file_, uint32 _line_, _dbug_stack_frame_ *_stack_frame_);
+extern void dbug_enter(const char *_file_, uint32 _line_, _dbug_stack_frame_ *_stack_frame_, const char *func);
 extern void dbug_end();
 
 extern void dbug_print_stacktrace();

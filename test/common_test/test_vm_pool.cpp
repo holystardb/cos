@@ -132,7 +132,7 @@ err_exit:
 }
 
 
-int main_vmpool(int argc, char *argv[])
+int vmpool_main(int argc, char *argv[])
 {
     bool32 ret;
     char *log_path = "D:\\MyWork\\cos\\data\\";

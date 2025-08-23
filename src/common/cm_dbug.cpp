@@ -42,12 +42,12 @@ void dbug_end()
     DBUG_LOGGER.log_file_flush();
 }
 
-void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...)
+void dbug_print(const char *_file_, uint32 _line_, _dbug_stack_frame_ *_stack_frame_, const char *format, ...)
 {
     va_list       args;
     char          buf[DEBUG_MSG_BUF];
     int           len;
-    char         *filename;
+    const char   *filename;
 
 #ifdef __WIN__
     filename = strrchr(_file_, '\\');
@@ -67,10 +67,10 @@ void dbug_print(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, co
     LOGGER_DEBUG(DBUG_LOGGER, LOG_MODULE_DBUG, "%s", buf);
 }
 
-void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, char *func)
+void dbug_enter(const char *_file_, uint32 _line_, _dbug_stack_frame_ *_stack_frame_, const char *func)
 {
     char          buf[DEBUG_MSG_BUF];
-    char         *filename;
+    const char   *filename;
 
 #ifdef __WIN__
     filename = strrchr(_file_, '\\');
@@ -87,10 +87,10 @@ void dbug_enter(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_, ch
     LOGGER_DEBUG(DBUG_LOGGER, LOG_MODULE_DBUG, "%s", buf);
 }
 
-void dbug_leave(char *_file_, uint _line_, _dbug_stack_frame_ *_stack_frame_)
+void dbug_leave(const char *_file_, uint32 _line_, _dbug_stack_frame_ *_stack_frame_)
 {
     char          buf[DEBUG_MSG_BUF];
-    char         *filename;
+    const char   *filename;
 
 #ifdef __WIN__
     filename = strrchr(_file_, '\\');

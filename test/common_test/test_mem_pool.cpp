@@ -130,6 +130,8 @@ bool32 test_context()
     os_thread_t threads[thread_count];
     status_t results[thread_count];
     uint32 thread_index[thread_count];
+    const uint32 temp_buf_size = 48;
+    char temp_buf[temp_buf_size];
 
     mem_context_mgr_t mgr;
     memset(&mgr, 0x00, sizeof(mem_context_mgr_t));
@@ -147,8 +149,6 @@ bool32 test_context()
     }
 
     // check
-    const uint32 temp_buf_size = 48;
-    char temp_buf[temp_buf_size];
     for (uint32 i = 1; i < M_MEM_BUF_NUM; i++) {
         if (mgr.buf[i] == NULL) {
             printf("check: buf is NULL, buf index=%d\n", i);
@@ -245,6 +245,12 @@ int main(int argc, char *argv[])
     //LOGGER.log_init(LOG_INFO, NULL, "memory_test");
     //LOGGER_WARN(LOGGER, "WARN: This is memory test");
     //LOGGER_DEBUG(LOGGER, "DEBUG: This is memory test");
+
+    DBUG_INIT(log_path, "memory_dbug", 1);
+    //DBUG_INIT(NULL, "memory_dbug", 1);
+    DBUG_ENTER("main");
+    DBUG_PRINT("%s", "do vm_memory test");
+    DBUG_PRINT("%s", "-------------------------------------------");
 
     ret = create_memory_pool();
     if (!ret) goto err_exit;
