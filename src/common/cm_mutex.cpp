@@ -15,9 +15,9 @@ os_event_t os_event_create(char* name)
                         name);
     return(event);
 #else
-    os_event_t  event;
-    event = (os_event_struct_t*)malloc(sizeof(struct os_event_struct));
-    os_mutex_init(&(event->os_mutex));
+    os_event_t event;
+    event = (os_event_t)malloc(sizeof(os_event_t));
+    pthread_mutex_init(&(event->os_mutex), NULL);
     pthread_cond_init(&(event->cond_var), NULL);
     event->is_set = FALSE;
     return(event);
@@ -83,7 +83,7 @@ void os_event_destroy(os_event_t event)
 #ifdef __WIN__
     CloseHandle(event);
 #else
-    os_mutex_free(&(event->os_mutex));
+    pthread_mutex_destroy(&(event->os_mutex));
     pthread_cond_destroy(&(event->cond_var));
     free(event);
 #endif
@@ -173,7 +173,7 @@ int os_event_wait_time(
 
     os_mutex_exit(&(event->os_mutex));
 
-    return err ? OS_WAIT_TIME_EXCEEDED : 0);
+    return err ? OS_WAIT_TIME_EXCEEDED : 0;
 #endif
 }
 
@@ -195,7 +195,7 @@ void os_mutex_enter(os_mutex_t *mutex)
 #endif
 }
 
-bool32 os_mutex_tryenter(os_mutex_t *mutex)
+bool32 os_mutex_try_enter(os_mutex_t *mutex)
 {
 #ifdef __WIN__
     return TryEnterCriticalSection((LPCRITICAL_SECTION)mutex);

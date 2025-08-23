@@ -74,16 +74,13 @@ inline bool32 atomic32_compare_and_swap(atomic32_t *ptr, int32 oldval, int32 new
     return InterlockedCompareExchange(ptr, newval, oldval) == oldval ? TRUE : FALSE;
 }
 
-#else
+#else  // __WIN__
 
 typedef volatile int32 atomic32_t;
 typedef volatile int128 atomic128_t;
 
 
 #if defined(__arm__) || defined(__aarch64__)
-
-
-
 
 inline atomic64_t atomic64_get(atomic64_t *ptr)
 {
@@ -272,7 +269,7 @@ inline bool32 atomic64_compare_and_swap(atomic64_t *ptr, int64 oldval, int64 new
     return __sync_bool_compare_and_swap(ptr, oldval, newval) == oldval ? TRUE : FALSE;
 }
 
-inline atomic32_t atomic32_get(atomic64_t *ptr)
+inline atomic32_t atomic32_get(atomic32_t *ptr)
 {
     return __sync_add_and_fetch(ptr, 0);
 }

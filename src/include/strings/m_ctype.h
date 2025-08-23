@@ -220,6 +220,14 @@ typedef struct
 
 struct charset_info_st;
 
+
+enum loglevel {
+    SYSTEM_LEVEL = 0,
+    ERROR_LEVEL = 1,
+    WARNING_LEVEL = 2,
+    INFORMATION_LEVEL = 3
+};
+
 typedef struct my_charset_loader_st
 {
   char error[128];
@@ -326,7 +334,7 @@ typedef struct my_charset_handler_st
   /* Charset dependant snprintf() */
   size_t (*snprintf)(const struct charset_info_st *, char *to, size_t n,
                      const char *fmt,
-                     ...) MY_ATTRIBUTE((format(printf, 4, 5)));
+                     ...) MY_ATTRIBUTE(format(printf, 4, 5));
   size_t (*long10_to_str)(const struct charset_info_st *, char *to, size_t n,
                           int radix, long int val);
   size_t (*longlong10_to_str)(const struct charset_info_st *, char *to,
@@ -509,7 +517,7 @@ size_t my_scan_8bit(const CHARSET_INFO *cs, const char *b, const char *e,
 
 size_t my_snprintf_8bit(const struct charset_info_st *, char *to, size_t n,
                         const char *fmt, ...)
-  MY_ATTRIBUTE((format(printf, 4, 5)));
+  MY_ATTRIBUTE(format(printf, 4, 5));
 
 long       my_strntol_8bit(const CHARSET_INFO *, const char *s, size_t l,
                            int base, char **e, int *err);
@@ -631,10 +639,10 @@ int my_wildcmp_mb_bin(const CHARSET_INFO *cs,
                       const char *wildstr,const char *wildend,
                       int escape, int w_one, int w_many);
 
-int my_strcasecmp_mb_bin(const CHARSET_INFO * cs MY_ATTRIBUTE((unused)),
+int my_strcasecmp_mb_bin(const CHARSET_INFO * cs MY_ATTRIBUTE(unused),
                          const char *s, const char *t);
 
-void my_hash_sort_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+void my_hash_sort_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                          const uchar *key, size_t len,ulong *nr1, ulong *nr2);
 
 size_t my_strnxfrm_mb(const CHARSET_INFO *,

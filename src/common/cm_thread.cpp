@@ -1,4 +1,9 @@
 #include "cm_thread.h"
+#include "cm_mutex.h"
+
+static THREAD_LOCAL uint64 g_thread_internal_id = 0;
+static atomic64_t          g_thread_internal_index = 0;
+
 
 #define THD_NAME_LEN     64
 
@@ -178,4 +183,17 @@ inline uint32 os_thread_get_last_error(void)
 #else
     return errno;
 #endif
+}
+
+inline uint64 os_thread_get_internal_id()
+{
+    if (unlikely(g_thread_internal_id == 0)) {
+        os_thread_set_internal_id();
+    }
+    return g_thread_internal_id;
+}
+
+inline void os_thread_set_internal_id()
+{
+    g_thread_internal_id = atomic64_inc(&g_thread_internal_index);
 }

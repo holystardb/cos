@@ -185,7 +185,7 @@ static const uchar sort_order_eucjpms[]=
 #define iseucjpms_ss3(c) (((c)&0xff) == 0x8f)
 
 
-static uint ismbchar_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static uint ismbchar_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 		  const char* p, const char *e)
 {
   return ((*(uchar*)(p)<0x80)? 0:\
@@ -195,7 +195,7 @@ static uint ismbchar_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
     0);
 }
 
-static uint mbcharlen_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static uint mbcharlen_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                               uint c)
 {
   return (iseucjpms(c)? 2: iseucjpms_ss2(c)? 2: iseucjpms_ss3(c)? 3: 1);
@@ -67311,7 +67311,7 @@ static const uint16 unicode_to_jisx0212_eucjpms[65536]=
   @retval   MY_CS_ILSEQ    If a wrong byte sequence was found
 */
 static int
-my_mb_wc_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_mb_wc_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                  my_wc_t *pwc, const uchar *s, const uchar *e)
 {
   int hi;
@@ -67371,7 +67371,7 @@ my_mb_wc_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
   @retval   MY_CS_ILUNI    If the Unicode character does not exist in EUCJPMS
 */
 static int
-my_wc_mb_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_wc_mb_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                  my_wc_t wc, uchar *s, uchar *e)
 {
   int jp;
@@ -67427,7 +67427,7 @@ my_wc_mb_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 
 static
 size_t my_well_formed_len_eucjpms(const CHARSET_INFO *cs
-                                  MY_ATTRIBUTE((unused)),
+                                  MY_ATTRIBUTE(unused),
                                   const char *beg, const char *end, size_t pos,
                                   int *error)
 {
@@ -67475,7 +67475,7 @@ size_t my_well_formed_len_eucjpms(const CHARSET_INFO *cs
 
 
 static
-size_t my_numcells_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+size_t my_numcells_eucjpms(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                            const char *str, const char *str_end)
 {
   size_t clen;

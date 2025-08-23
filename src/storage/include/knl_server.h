@@ -7,8 +7,9 @@
 #include "m_ctype.h"
 #include "cm_file.h"
 #include "cm_memory.h"
-#include "cm_virtual_mem.h"
+#include "cm_vm_pool.h"
 #include "knl_defs.h"
+#include "knl_ctrl_file.h"
 
 const uint32 UNIV_PAGE_SIZE = 16384; // 16KB
 const uint32 UNIV_SYSTRANS_PAGE_SIZE = 4096; // 4KB
@@ -45,7 +46,7 @@ typedef uint64              lsn_t;
 
 typedef uint64              scn_t;
 #define SCN_MAX             UINT_MAX64
-#define INVALID_SCN         UINT_MAX64
+#define INVALID_SCN         0
 
 typedef uint64              table_id_t;
 typedef uint64              index_id_t;
@@ -88,59 +89,15 @@ extern os_aio_array_t* srv_os_aio_sync_array;
 
 
 
+/*---------------------------------------------------------------------- */
 
 
 
-typedef struct st_db_data_file {
-    uint32    node_id;
-    uint32    space_id;
-    char      name[DB_DATA_FILE_NAME_MAX_LEN];
-    uint64    size;
-    uint64    max_size;
-    bool32    autoextend;
-    uint32    status;
-} db_data_file_t;
 
-typedef struct st_db_space {
-    char      name[DB_OBJECT_NAME_MAX_LEN];
-    uint32    space_id;
-    uint32    flags;
-} db_space_t;
-
-typedef struct st_db_ctrl {
-    uint64          version;
-    uint64          ver_num;
-    uint64          init_time;  // 
-    uint64          start_time;
-    uint64          scn;
-    char            database_name[DB_OBJECT_NAME_MAX_LEN];
-    char            charset_name[DB_OBJECT_NAME_MAX_LEN];
-    CHARSET_INFO*   charset_info;
-    uint32          redo_count;
-    uint32          undo_count;
-    uint32          temp_count;
-    uint32          system_space_count;
-    uint32          user_space_count;
-    uint32          user_space_data_file_count;
-    uint32          user_space_data_file_array_size;
-    db_data_file_t  system;
-    db_data_file_t  systrans;
-    db_data_file_t  sysaux;
-    db_data_file_t  dbwr;
-    db_data_file_t  redo_group[DB_REDO_FILE_MAX_COUNT];
-    db_data_file_t  undo_group[DB_UNDO_FILE_MAX_COUNT];
-    db_data_file_t  temp_group[DB_TEMP_FILE_MAX_COUNT];
-    db_space_t      system_spaces[DB_SYSTEM_SPACE_MAX_COUNT];
-    db_space_t      user_spaces[DB_USER_SPACE_MAX_COUNT];
-    db_data_file_t* user_space_data_files;
-    //byte            checkpoint1[OS_FILE_LOG_BLOCK_SIZE];
-    //byte            checkpoint2[OS_FILE_LOG_BLOCK_SIZE];
-} db_ctrl_t;
-
-typedef struct st_db_charset_info {
-    const char* name;
-    CHARSET_INFO *charset_info;
-} db_charset_info_t;
+//typedef struct st_db_charset_info {
+//    const char* name;
+//    CHARSET_INFO *charset_info;
+//} db_charset_info_t;
 
 
 /** Types of threads existing in the system. */
@@ -255,35 +212,10 @@ typedef struct st_srv_stats {
 //} thread_t;
 
 
-status_t srv_start(bool32 create_new_db);
-
 
 //------------------------------------------------------------------
-extern bool32 srv_create_ctrl_files();
-extern status_t srv_create_redo_log_files();
-extern status_t srv_create_undo_log_files();
-extern status_t srv_create_temp_files();
-extern status_t srv_create_system_file();
-extern status_t srv_create_systrans_file();
-extern status_t srv_create_double_write_file();
-extern status_t srv_create_user_data_files();
 
 
-extern bool32 db_ctrl_create_database(char *database_name, char *charset_name);
-extern bool32 db_ctrl_init_database();
-extern bool32 db_ctrl_add_system(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
-extern bool32 db_ctrl_add_systrans(char* data_file_name, uint32 rseg_count);
-extern bool32 db_ctrl_add_redo(char *data_file_name, uint64 size);
-extern bool32 db_ctrl_add_dbwr(char* data_file_name, uint64 size);
-extern bool32 db_ctrl_add_undo(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
-extern bool32 db_ctrl_add_temp(char *data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
-extern bool32 db_ctrl_add_user_space(char* space_name);
-extern bool32 db_ctrl_add_space_file(char* space_name, char* data_file_name, uint64 size, uint64 max_size, bool32 autoextend);
-
-extern status_t read_ctrl_file(char *name, db_ctrl_t *ctrl);
-
-extern void* write_io_handler_thread(void *arg);
-extern void* read_io_handler_thread(void *arg);
 
 //------------------------------------------------------------------
 
@@ -298,7 +230,7 @@ extern bool32 srv_read_only_mode;
 extern bool32 srv_recovery_on;
 extern bool32 srv_archive_recovery;
 
-extern db_ctrl_t        srv_ctrl_file;
+extern db_ctrl_t*       srv_ctrl_file;
 extern char             srv_data_home[1024];
 extern const uint32     srv_data_home_len;
 

@@ -7,111 +7,351 @@
 #define SYNC_SPIN_ROUNDS         30
 #define SYNC_SPIN_WAIT_DELAY     6
 
-/** The global array of wait cells for implementation of the database's own mutexes and read-write locks */
-static sync_array_t       **sync_wait_array;
-static uint32               sync_array_size = 32;
-
-typedef UT_LIST_BASE_NODE_T(rw_lock_t) rw_lock_list_t;
-
+static rw_lock_sync_mgr_t   rw_lock_sync_mgr;
 static rw_lock_stats_t      rw_lock_stats;
-
-/** count of how many times an object has been signalled */
-static uint64               sg_count;
-
-/* The global list of rw-locks */
-static rw_lock_list_t       rw_lock_list;
-static spinlock_t           rw_lock_list_lock;
 static bool32               sync_initialized = FALSE;
 
-static os_mutex_t           rw_lock_debug_mutex;
-static os_event_t           rw_lock_debug_event;
-static bool32               rw_lock_debug_waiters;
-
-static const char*          rw_lock_type_desc[] = {
-    "RW_LOCK_NOT_LOCKED",
-    "RW_LOCK_EXCLUSIVE",
-    "RW_LOCK_SHARED",
-    "RW_LOCK_WAIT_EXCLUSIVE"
-};
-
-static bool32 sync_array_detect_deadlock(sync_array_t *arr, sync_cell_t *start, sync_cell_t *cell, uint32 depth);
-
-static void rw_lock_debug_mutex_enter();
-static void rw_lock_debug_mutex_exit();
-
-
-
-static sync_array_t* sync_array_create(uint32 n_cells)  /*!< in: number of cells in the array to create */
+rw_lock_sync_mgr_t::rw_lock_sync_mgr_t()
 {
-    sync_array_t  *arr;
+    m_pool = NULL;
+    m_sync_array_index = 0;
+    m_sync_array_size = SYNC_WAIT_ARRAY_SIZE;
+    for (uint32 i = 0; i < m_sync_array_size; i++) {
+        UT_LIST_INIT(m_sync_wait_array[i].free_sync_cell_list);
+        mutex_create(&m_sync_wait_array[i].free_sync_cell_list_mutex);
+        mutex_create(&m_sync_wait_array[i].sync_cell_mutex);
+        memset(&m_sync_wait_array[i].free_sync_cell_list_mutex_stats, 0x00, sizeof(mutex_stats_t));
+    }
 
-    ut_a(n_cells > 0);
+    os_mutex_create(&m_rw_lock_debug_mutex);
+    m_rw_lock_debug_event = os_event_create("rw_lock_debug_event");
+    m_rw_lock_debug_waiters = FALSE;
+    UT_LIST_INIT(m_free_rwlock_debug_list);
 
-    /* Allocate memory for the data structures */
-    arr = (sync_array_t*)ut_malloc(sizeof(*arr));
-    memset(arr, 0x0, sizeof(*arr));
-
-    arr->array = (sync_cell_t*)ut_malloc(sizeof(sync_cell_t) * n_cells);
-    memset(arr->array, 0x0, sizeof(sync_cell_t) * n_cells);
-
-    arr->n_cells = n_cells;
-    arr->first_free_slot = UINT32_UNDEFINED;
-
-    spin_lock_init(&arr->lock);
-
-    return arr;
+    mutex_create(&m_used_page_list_mutex);
+    UT_LIST_INIT(m_used_page_list);
 }
 
-static void sync_array_free(sync_array_t *arr)
+rw_lock_sync_mgr_t::~rw_lock_sync_mgr_t()
 {
-    ut_a(arr->n_reserved == 0);
+    destroy();
 
-    ut_free(arr->array);
-    ut_free(arr);
+    for (uint32 i = 0; i < m_sync_array_size; i++) {
+        mutex_destroy(&m_sync_wait_array[i].free_sync_cell_list_mutex);
+        mutex_destroy(&m_sync_wait_array[i].sync_cell_mutex);
+    }
+    os_mutex_destroy(&m_rw_lock_debug_mutex);
+    os_event_destroy(m_rw_lock_debug_event);
+    mutex_destroy(&m_used_page_list_mutex);
 }
 
-static void sync_array_init(uint32 n_threads)
+#ifdef UNIV_DEBUG
+
+bool32 rw_lock_sync_mgr_t::expand_rwlock_debug_info()
 {
-    uint32  n_slots;
+    memory_page_t* page;
+    rw_lock_debug_info_t* info;
+    uint32 count;
 
-    ut_a(sync_wait_array == NULL);
-    ut_a(n_threads > 0);
+    page = mpool_alloc_page(m_pool);
+    if (page == NULL) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_RWLOCK,
+            "expand_rwlock_debug: failed to alloc page from memory pool %p", m_pool);
+        return FALSE;
+    }
+    count = m_pool->page_size / sizeof(rw_lock_debug_info_t);
+    for (uint32 i = 0; i < count; i++) {
+        info = (rw_lock_debug_info_t*)(MEM_PAGE_DATA_PTR(page) + sizeof(rw_lock_debug_info_t) * i);
+        UT_LIST_ADD_LAST(list_node, m_free_rwlock_debug_list, info);
+    }
+    return TRUE;
+}
 
-    sync_wait_array = (sync_array_t**)(ut_malloc(sizeof(*sync_wait_array) * sync_array_size));
+rw_lock_debug_info_t* rw_lock_sync_mgr_t::alloc_rwlock_debug_info()
+{
+    rw_lock_debug_info_t* info;
 
-    n_slots = 1 + (n_threads - 1) / sync_array_size;
-    for (uint32 i = 0; i < sync_array_size; ++i) {
-        sync_wait_array[i] = sync_array_create(n_slots);
+retry:
+
+    info = UT_LIST_GET_FIRST(m_free_rwlock_debug_list);
+    if (info) {
+        UT_LIST_REMOVE(list_node, m_free_rwlock_debug_list, info);
+        return info;
+    }
+
+    if (!expand_rwlock_debug_info()) {
+        return NULL;
+    }
+
+    goto retry;
+}
+
+void rw_lock_sync_mgr_t::free_rwlock_debug_info(rw_lock_debug_info_t* info)
+{
+    UT_LIST_ADD_LAST(list_node, m_free_rwlock_debug_list, info);
+}
+
+void rw_lock_sync_mgr_t::remove_rwlock_debug_info(
+    rw_lock_t   *lock,  /*!< in: rw-lock */
+    uint32       pass,  /*!< in: pass value */
+    uint32       lock_type)  /*!< in: lock type */
+{
+    rw_lock_debug_info_t* info;
+
+    ut_ad(lock);
+
+    rw_lock_sync_mgr.debug_mutex_enter();
+
+    for (info = UT_LIST_GET_FIRST(lock->debug_list);
+         info != 0;
+         info = UT_LIST_GET_NEXT(list_node, info)) {
+
+        if (pass == info->pass
+            && (pass != 0 || os_thread_eq(info->thread_id, os_thread_get_curr_id()))
+            && info->lock_type == lock_type) {
+
+            /* Found! */
+            UT_LIST_REMOVE(list_node, lock->debug_list, info);
+            rw_lock_sync_mgr.free_rwlock_debug_info(info);
+
+            rw_lock_sync_mgr.debug_mutex_exit();
+            return;
+        }
+    }
+
+    ut_error;
+}
+
+void rw_lock_sync_mgr_t::add_rwlock_debug_info(
+    rw_lock_t  *lock,   /*!< in: rw-lock */
+    uint32      pass,   /*!< in: pass value */
+    uint32      lock_type,  /*!< in: lock type */
+    const char *file_name,  /*!< in: file where requested */
+    uint32      line)   /*!< in: line where requested */
+{
+    ut_ad(file_name != NULL);
+
+    rw_lock_debug_info_t *info;
+
+    rw_lock_sync_mgr.debug_mutex_enter();
+
+    info = rw_lock_sync_mgr.alloc_rwlock_debug_info();
+    info->lock = lock;
+    info->pass = pass;
+    info->line = line;
+    info->lock_type = lock_type;
+    info->file_name = file_name;
+    info->thread_id = os_thread_get_curr_id();
+    UT_LIST_ADD_FIRST(list_node, lock->debug_list, info);
+
+    rw_lock_sync_mgr.debug_mutex_exit();
+}
+
+void rw_lock_sync_mgr_t::debug_mutex_enter()
+{
+    uint64 signal_count;
+
+    for (;;) {
+        if (os_mutex_try_enter(&m_rw_lock_debug_mutex)) {
+            return;
+        }
+
+        signal_count = os_event_reset(m_rw_lock_debug_event);
+        m_rw_lock_debug_waiters = TRUE;
+
+        if (os_mutex_try_enter(&m_rw_lock_debug_mutex)) {
+            return;
+        }
+
+        os_event_wait(m_rw_lock_debug_event, signal_count);
     }
 }
 
-static void sync_array_close(void)
+void rw_lock_sync_mgr_t::debug_mutex_exit()
 {
-    for (uint32 i = 0; i < sync_array_size; ++i) {
-        sync_array_free(sync_wait_array[i]);
+    os_mutex_exit(&m_rw_lock_debug_mutex);
+
+    if (m_rw_lock_debug_waiters) {
+        m_rw_lock_debug_waiters = FALSE;
+        os_event_set(m_rw_lock_debug_event);
+    }
+}
+
+#endif
+
+bool32 rw_lock_sync_mgr_t::expand_sync_cell()
+{
+    memory_page_t* page;
+    sync_cell_t* sync_cell;
+    uint32 count;
+
+    page = mpool_alloc_page(m_pool);
+    if (page == NULL) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_RWLOCK,
+            "expand_sync_cell: failed to alloc page from memory pool %p", m_pool);
+        return FALSE;
+    }
+    count = m_pool->page_size / sizeof(sync_cell_t);
+    for (uint32 i = 0; i < count; i++) {
+        sync_cell = (sync_cell_t*)(MEM_PAGE_DATA_PTR(page) + sizeof(sync_cell_t) * i);
+        UT_LIST_ADD_LAST(list_node, m_free_sync_cell_list, sync_cell);
+    }
+    return TRUE;
+}
+
+sync_cell_t* rw_lock_sync_mgr_t::alloc_sync_cell()
+{
+    sync_cell_t* sync_cell;
+
+    mutex_enter(&m_free_sync_cell_list_mutex);
+
+retry:
+
+    sync_cell = UT_LIST_GET_FIRST(m_free_sync_cell_list);
+    if (sync_cell) {
+        UT_LIST_REMOVE(list_node, m_free_sync_cell_list, sync_cell);
+        mutex_exit(&m_free_sync_cell_list_mutex);
+        return sync_cell;
     }
 
-    ut_free(sync_wait_array);
-    sync_wait_array = NULL;
+    if (!expand_sync_cell()) {
+        mutex_exit(&m_free_sync_cell_list_mutex);
+        return NULL;
+    }
+
+    goto retry;
 }
 
-static sync_array_t* sync_array_get(void)
+sync_array_t* rw_lock_sync_mgr_t::get_sync_array(uint32 index)
 {
-    uint32 i;
-    static atomic32_t count;
-
-    i = atomic32_inc(&count);
-
-    return(sync_wait_array[i % sync_array_size]);
+    return (&m_sync_wait_array[index % m_sync_array_size]);
 }
 
-static sync_cell_t* sync_array_get_nth_cell(sync_array_t *arr, uint32 n)
+status_t rw_lock_sync_mgr_t::init(memory_pool_t* pool)
 {
-    ut_a(arr);
-    ut_a(n < arr->n_cells);
+    m_pool = pool;
+    if (!expand_rwlock_debug_info()) {
+        return CM_ERROR;
+    }
 
-    return(arr->array + n);
+    uint32 cell_count_per_sync_array = 2;
+    for (uint32 i = 0; i < m_sync_array_size; i++) {
+        sync_array_t* arr = &m_sync_wait_array[i];
+        for (uint32 j = 0; j < cell_count_per_sync_array; j++) {
+            sync_cell_t* cell = alloc_sync_cell();
+            if (cell == NULL) {
+                return CM_ERROR;
+            }
+            arr->free_sync_cell(cell);
+        }
+    }
+
+    return CM_SUCCESS;
 }
+
+void rw_lock_sync_mgr_t::destroy()
+{
+    for (uint32 i = 0; i < m_sync_array_size; i++) {
+        mutex_enter(&m_sync_wait_array[i].free_sync_cell_list_mutex);
+        UT_LIST_INIT(m_sync_wait_array[i].free_sync_cell_list);
+        mutex_exit(&m_sync_wait_array[i].free_sync_cell_list_mutex);
+    }
+
+    rw_lock_sync_mgr.debug_mutex_enter();
+    UT_LIST_INIT(m_free_rwlock_debug_list);
+    rw_lock_sync_mgr.debug_mutex_exit();
+
+    mutex_enter(&m_used_page_list_mutex);
+    memory_page_t* page = UT_LIST_GET_FIRST(m_used_page_list);
+    while (page) {
+        UT_LIST_REMOVE(list_node, m_used_page_list, page);
+        mpool_free_page(m_pool, page);
+        page = UT_LIST_GET_FIRST(m_used_page_list);
+    }
+    mutex_exit(&m_used_page_list_mutex);
+}
+
+void rw_lock_sync_mgr_t::print_sync_wait_info(FILE *file)
+{
+  fprintf(file,
+          "RW-shared spins %llu, rounds %llu, OS waits %llu\n"
+          "RW-exclusive spins %llu, rounds %llu, OS waits %llu\n",
+          (uint64)rw_lock_stats.rw_s_spin_wait_count,
+          (uint64)rw_lock_stats.rw_s_spin_round_count,
+          (uint64)rw_lock_stats.rw_s_os_wait_count,
+          (uint64)rw_lock_stats.rw_x_spin_wait_count,
+          (uint64)rw_lock_stats.rw_x_spin_round_count,
+          (uint64)rw_lock_stats.rw_x_os_wait_count);
+
+  fprintf(
+      file,
+      "Spin rounds per wait: %.2f RW-shared, %.2f RW-exclusive\n",
+      (double)rw_lock_stats.rw_s_spin_round_count /
+          ut_max(uint64(1), (uint64)rw_lock_stats.rw_s_spin_wait_count),
+      (double)rw_lock_stats.rw_x_spin_round_count /
+          ut_max(uint64(1), (uint64)rw_lock_stats.rw_x_spin_wait_count));
+}
+
+
+sync_cell_t* sync_array_t::alloc_sync_cell()
+{
+    sync_cell_t* sync_cell;
+
+    mutex_enter(&free_sync_cell_list_mutex, &free_sync_cell_list_mutex_stats);
+
+    sync_cell = UT_LIST_GET_FIRST(free_sync_cell_list);
+    if (sync_cell) {
+        UT_LIST_REMOVE(list_node, free_sync_cell_list, sync_cell);
+        mutex_exit(&free_sync_cell_list_mutex);
+        return sync_cell;
+    }
+
+    mutex_exit(&free_sync_cell_list_mutex);
+
+    sync_cell = rw_lock_sync_mgr.alloc_sync_cell();
+    if (sync_cell == NULL) {
+        ut_error;
+    }
+
+    return sync_cell;
+}
+
+void sync_array_t::free_sync_cell(sync_cell_t* sync_cell)
+{
+    mutex_enter(&free_sync_cell_list_mutex, &free_sync_cell_list_mutex_stats);
+    UT_LIST_ADD_LAST(list_node, free_sync_cell_list, sync_cell);
+    mutex_exit(&free_sync_cell_list_mutex);
+}
+
+
+#ifdef UNIV_DEBUG
+
+inline bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type)
+{
+    ut_ad(lock);
+    ut_ad(rw_lock_validate(lock));
+
+    rw_lock_sync_mgr.debug_mutex_enter();
+
+    for (const rw_lock_debug_info_t* info = UT_LIST_GET_FIRST(lock->debug_list);
+         info != NULL;
+         info = UT_LIST_GET_NEXT(list_node, info)) {
+
+        if (os_thread_eq(info->thread_id, os_thread_get_curr_id())
+            && info->pass == 0
+            && info->lock_type == lock_type) {
+
+            rw_lock_sync_mgr.debug_mutex_exit();
+            /* Found! */
+            return TRUE;
+        }
+    }
+    rw_lock_sync_mgr.debug_mutex_exit();
+
+    return FALSE;
+}
+
+#endif
 
 static os_event_t sync_cell_get_event(sync_cell_t *cell) /*!< in: non-empty sync array cell */
 {
@@ -133,47 +373,15 @@ static sync_cell_t* sync_array_reserve_cell(
 {
     sync_cell_t *cell;
 
-    spin_lock(&arr->lock, NULL);
-
-    if (arr->first_free_slot != UINT32_UNDEFINED) {
-        /* Try and find a slot in the free list */
-        ut_ad(arr->first_free_slot < arr->next_free_slot);
-        cell = sync_array_get_nth_cell(arr, arr->first_free_slot);
-        arr->first_free_slot = cell->line;
-    } else if (arr->next_free_slot < arr->n_cells) {
-        /* Try and find a slot after the currently allocated slots */
-        cell = sync_array_get_nth_cell(arr, arr->next_free_slot);
-        ++arr->next_free_slot;
-    } else {
-        spin_unlock(&arr->lock);
-
-        // We should return NULL and if there is more than
-        // one sync array, try another sync array instance.
-        return(NULL);
-    }
-
-    ++arr->res_count;
-
-    ut_ad(arr->n_reserved < arr->n_cells);
-    ut_ad(arr->next_free_slot <= arr->n_cells);
-
-    ++arr->n_reserved;
-
-    /* Reserve the cell. */
-    //ut_ad(cell->latch.mutex == NULL);
+    cell = arr->alloc_sync_cell();
     cell->request_type = type;
     cell->wait_object.lock = (rw_lock_t*)(object);
     cell->waiting = false;
     cell->file = file;
     cell->line = line;
-
-    spin_unlock(&arr->lock);
-
     cell->thread_id = os_thread_get_curr_id();
-    cell->reservation_time = time(NULL);
 
-    /* Make sure the event is reset and also store the value of
-    signal_count at which the event was reset. */
+    /* Make sure the event is reset and also store the value of signal_count at which the event was reset. */
     os_event_t event = sync_cell_get_event(cell);
     cell->signal_count = os_event_reset(event);
 
@@ -181,7 +389,7 @@ static sync_cell_t* sync_array_reserve_cell(
         "sync_array_reserve_cell: arr %p cell %p rwlock %p thread %lu\n",
         arr, cell, object, cell->thread_id);
 
-    return(cell);
+    return cell;
 }
 
 sync_array_t* sync_array_get_and_reserve_cell(
@@ -192,632 +400,45 @@ sync_array_t* sync_array_get_and_reserve_cell(
     sync_cell_t **cell)	/*!< out: the cell reserved, never NULL */
 {
     sync_array_t *sync_arr = NULL;
+    const uint32 loop_count = 16;
+    uint32 rnd= (os_thread_get_internal_id() & UINT_MAX32);
 
     *cell = NULL;
-    for (uint32 i = 0; i < sync_array_size && *cell == NULL; ++i) {
-        /* Although the sync_array is get in a random way currently,
-        we still try at most sync_array_size times, in case any
-        of the sync_array we get is full */
-        sync_arr = sync_array_get();
+    for (uint32 i = 0; i < loop_count && *cell == NULL; ++i) {
+        sync_arr = rw_lock_sync_mgr.get_sync_array(rnd + i);
         *cell = sync_array_reserve_cell(sync_arr, object, type, file, line);
     }
 
-    /* This won't be true every time, for the loop above may execute
-    more than srv_sync_array_size times to reserve a cell.
-    But an assertion here makes the code more solid. */
-    ut_a(*cell != NULL);
-
-    return(sync_arr);
+    return sync_arr;
 }
 
 static void sync_array_free_cell(sync_array_t *arr, sync_cell_t *&cell)
 {
-    spin_lock(&arr->lock, NULL);
-
+    mutex_enter(&arr->sync_cell_mutex, NULL);
     ut_a(cell->wait_object.lock != NULL);
-
-    cell->waiting = FALSE;
     cell->wait_object.lock =  NULL;
+    cell->waiting = FALSE;
     cell->signal_count = 0;
+    mutex_exit(&arr->sync_cell_mutex);
 
-    /* Setup the list of free slots in the array */
-    cell->line = arr->first_free_slot;
-
-    arr->first_free_slot = (uint32)(cell - arr->array);
-
-    ut_a(arr->n_reserved > 0);
-    arr->n_reserved--;
-
-    if (arr->next_free_slot > arr->n_cells / 2 && arr->n_reserved == 0) {
-#ifdef UNIV_DEBUG
-        for (uint32 i = 0; i < arr->next_free_slot; ++i) {
-            cell = sync_array_get_nth_cell(arr, i);
-
-            ut_ad(!cell->waiting);
-            ut_ad(cell->wait_object.lock == 0);
-            ut_ad(cell->signal_count == 0);
-        }
-#endif /* UNIV_DEBUG */
-        arr->next_free_slot = 0;
-        arr->first_free_slot = UINT32_UNDEFINED;
-    }
-
-    spin_unlock(&arr->lock);
-
-    cell = 0;
+    arr->free_sync_cell(cell);
 }
 
 static void sync_array_wait_event(sync_array_t *arr, sync_cell_t*& cell)
 {
-    spin_lock(&arr->lock, NULL);
-
+    mutex_enter(&arr->sync_cell_mutex, NULL);
     ut_a(cell->wait_object.lock);
     ut_a(!cell->waiting);
     ut_ad(os_thread_get_curr_id() == cell->thread_id);
-
     cell->waiting = TRUE;
-
-    // We use simple enter to the mutex below, because if we cannot acquire it at once,
-    // mutex_enter would call recursively sync_array routines, leading to trouble.
-    // rw_lock_debug_mutex freezes the debug lists.
-
-    rw_lock_debug_mutex_enter();
-    if (TRUE == sync_array_detect_deadlock(arr, cell, cell, 0)) {
-        LOGGER_FATAL(LOGGER, LOG_MODULE_RWLOCK, "Deadlock Detected!");
-        ut_error;
-    }
-    rw_lock_debug_mutex_exit();
-
-    spin_unlock(&arr->lock);
+    mutex_exit(&arr->sync_cell_mutex);
 
     os_event_wait(sync_cell_get_event(cell), cell->signal_count);
 
     sync_array_free_cell(arr, cell);
-
-    cell = 0;
 }
 
-uint32 rw_lock_get_writer(const rw_lock_t *lock)
-{
-    int32 lock_word = lock->lock_word;
-
-	ut_ad(lock_word <= X_LOCK_DECR);
-
-	if (lock_word > X_LOCK_HALF_DECR) {
-		/* return NOT_LOCKED in s-lock state, like the writer
-		member of the old lock implementation. */
-		return(RW_LOCK_NOT_LOCKED);
-	} else if (lock_word == 0
-		   || lock_word == -X_LOCK_HALF_DECR
-		   || lock_word <= -X_LOCK_DECR) {
-		/* x-lock with sx-lock is also treated as RW_LOCK_EX */
-		return(RW_LOCK_EXCLUSIVE);
-	} else {
-		/* x-waiter with sx-lock is also treated as RW_LOCK_WAIT_EX
-		e.g. -X_LOCK_HALF_DECR < lock_word < 0 : without sx
-		     -X_LOCK_DECR < lock_word < -X_LOCK_HALF_DECR : with sx */
-		return(RW_LOCK_WAIT_EXCLUSIVE);
-	}
-
-}
-
-
-static uint32 rw_lock_get_debug_print(char* err_msg, uint32 err_msg_pos, rw_lock_debug_t* info)
-{
-    uint32 rwt;
-
-    rwt = info->lock_type;
-
-    err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
-        "Locked: thread %lu file %s line %lu  ",
-        (ulong) info->thread_id, info->file_name, (ulong) info->line);
-    if (rwt == RW_LOCK_SHARED) {
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "S-LOCK");
-    } else if (rwt == RW_LOCK_EXCLUSIVE) {
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "X-LOCK");
-    } else if (rwt == RW_LOCK_WAIT_EXCLUSIVE) {
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "WAIT X-LOCK");
-    } else {
-        ut_error;
-    }
-    if (info->pass != 0) {
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, " pass value %lu", (ulong) info->pass);
-    }
-    err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "%c", '\n');
-
-    return err_msg_pos;
-}
-
-
-void rw_lock_debug_print(FILE *f, rw_lock_debug_t *info)
-{
-    uint32 rwt;
-
-    rwt = info->lock_type;
-
-    fprintf(f, "Locked: thread %lu file %s line %lu  ",
-        (ulong) info->thread_id, info->file_name,
-        (ulong) info->line);
-    if (rwt == RW_LOCK_SHARED) {
-        fputs("S-LOCK", f);
-    } else if (rwt == RW_LOCK_EXCLUSIVE) {
-        fputs("X-LOCK", f);
-    } else if (rwt == RW_LOCK_WAIT_EXCLUSIVE) {
-        fputs("WAIT X-LOCK", f);
-    } else {
-        ut_error;
-    }
-    if (info->pass != 0) {
-        fprintf(f, " pass value %lu", (ulong) info->pass);
-    }
-    putc('\n', f);
-}
-
-uint32 rw_lock_get_reader_count(const rw_lock_t *lock)
-{
-    int32 lock_word = lock->lock_word;
-    if (lock_word > 0) {
-        /* s-locked, no x-waiters */
-        return(X_LOCK_DECR - lock_word);
-    } else if (lock_word < 0 && lock_word > -X_LOCK_DECR) {
-        /* s-locked, with x-waiters */
-        return((uint32)(-lock_word));
-    }
-    return(0);
-}
-
-static void sync_array_object_signalled()
-{
-    ++sg_count;
-}
-
-
-static uint32 sync_array_get_cell_print(char* err_msg, uint32 err_msg_pos, sync_cell_t *cell)
-{
-    rw_lock_t *rwlock;
-    uint32     type;
-    uint32     writer;
-
-    type = cell->request_type;
-
-    err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
-        "--Thread %lu has waited at %s line %lu for %.2f seconds the semaphore:\n",
-        (ulong)cell->thread_id,  cell->file, (ulong) cell->line, difftime(time(NULL), cell->reservation_time));
-
-    if (type == RW_LOCK_EXCLUSIVE || type == RW_LOCK_WAIT_EXCLUSIVE || type == RW_LOCK_SHARED) {
-
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
-            type == RW_LOCK_EXCLUSIVE ? "X-lock on" :
-                (type == RW_LOCK_WAIT_EXCLUSIVE ? "X-lock (wait_ex) on" : "S-lock on"));
-
-        rwlock = cell->wait_object.lock;
-
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
-            " RW-latch at %p created in file %s line %lu\n",
-            (void*) rwlock, rwlock->cfile_name, (ulong) rwlock->cline);
-
-        writer = rw_lock_get_writer(rwlock);
-        if (writer != RW_LOCK_NOT_LOCKED) {
-            err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
-                "a writer (thread id %lu) has reserved it in mode %s",
-                (ulong)rwlock->writer_thread,
-                writer == RW_LOCK_EXCLUSIVE ? " exclusive\n" : " wait exclusive\n");
-        }
-
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN,
-            "number of readers %d, waiters flag %d, lock_word: %lx\n"
-            "Last time read locked in file %s line %lu\n"
-            "Last time write locked in file %s line %lu\n",
-            rw_lock_get_reader_count(rwlock),
-            rwlock->waiters,
-            (ulong)(rwlock->lock_word),
-            rwlock->last_s_file_name, (ulong)(rwlock->last_s_line),
-            rwlock->last_x_file_name, (ulong)(rwlock->last_x_line));
-    } else {
-        ut_error;
-    }
-
-    if (!cell->waiting) {
-        err_msg_pos += snprintf(err_msg + err_msg_pos, CM_ERR_MSG_MAX_LEN, "wait has ended\n");
-    }
-
-    return err_msg_pos;
-}
-
-
-static void sync_array_cell_print(FILE *file, sync_cell_t *cell)
-{
-    rw_lock_t *rwlock;
-    uint32     type;
-    uint32     writer;
-
-    type = cell->request_type;
-
-    fprintf(file, "--Thread %lu has waited at %s line %lu for %.2f seconds the semaphore:\n",
-        (ulong)cell->thread_id,  cell->file, (ulong) cell->line, difftime(time(NULL), cell->reservation_time));
-
-    if (type == RW_LOCK_EXCLUSIVE || type == RW_LOCK_WAIT_EXCLUSIVE || type == RW_LOCK_SHARED) {
-
-        fputs(type == RW_LOCK_EXCLUSIVE ? "X-lock on" : type == RW_LOCK_WAIT_EXCLUSIVE ? "X-lock (wait_ex) on" : "S-lock on", file);
-
-        rwlock = cell->wait_object.lock;
-        fprintf(file, " RW-latch at %p created in file %s line %lu\n",
-            (void*) rwlock, rwlock->cfile_name, (ulong) rwlock->cline);
-
-        writer = rw_lock_get_writer(rwlock);
-        if (writer != RW_LOCK_NOT_LOCKED) {
-            fprintf(file, "a writer (thread id %lu) has reserved it in mode %s",
-                (ulong) rwlock->writer_thread,
-                writer == RW_LOCK_EXCLUSIVE ? " exclusive\n" : " wait exclusive\n");
-        }
-
-        fprintf(file,
-            "number of readers %d, waiters flag %d, lock_word: %lx\n"
-            "Last time read locked in file %s line %lu\n"
-            "Last time write locked in file %s line %lu\n",
-            rw_lock_get_reader_count(rwlock),
-            rwlock->waiters,
-            (ulong)(rwlock->lock_word),
-            rwlock->last_s_file_name, (ulong)(rwlock->last_s_line),
-            rwlock->last_x_file_name, (ulong)(rwlock->last_x_line));
-    } else {
-        ut_error;
-    }
-
-    if (!cell->waiting) {
-        fputs("wait has ended\n", file);
-    }
-}
-
-static sync_cell_t* sync_array_find_thread(
-    sync_array_t *arr, /*!< in: wait array */
-    os_thread_id_t thread) /*!< in: thread id */
-{
-    sync_cell_t *cell;
-
-    for (uint32 i = 0; i < arr->n_cells; i++) {
-        cell = sync_array_get_nth_cell(arr, i);
-        if (cell->wait_object.lock) {
-            LOGGER_TRACE(LOGGER, LOG_MODULE_RWLOCK,
-                "sync_array_find_thread: i %lu  arr %p thread %llu cell %p rw lock %p",
-                i, arr, cell->thread_id, cell, cell->wait_object.lock);
-        }
-        if (cell->wait_object.lock != NULL && os_thread_eq(cell->thread_id, thread)) {
-            LOGGER_TRACE(LOGGER, LOG_MODULE_RWLOCK,
-                "sync_array_find_thread: found a cell, arr %p thread %lu cell %p rw lock %p",
-                arr, thread, cell, cell->wait_object.lock);
-            return cell; // Found
-        }
-    }
-
-    LOGGER_TRACE(LOGGER, LOG_MODULE_RWLOCK, "sync_array_find_thread: arr %p thread %lu not found cell", arr, thread);
-
-    // Not found
-    return NULL;
-}
-
-static bool32 sync_array_deadlock_step(
-    sync_array_t    *arr,	/*!< in: wait array; NOTE! the caller must own the mutex to array */
-    sync_cell_t     *start,	/*!< in: cell where recursive search started */
-    os_thread_id_t   thread,	/*!< in: thread to look at */
-    uint32           pass,	/*!< in: pass value */
-    uint32           depth)	/*!< in: recursion depth */
-{
-    sync_cell_t *new_cell;
-
-    if (pass != 0) {
-        // If pass != 0, then we do not know which threads are responsible of releasing the lock,
-        // and no deadlock can be detected.
-        return FALSE;
-    }
-
-    new_cell = sync_array_find_thread(arr, thread);
-    if (new_cell == start) {
-        // Deadlock
-        LOGGER_DEBUG(LOGGER, LOG_MODULE_RWLOCK, "DEADLOCK of threads detected, arr %p thread %lu cell %p rw lock %p",
-            arr, thread, new_cell, new_cell->wait_object.lock, os_thread_get_curr_id());
-        return TRUE;
-    } else if (new_cell) {
-        return sync_array_detect_deadlock(arr, start, new_cell, depth + 1);
-    }
-    return FALSE;
-}
-
-void sync_array_report_error(rw_lock_t *lock, rw_lock_debug_t *debug, sync_cell_t *cell)
-{
-    char err_msg[CM_ERR_MSG_MAX_LEN];
-    uint32 err_msg_pos;
-
-    err_msg_pos = snprintf(err_msg, CM_ERR_MSG_MAX_LEN, "rw-lock %p ", (void*)lock);
-    err_msg_pos = sync_array_get_cell_print(err_msg, err_msg_pos, cell);
-    err_msg_pos = rw_lock_get_debug_print(err_msg, err_msg_pos, debug);
-    err_msg[err_msg_pos] = '\0';
-    LOGGER_ERROR(LOGGER, LOG_MODULE_RWLOCK, err_msg);
-}
-
-static bool32 sync_array_detect_deadlock(
-    sync_array_t    *arr, /*!< in: wait array; NOTE! the caller must own the mutex to array */
-    sync_cell_t     *start, /*!< in: cell where recursive search started */
-    sync_cell_t     *cell, /*!< in: cell to search */
-    uint32          depth) /*!< in: recursion depth */
-{
-    rw_lock_t       *lock;
-    os_thread_id_t   thread;
-    bool32           ret;
-    rw_lock_debug_t *debug;
-
-    ut_a(arr);
-    ut_a(start);
-    ut_a(cell);
-    ut_ad(cell->wait_object.lock);
-    ut_ad(os_thread_get_curr_id() == start->thread_id);
-    ut_ad(depth < 100);
-
-    depth++;
-
-    if (!cell->waiting) {
-        return(FALSE); // No deadlock here
-    }
-
-    LOGGER_TRACE(LOGGER, LOG_MODULE_RWLOCK,
-        "sync_array_detect_deadlock: arr %p cell %p rwlock %p thread %lu\n",
-        arr, cell, cell->wait_object.lock, os_thread_get_curr_id());
-
-    switch (cell->request_type) {
-    case RW_LOCK_EXCLUSIVE:
-    case RW_LOCK_WAIT_EXCLUSIVE:
-        lock = cell->wait_object.lock;
-        for (debug = UT_LIST_GET_FIRST(lock->debug_list);
-             debug != NULL;
-             debug = UT_LIST_GET_NEXT(list_node, debug)) {
-
-            LOGGER_TRACE(LOGGER, LOG_MODULE_RWLOCK,
-                "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
-                arr, debug->lock, debug->thread_id);
-
-            thread = debug->thread_id;
-            switch (debug->lock_type) {
-            case RW_LOCK_EXCLUSIVE:
-            case RW_LOCK_WAIT_EXCLUSIVE:
-                if (os_thread_eq(thread, cell->thread_id)) {
-                    break;
-                }
-                /* fall through */
-            case RW_LOCK_SHARED:
-                // The (wait) x-lock request can block infinitely
-                // only if someone (can be also cell thread) is holding s-lock,
-                // or someone (cannot be cell thread) (wait) x-lock or sx-lock,
-                // and he is blocked by start thread
-                ret = sync_array_deadlock_step(arr, start, thread, debug->pass, depth);
-                if (ret) {
-                    sync_array_report_error(lock, debug, cell);
-                    return TRUE;
-                }
-            }
-        }
-
-        return(false);
-
-    case RW_LOCK_SHARED:
-        lock = cell->wait_object.lock;
-        for (debug = UT_LIST_GET_FIRST(lock->debug_list);
-             debug != 0;
-             debug = UT_LIST_GET_NEXT(list_node, debug)) {
-
-            LOGGER_TRACE(LOGGER, LOG_MODULE_RWLOCK,
-                "sync_array_detect_deadlock: arr %p debug_list rwlock %p thread %lu\n",
-                arr, debug->lock, debug->thread_id);
-
-            thread = debug->thread_id;
-            if (debug->lock_type == RW_LOCK_EXCLUSIVE || debug->lock_type == RW_LOCK_WAIT_EXCLUSIVE) {
-                // The s-lock request can block infinitely
-                // only if someone (can also be cell thread) is holding (wait) x-lock,
-                // and he is blocked by start thread
-                ret = sync_array_deadlock_step(arr, start, thread, debug->pass, depth);
-                if (ret) {
-                    sync_array_report_error(lock, debug, cell);
-                    return TRUE;
-                }
-            }
-        }
-        return FALSE;
-
-    default:
-        ut_error;
-    }
-
-    // Execution never reaches this line: for compiler fooling only
-    return TRUE;
-}
-
-static void sync_array_print_info(FILE *file, sync_array_t *arr)
-{
-    uint32  count = 0;
-
-    spin_lock(&arr->lock, NULL);
-
-    fprintf(file, "OS WAIT ARRAY INFO: reservation count %lu\n", arr->res_count);
-
-    for (uint32 i = 0; count < arr->n_reserved; ++i) {
-        sync_cell_t *cell = sync_array_get_nth_cell(arr, i);
-        if (cell->wait_object.lock != 0) {
-            count++;
-            sync_array_cell_print(file, cell);
-        }
-    }
-
-    spin_unlock(&arr->lock);
-}
-
-void sync_array_print(FILE *file)
-{
-    for (uint32 i = 0; i < sync_array_size; ++i) {
-        sync_array_print_info(file, sync_wait_array[i]);
-    }
-
-    fprintf(file, "OS WAIT ARRAY INFO: signal count %llu\n", sg_count);
-}
-
-
-static void sync_print_wait_info(FILE *file) {
-  fprintf(file,
-          "RW-shared spins %llu, rounds %llu, OS waits %llu\n"
-          "RW-exclusive spins %llu, rounds %llu, OS waits %llu\n",
-          (uint64)rw_lock_stats.rw_s_spin_wait_count,
-          (uint64)rw_lock_stats.rw_s_spin_round_count,
-          (uint64)rw_lock_stats.rw_s_os_wait_count,
-          (uint64)rw_lock_stats.rw_x_spin_wait_count,
-          (uint64)rw_lock_stats.rw_x_spin_round_count,
-          (uint64)rw_lock_stats.rw_x_os_wait_count);
-
-  fprintf(
-      file,
-      "Spin rounds per wait: %.2f RW-shared, %.2f RW-exclusive\n",
-      (double)rw_lock_stats.rw_s_spin_round_count /
-          ut_max(uint64(1), (uint64)rw_lock_stats.rw_s_spin_wait_count),
-      (double)rw_lock_stats.rw_x_spin_round_count /
-          ut_max(uint64(1), (uint64)rw_lock_stats.rw_x_spin_wait_count));
-}
-
-
-static void rw_lock_debug_mutex_enter()
-{
-    for (;;) {
-        if (os_mutex_tryenter(&rw_lock_debug_mutex)) {
-            return;
-        }
-
-        os_event_reset(rw_lock_debug_event);
-        rw_lock_debug_waiters = TRUE;
-
-        if (os_mutex_tryenter(&rw_lock_debug_mutex)) {
-            return;
-        }
-
-        os_event_wait(rw_lock_debug_event);
-    }
-}
-
-static void rw_lock_debug_mutex_exit()
-{
-    os_mutex_exit(&rw_lock_debug_mutex);
-
-    if (rw_lock_debug_waiters) {
-        rw_lock_debug_waiters = FALSE;
-        os_event_set(rw_lock_debug_event);
-    }
-}
-
-void rw_lock_remove_debug_info(
-    rw_lock_t   *lock,  /*!< in: rw-lock */
-    uint32       pass,  /*!< in: pass value */
-    uint32       lock_type)  /*!< in: lock type */
-{
-    rw_lock_debug_t*	info;
-
-    ut_ad(lock);
-
-    if ((pass == 0) && (lock_type != RW_LOCK_WAIT_EXCLUSIVE)) {
-        //sync_check_unlock(lock);
-    }
-
-    rw_lock_debug_mutex_enter();
-
-    for (info = UT_LIST_GET_FIRST(lock->debug_list);
-         info != 0;
-         info = UT_LIST_GET_NEXT(list_node, info)) {
-
-        if (pass == info->pass
-            && (pass != 0 || os_thread_eq(info->thread_id, os_thread_get_curr_id()))
-            && info->lock_type == lock_type) {
-
-            /* Found! */
-            UT_LIST_REMOVE(list_node, lock->debug_list, info);
-
-            rw_lock_debug_mutex_exit();
-
-            ut_free(info);
-            return;
-        }
-    }
-
-    ut_error;
-}
-
-void rw_lock_add_debug_info(
-    rw_lock_t  *lock,   /*!< in: rw-lock */
-    uint32      pass,   /*!< in: pass value */
-    uint32      lock_type,  /*!< in: lock type */
-    const char *file_name,  /*!< in: file where requested */
-    uint32      line)   /*!< in: line where requested */
-{
-    ut_ad(file_name != NULL);
-
-    rw_lock_debug_t *info = (rw_lock_debug_t *)ut_malloc(sizeof(rw_lock_debug_t));
-
-    rw_lock_debug_mutex_enter();
-
-    info->lock = lock;
-    info->pass = pass;
-    info->line = line;
-    info->lock_type = lock_type;
-    info->file_name = file_name;
-    info->thread_id = os_thread_get_curr_id();
-    UT_LIST_ADD_FIRST(list_node, lock->debug_list, info);
-
-    //LOGGER_DEBUG(LOGGER, "rw_lock_add_debug_info: rwlock %p lock type %s",
-    //    lock, rw_lock_type_desc[info->lock_type]);
-
-    rw_lock_debug_mutex_exit();
-}
-
-static void rw_lock_list_print_info(FILE *file)
-{
-    uint32 count = 0;
-
-    spin_lock(&rw_lock_list_lock, NULL);
-
-    fputs("-------------\nRW-LATCH INFO\n-------------\n", file);
-
-    for (const rw_lock_t* lock = UT_LIST_GET_FIRST(rw_lock_list);
-         lock != NULL;
-         lock = UT_LIST_GET_NEXT(list_node, lock)) {
-
-        count++;
-
-        if (lock->lock_word != X_LOCK_DECR) {
-            fprintf(file, "RW-LOCK: %p ", (void*) lock);
-            if (lock->waiters) {
-                fputs(" Waiters for the lock exist\n", file);
-            } else {
-                putc('\n', file);
-            }
-
-            rw_lock_debug_t* info;
-            rw_lock_debug_mutex_enter();
-            for (info = UT_LIST_GET_FIRST(lock->debug_list);
-                 info != NULL;
-                 info = UT_LIST_GET_NEXT(list_node, info)) {
-                rw_lock_debug_print(file, info);
-            }
-            rw_lock_debug_mutex_exit();
-        }
-    }
-
-    fprintf(file, "Total number of rw-locks %lu\n", count);
-    spin_unlock(&rw_lock_list_lock);
-}
-
-void sync_check_init(size_t max_threads)
-{
-  /* Init the rw-lock & mutex list and create the mutex to protect it. */
-  UT_LIST_INIT(rw_lock_list);
-  spin_lock_init(&rw_lock_list_lock);
-
-  sync_array_init((uint32)max_threads);
-}
-
-/** Checks that the rw-lock has been initialized and that there are no simultaneous shared and exclusive locks. */
+/* Checks that the rw-lock has been initialized and that there are no simultaneous shared and exclusive locks. */
 inline bool32 rw_lock_validate(const rw_lock_t *lock)
 {
     uint32 waiters;
@@ -833,33 +454,7 @@ inline bool32 rw_lock_validate(const rw_lock_t *lock)
     ut_ad(lock_word > -(2 * X_LOCK_DECR));
     ut_ad(lock_word <= X_LOCK_DECR);
 
-    return (true);
-}
-
-inline bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type)
-{
-    ut_ad(lock);
-    ut_ad(rw_lock_validate(lock));
-
-    rw_lock_debug_mutex_enter();
-
-    for (const rw_lock_debug_t* info = UT_LIST_GET_FIRST(lock->debug_list);
-         info != NULL;
-         info = UT_LIST_GET_NEXT(list_node, info)) {
-
-        if (os_thread_eq(info->thread_id, os_thread_get_curr_id())
-            && info->pass == 0
-            && info->lock_type == lock_type) {
-
-            rw_lock_debug_mutex_exit();
-            /* Found! */
-
-            return(TRUE);
-        }
-    }
-    rw_lock_debug_mutex_exit();
-
-    return(FALSE);
+    return TRUE;
 }
 
 inline void rw_lock_create_func(
@@ -874,8 +469,7 @@ inline void rw_lock_create_func(
     /* We set this value to signify that lock->writer_thread
     contains garbage at initialization and cannot be used for recursive x-locking. */
     lock->recursive = FALSE;
-    lock->sx_recursive = 0;
-    memset((void *)&lock->writer_thread, 0, sizeof lock->writer_thread);
+    memset((void *)&lock->writer_thread_id, 0, sizeof lock->writer_thread_id);
 
     lock->cfile_name = cfile_name;
 
@@ -883,8 +477,6 @@ inline void rw_lock_create_func(
     split the source file anyway. Or create the locks on lines less than 8192. cline is unsigned:13. */
     ut_ad(cline <= 8192);
     lock->cline = (unsigned int)cline;
-
-    lock->count_os_wait = 0;
     lock->last_s_file_name = "not yet reserved";
     lock->last_x_file_name = "not yet reserved";
     lock->last_s_line = 0;
@@ -892,16 +484,13 @@ inline void rw_lock_create_func(
     lock->event = os_event_create(0);
     lock->wait_ex_event = os_event_create(0);
 
-    lock->is_block_lock = 0;
-
-    spin_lock(&rw_lock_list_lock, NULL);
-    ut_ad(UT_LIST_GET_FIRST(rw_lock_list) == NULL || UT_LIST_GET_FIRST(rw_lock_list)->magic_n == RW_LOCK_MAGIC_N);
-    UT_LIST_ADD_FIRST(list_node, rw_lock_list, lock);
-    spin_unlock(&rw_lock_list_lock);
+    //spin_lock(&rw_lock_list_lock, NULL);
+    //ut_ad(UT_LIST_GET_FIRST(rw_lock_list) == NULL || UT_LIST_GET_FIRST(rw_lock_list)->magic_n == RW_LOCK_MAGIC_N);
+    //UT_LIST_ADD_FIRST(list_node, rw_lock_list, lock);
+    //spin_unlock(&rw_lock_list_lock);
 
     UT_LIST_INIT(lock->debug_list);
     lock->magic_n = RW_LOCK_MAGIC_N;
-    //lock->level = level;
 }
 
 
@@ -911,20 +500,20 @@ inline void rw_lock_destroy_func(rw_lock_t *lock)
     ut_ad(rw_lock_validate(lock));
     ut_a(lock->lock_word == X_LOCK_DECR);
 
-    spin_lock(&rw_lock_list_lock, NULL);
-    os_event_destroy(lock->event);
-    os_event_destroy(lock->wait_ex_event);
-    UT_LIST_REMOVE(list_node, rw_lock_list, lock);
-    spin_unlock(&rw_lock_list_lock);
+    //spin_lock(&rw_lock_list_lock, NULL);
+    //os_event_destroy(lock->event);
+    //os_event_destroy(lock->wait_ex_event);
+    //UT_LIST_REMOVE(list_node, rw_lock_list, lock);
+    //spin_unlock(&rw_lock_list_lock);
 }
 
-inline bool32 rw_lock_lock_word_decr(rw_lock_t *lock, uint32 amount, int32 threshold)
+inline bool32 rw_lock_lock_word_decr(rw_lock_t *lock, uint32 amount)
 {
     os_rmb;
     int32 local_lock_word = lock->lock_word;
-    while (local_lock_word > threshold) {
+    while (local_lock_word > 0) {
         if (atomic32_compare_and_swap(&lock->lock_word, local_lock_word, local_lock_word - amount)) {
-            return(TRUE);
+            return TRUE;
         }
         local_lock_word = lock->lock_word;
     }
@@ -942,12 +531,12 @@ inline bool32 rw_lock_s_lock_low(
     const char *file_name, /*!< in: file name where lock requested */
     uint32      line) /*!< in: line where requested */
 {
-    if (!rw_lock_lock_word_decr(lock, 1, 0)) {
+    if (!rw_lock_lock_word_decr(lock, 1)) {
         /* Locking did not succeed */
-        return(FALSE);
+        return FALSE;
     }
 
-    ut_d(rw_lock_add_debug_info(lock, pass, RW_LOCK_SHARED, file_name, line));
+    ut_d(rw_lock_sync_mgr.add_rwlock_debug_info(lock, pass, RW_LOCK_SHARED, file_name, line));
 
     /* These debugging values are not set safely: they may be incorrect
     or even refer to a line that is invalid for the file name. */
@@ -979,9 +568,10 @@ inline void rw_lock_s_lock_spin(
     uint32          count_os_wait = 0;
 
     /* We reuse the thread id to index into the counter, cache it here for efficiency. */
+    uint64          thread_internal_id = os_thread_get_internal_id();
 
     ut_ad(rw_lock_validate(lock));
-    rw_lock_stats.rw_s_spin_wait_count.inc();
+    rw_lock_stats.rw_s_spin_wait_count.add(thread_internal_id, 1);
 
 lock_loop:
 
@@ -1003,10 +593,9 @@ lock_loop:
     /* We try once again to obtain the lock */
     if (rw_lock_s_lock_low(lock, pass, file_name, line)) {
         if (count_os_wait > 0) {
-            lock->count_os_wait += count_os_wait;
-            rw_lock_stats.rw_s_os_wait_count.add(count_os_wait);
+            rw_lock_stats.rw_s_os_wait_count.add(thread_internal_id, count_os_wait);
         }
-        rw_lock_stats.rw_s_spin_round_count.add(spin_count);
+        rw_lock_stats.rw_s_spin_round_count.add(thread_internal_id, spin_count);
         return; /* Success */
     } else {
         if (i < SYNC_SPIN_ROUNDS) {
@@ -1017,17 +606,16 @@ lock_loop:
 
         sync_cell_t *cell;
         sync_arr = sync_array_get_and_reserve_cell(lock, RW_LOCK_SHARED, file_name, line, &cell);
-        /* Set waiters before checking lock_word to ensure wake-up
-        signal is sent. This may lead to some unnecessary signals. */
+        /* Set waiters before checking lock_word to ensure wake-up signal is sent.
+           This may lead to some unnecessary signals. */
         rw_lock_set_waiter_flag(lock);
 
         if (rw_lock_s_lock_low(lock, pass, file_name, line)) {
             sync_array_free_cell(sync_arr, cell);
             if (count_os_wait > 0) {
-                lock->count_os_wait += count_os_wait;
-                rw_lock_stats.rw_s_os_wait_count.add(count_os_wait);
+                rw_lock_stats.rw_s_os_wait_count.add(thread_internal_id, count_os_wait);
             }
-            rw_lock_stats.rw_s_spin_round_count.add(spin_count);
+            rw_lock_stats.rw_s_spin_round_count.add(thread_internal_id, spin_count);
             return; /* Success */
         }
 
@@ -1060,16 +648,14 @@ inline void rw_lock_s_unlock_func(
     ut_ad(lock->lock_word != 0);
     ut_ad(lock->lock_word < X_LOCK_DECR);
 
-    ut_d(rw_lock_remove_debug_info(lock, pass, RW_LOCK_SHARED));
+    ut_d(rw_lock_sync_mgr.remove_rwlock_debug_info(lock, pass, RW_LOCK_SHARED));
 
     /* Increment lock_word to indicate 1 less reader */
-    int32 lock_word = rw_lock_lock_word_incr(lock, 1);
-    if (lock_word == 0 || lock_word == -X_LOCK_HALF_DECR) {
+    if (rw_lock_lock_word_incr(lock, 1) == 0) {
         /* wait_ex waiter exists. It may not be asleep, but we signal
         anyway. We do not wake other waiters, because they can't
         exist without wait_ex waiter and wait_ex waiter goes first.*/
         os_event_set(lock->wait_ex_event);
-        sync_array_object_signalled();
     }
 
     ut_ad(rw_lock_validate(lock));
@@ -1089,8 +675,8 @@ inline void rw_lock_set_writer_id_and_recursion_flag(
     itself, and the operation should always succeed. */
     //UNIV_MEM_VALID(&lock->writer_thread, sizeof lock->writer_thread);
 
-    local_thread = lock->writer_thread;
-    success = atomic32_compare_and_swap(&lock->writer_thread, local_thread, curr_thread);
+    local_thread = lock->writer_thread_id;
+    success = atomic32_compare_and_swap(&lock->writer_thread_id, local_thread, curr_thread);
     ut_a(success);
     lock->recursive = recursive;
 }
@@ -1098,7 +684,6 @@ inline void rw_lock_set_writer_id_and_recursion_flag(
 inline void rw_lock_x_lock_wait(
     rw_lock_t   *lock, /*!< in: pointer to rw-lock */
     uint32       pass, /*!< in: pass value; != 0, if the lock will be passed to another thread to unlock */
-    int32        threshold, /*!< in: threshold to wait for */
     const char  *file_name, /*!< in: file name where lock requested */
     uint32       line) /*!< in: line where requested */
 {
@@ -1106,11 +691,12 @@ inline void rw_lock_x_lock_wait(
     sync_array_t   *sync_arr;
     uint32          n_spins = 0;
     uint64          count_os_wait = 0;
+    uint64          thread_internal_id = os_thread_get_internal_id();
 
     os_rmb;
-    ut_ad(lock->lock_word <= threshold);
+    ut_ad(lock->lock_word <= 0);
 
-    while (lock->lock_word < threshold) {
+    while (lock->lock_word < 0) {
         if (SYNC_SPIN_WAIT_DELAY) {
             os_thread_delay(ut_rnd_interval(0, SYNC_SPIN_WAIT_DELAY));
         }
@@ -1129,30 +715,28 @@ inline void rw_lock_x_lock_wait(
         i = 0;
 
         /* Check lock_word to ensure wake-up isn't missed.*/
-        if (lock->lock_word < threshold) {
+        if (lock->lock_word < 0) {
             count_os_wait++;
 
             /* Add debug info as it is needed to detect possible deadlock.
-            We must add info for WAIT_EX thread for deadlock detection to work properly. */
-            ut_d(rw_lock_add_debug_info(lock, pass, RW_LOCK_WAIT_EXCLUSIVE, file_name, line));
+               We must add info for WAIT_EX thread for deadlock detection to work properly. */
+            ut_d(rw_lock_sync_mgr.add_rwlock_debug_info(lock, pass, RW_LOCK_WAIT_EXCLUSIVE, file_name, line));
 
             sync_array_wait_event(sync_arr, cell);
 
-            ut_d(rw_lock_remove_debug_info(lock, pass, RW_LOCK_WAIT_EXCLUSIVE));
+            ut_d(rw_lock_sync_mgr.remove_rwlock_debug_info(lock, pass, RW_LOCK_WAIT_EXCLUSIVE));
 
             /* It is possible to wake when lock_word < 0.
-            We must pass the while-loop check to proceed.*/
+               We must pass the while-loop check to proceed.*/
         } else {
             sync_array_free_cell(sync_arr, cell);
             break;
         }
     }
 
-    rw_lock_stats.rw_x_spin_round_count.add(n_spins);
-
+    rw_lock_stats.rw_x_spin_round_count.add(thread_internal_id, n_spins);
     if (count_os_wait > 0) {
-        lock->count_os_wait += (uint32)count_os_wait;
-        rw_lock_stats.rw_x_os_wait_count.add(count_os_wait);
+        rw_lock_stats.rw_x_os_wait_count.add(thread_internal_id, count_os_wait);
     }
 }
 
@@ -1162,55 +746,41 @@ inline bool32 rw_lock_x_lock_low(
     const char *file_name, /*!< in: file name where lock requested */
     uint32      line) /*!< in: line where requested */
 {
-    if (rw_lock_lock_word_decr(lock, X_LOCK_DECR, X_LOCK_HALF_DECR)) {
-
+    if (rw_lock_lock_word_decr(lock, X_LOCK_DECR)) {
         /* lock->recursive also tells us if the writer_thread field is stale or active.
-        As we are going to write our own thread id in that field it must be that the
-        current writer_thread value is not active. */
+           As we are going to write our own thread id in that field it must be that the
+           current writer_thread value is not active. */
         ut_a(!lock->recursive);
 
         /* Decrement occurred: we are writer or next-writer. */
         rw_lock_set_writer_id_and_recursion_flag(lock, pass ? FALSE : TRUE);
-        rw_lock_x_lock_wait(lock, pass, 0, file_name, line);
-
+        rw_lock_x_lock_wait(lock, pass, file_name, line);
     } else {
         os_thread_id_t thread_id = os_thread_get_curr_id();
-
         if (!pass) {
             os_rmb;
         }
 
         /* Decrement failed: relock or failed lock */
-        if (!pass && lock->recursive && os_thread_eq(lock->writer_thread, thread_id)) {
-            /* Other s-locks can be allowed. If it is request x recursively while holding sx lock,
-               this x lock should be along with the latching-order. */
-
-            /* The existing X or SX lock is from this thread */
-            if (rw_lock_lock_word_decr(lock, X_LOCK_DECR, 0)) {
-                /* There is at least one SX-lock from this thread, but no X-lock. */
-                /* Wait for any the other S-locks to be released. */
-                rw_lock_x_lock_wait(lock, pass, -X_LOCK_HALF_DECR, file_name, line);
+        if (!pass && lock->recursive && os_thread_eq(lock->writer_thread_id, thread_id)) {
+            /* Relock */
+            if (lock->lock_word == 0) {
+                lock->lock_word -= X_LOCK_DECR;
             } else {
-                /* At least one X lock by this thread already exists. Add another. */
-                if (lock->lock_word == 0 || lock->lock_word == -X_LOCK_HALF_DECR) {
-                    lock->lock_word -= X_LOCK_DECR;
-                } else {
-                    ut_ad(lock->lock_word <= -X_LOCK_DECR);
-                    --lock->lock_word;
-                }
+                ut_ad(lock->lock_word <= -X_LOCK_DECR);
+                --lock->lock_word;
             }
         } else {
             /* Another thread locked before us */
-            return(FALSE);
+            return FALSE;
         }
     }
 
-    ut_d(rw_lock_add_debug_info(lock, pass, RW_LOCK_EXCLUSIVE, file_name, line));
-
+    ut_d(rw_lock_sync_mgr.add_rwlock_debug_info(lock, pass, RW_LOCK_EXCLUSIVE, file_name, line));
     lock->last_x_file_name = file_name;
     lock->last_x_line = (unsigned int) line;
 
-    return(TRUE);
+    return TRUE;
 }
 
 inline void rw_lock_x_lock_func(
@@ -1224,6 +794,7 @@ inline void rw_lock_x_lock_func(
     uint32          spin_count = 0;
     uint64          count_os_wait = 0;
     bool            spinning = false;
+    uint64          thread_internal_id = os_thread_get_internal_id();
 
     ut_ad(rw_lock_validate(lock));
     ut_ad(!rw_lock_own(lock, RW_LOCK_SHARED));
@@ -1232,22 +803,20 @@ lock_loop:
 
     if (rw_lock_x_lock_low(lock, pass, file_name, line)) {
         if (count_os_wait > 0) {
-            lock->count_os_wait += (uint32)count_os_wait;
-            rw_lock_stats.rw_x_os_wait_count.add(count_os_wait);
+            rw_lock_stats.rw_x_os_wait_count.add(thread_internal_id, count_os_wait);
         }
-        rw_lock_stats.rw_x_spin_round_count.add(spin_count);
-
+        rw_lock_stats.rw_x_spin_round_count.add(thread_internal_id, spin_count);
         /* Locking succeeded */
         return;
     } else {
         if (!spinning) {
           spinning = true;
-          rw_lock_stats.rw_x_spin_wait_count.inc();
+          rw_lock_stats.rw_x_spin_wait_count.add(thread_internal_id, 1);
         }
 
         /* Spin waiting for the lock_word to become free */
         os_rmb;
-        while (i < SYNC_SPIN_ROUNDS && lock->lock_word <= X_LOCK_HALF_DECR) {
+        while (i < SYNC_SPIN_ROUNDS && lock->lock_word <= 0) {
             if (SYNC_SPIN_WAIT_DELAY) {
                 os_thread_delay(ut_rnd_interval(0, SYNC_SPIN_WAIT_DELAY));
             }
@@ -1273,10 +842,9 @@ lock_loop:
         sync_array_free_cell(sync_arr, cell);
 
         if (count_os_wait > 0) {
-            lock->count_os_wait += (uint32)count_os_wait;
-            rw_lock_stats.rw_x_os_wait_count.add(count_os_wait);
+            rw_lock_stats.rw_x_os_wait_count.add(thread_internal_id, count_os_wait);
         }
-        rw_lock_stats.rw_x_spin_round_count.add(spin_count);
+        rw_lock_stats.rw_x_spin_round_count.add(thread_internal_id, spin_count);
 
         return; /* Locking succeeded */
     }
@@ -1291,75 +859,59 @@ lock_loop:
 
 inline bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line)
 {
-    bool32 success;
-
-    success = atomic32_compare_and_swap(&lock->lock_word, X_LOCK_DECR, 0);
-
+    os_thread_id_t curr_thread = os_thread_get_curr_id();
+    bool32 success = atomic32_compare_and_swap(&lock->lock_word, X_LOCK_DECR, 0);
     if (success) {
         rw_lock_set_writer_id_and_recursion_flag(lock, TRUE);
-    } else if (lock->recursive && os_thread_eq(lock->writer_thread, os_thread_get_curr_id())) {
+    } else if (lock->recursive && os_thread_eq(lock->writer_thread_id, curr_thread)) {
         /* Relock: this lock_word modification is safe since no other
-        threads can modify (lock, unlock, or reserve) lock_word while
-        there is an exclusive writer and this is the writer thread. */
-        if (lock->lock_word == 0 || lock->lock_word == -X_LOCK_HALF_DECR) {
-            /* There are 1 x-locks */
+           threads can modify (lock, unlock, or reserve) lock_word while
+           there is an exclusive writer and this is the writer thread. */
+        if (lock->lock_word == 0) {
             lock->lock_word -= X_LOCK_DECR;
-        } else if (lock->lock_word <= -X_LOCK_DECR) {
-            /* There are 2 or more x-locks */
-            lock->lock_word--;
         } else {
-            /* Failure */
-            return(FALSE);
+            lock->lock_word--;
         }
-
         /* Watch for too many recursive locks */
         ut_ad(lock->lock_word < 0);
-
     } else {
         /* Failure */
-        return(FALSE);
+        return FALSE;
     }
 
-   ut_d(rw_lock_add_debug_info(lock, 0, RW_LOCK_EXCLUSIVE, file_name, line));
-
+    ut_d(rw_lock_sync_mgr.add_rwlock_debug_info(lock, 0, RW_LOCK_EXCLUSIVE, file_name, line));
     lock->last_x_file_name = file_name;
     lock->last_x_line = line;
-
     ut_ad(rw_lock_validate(lock));
-
-    return(TRUE);
+    return TRUE;
 }
 
 inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock)
 {
-    ut_ad(lock->lock_word == 0 || lock->lock_word == -X_LOCK_HALF_DECR
-          || lock->lock_word <= -X_LOCK_DECR);
+    ut_ad(lock->lock_word == 0 || lock->lock_word <= -X_LOCK_DECR);
 
     if (lock->lock_word == 0) {
         /* Last caller in a possible recursive chain. */
         lock->recursive = FALSE;
     }
 
-    ut_d(rw_lock_remove_debug_info(lock, pass, RW_LOCK_EXCLUSIVE));
+    ut_d(rw_lock_sync_mgr.remove_rwlock_debug_info(lock, pass, RW_LOCK_EXCLUSIVE));
 
-    if (lock->lock_word == 0 || lock->lock_word == -X_LOCK_HALF_DECR) {
+    if (lock->lock_word == 0) {
         /* There is 1 x-lock */
         /* atomic increment is needed, because it is last */
         if (rw_lock_lock_word_incr(lock, X_LOCK_DECR) <= 0) {
             ut_error;
         }
 
-        /* This no longer has an X-lock but it may still have
-        an SX-lock. So it is now free for S-locks by other threads.
-        We need to signal read/write waiters.
-        We do not need to signal wait_ex waiters, since they cannot
-        exist when there is a writer. */
+        /* This no longer has an X-lock. So it is now free for S-locks by other threads.
+           We need to signal read/write waiters. We do not need to signal wait_ex waiters,
+           since they cannot exist when there is a writer. */
         if (lock->waiters) {
             rw_lock_reset_waiter_flag(lock);
             os_event_set(lock->event);
-            sync_array_object_signalled();
         }
-    } else if (lock->lock_word == -X_LOCK_DECR || lock->lock_word == -(X_LOCK_DECR + X_LOCK_HALF_DECR)) {
+    } else if (lock->lock_word == -X_LOCK_DECR) {
         /* There are 2 x-locks */
         lock->lock_word += X_LOCK_DECR;
     } else {
@@ -1371,42 +923,34 @@ inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock)
     ut_ad(rw_lock_validate(lock));
 }
 
-status_t sync_init(void)
+uint32 rw_lock_get_writer(const rw_lock_t *lock)
 {
-    ut_a(sync_initialized == FALSE);
+    int32 lock_word = lock->lock_word;
+    ut_ad(lock_word <= X_LOCK_DECR);
 
-    sync_initialized = TRUE;
-
-    /* Init the mutex list and create the mutex to protect it. */
-    spin_lock_init(&rw_lock_list_lock);
-    UT_LIST_INIT(rw_lock_list);
-
-    sync_array_size = 32;
-    sync_array_init(32);
-
-    os_mutex_create(&rw_lock_debug_mutex);
-    rw_lock_debug_event = os_event_create("rw_lock_debug_event");
-    rw_lock_debug_waiters = FALSE;
-
-    return CM_SUCCESS;
+    if (lock_word > 0) {
+        /* return NOT_LOCKED in s-lock state, like the writer
+           member of the old lock implementation. */
+        return(RW_LOCK_NOT_LOCKED);
+    } else if (lock_word == 0 || lock_word <= -X_LOCK_DECR) {
+        return(RW_LOCK_EXCLUSIVE);
+    } else {
+        ut_ad(lock_word > -X_LOCK_DECR);
+        return(RW_LOCK_WAIT_EXCLUSIVE);
+    }
 }
 
-void sync_close(void)
+inline uint32 rw_lock_get_reader_count(const rw_lock_t *lock)
 {
-    os_mutex_destroy(&rw_lock_debug_mutex);
-    os_event_destroy(rw_lock_debug_event);
-    rw_lock_debug_waiters = FALSE;
-
-    sync_array_close();
-
-    sync_initialized = FALSE;
-}
-
-void sync_print(FILE *file)
-{
-    rw_lock_list_print_info(file);
-    sync_array_print(file);
-    sync_print_wait_info(file);
+    int32 lock_word = lock->lock_word;
+    if (lock_word > 0) {
+        /* s-locked, no x-waiters */
+        return(X_LOCK_DECR - lock_word);
+    } else if (lock_word < 0 && lock_word > -X_LOCK_DECR) {
+        /* s-locked, with x-waiters */
+        return((uint32)(-lock_word));
+    }
+    return(0);
 }
 
 // Returns the value of writer_count for the lock.
@@ -1420,5 +964,19 @@ inline uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock)
         return(0);
     }
     return((lock_copy == 0) ? 1 : (2 - (lock_copy + X_LOCK_DECR)));
+}
+
+status_t sync_init(memory_pool_t* pool)
+{
+    ut_a(sync_initialized == FALSE);
+
+    sync_initialized = TRUE;
+    return rw_lock_sync_mgr.init(pool);
+}
+
+void sync_close(void)
+{
+    rw_lock_sync_mgr.destroy();
+    sync_initialized = FALSE;
 }
 

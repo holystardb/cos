@@ -57,6 +57,7 @@ typedef struct st_attr_memory {
     int64      plan_memory_cache_size;
     int64      dictionary_memory_cache_size;
     int64      common_memory_cache_size;
+    int644     common_ext_memory_cache_size;
     int64      mtr_memory_cache_size;
     int64      temp_memory_cache_size;
 

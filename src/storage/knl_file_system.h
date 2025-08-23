@@ -168,11 +168,22 @@ struct st_fil_space {
     uint32       flags; // tablespace type: FSP_FLAG_SYSTEM, etc
     uint32       size_in_header; // FSP_SIZE in the tablespace header; 0 if not known yet
     uint32       free_limit; // contents of FSP_FREE_LIMIT
-    bool32       is_autoextend;
-    uint32       autoextend_size;
-    uint32       page_size;  // space size in pages
+    //bool32       is_autoextend;
+    //uint32       autoextend_size;
+    //uint32       page_size;  // space size in pages
     // number of reserved free extents for ongoing operations like B-tree page split
-    uint32       n_reserved_extents;
+    //uint32       n_reserved_extents;
+
+    // TRUE if we want to rename the .ibd file of tablespace
+    // and want to stop temporarily posting of new i/o requests on the file
+    bool32       stop_ios;
+    // we set this TRUE when we start deleting a single-table tablespace.
+    // When this is set following new ops are not allowed:
+    //     read IO request, ibuf merge, file flush
+    // Note that we can still possibly have new write operations
+    // because we don't check this flag when doing flush batches.
+    bool32       stop_new_ops;
+
     uint32       magic_n;
     mutex_t      mutex;
     bool32       io_in_progress;
@@ -274,7 +285,8 @@ extern inline status_t fil_read(bool32 sync, const page_id_t &page_id,
     const page_size_t &page_size, uint32 len, void* buf, aio_slot_func slot_func, void* message);
 extern inline void fil_aio_reader_and_writer_wait(os_aio_context_t* context);
 
-extern bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size);
+extern status_t fil_space_extend_to_desired_size(fil_space_t* space,
+    uint32 size_after_extend, uint32 *actual_size);
 extern uint32 fil_space_get_size(uint32 space_id);
 
 

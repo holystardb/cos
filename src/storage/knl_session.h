@@ -8,67 +8,93 @@
 #include "cm_memory.h"
 
 #include "knl_trx_types.h"
+#include "knl_fast_clean.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
 
-// ------------------------------------------------------
-
-typedef byte  fast_clean_page_hdr_t;
-
-#define FAST_CLEAN_PAGE_HEADER_SIZE      2
-
-typedef byte  fast_clean_page_t;
-
-#define FAST_CLEAN_PAGE_SPACE_ID         0
-#define FAST_CLEAN_PAGE_PAGE_NO          4
-#define FAST_CLEAN_PAGE_ITL_ID           8
-#define FAST_CLEAN_PAGE_BLOCK            9
-
-#define FAST_CLEAN_PAGE_SIZE             17
-
-#define FAST_CLEAN_PAGE_COUNT_PER_PAGE   ((UNIV_PAGE_SIZE - FAST_CLEAN_PAGE_HEADER_SIZE) / FAST_CLEAN_PAGE_SIZE)
-
 
 // ------------------------------------------------------
 
+typedef struct st_kernel_sess {
+    bool32            is_xa_consistency;
+
+} kernel_sess_t;
 
 
-typedef struct st_que_sess {
+#define CM_RM_EVENT_MAX_COUNT   1024
+
+struct resource_t {
+    os_event_t         events[CM_RM_EVENT_MAX_COUNT];
+
+};
+
+struct resource_owner_t {
+    uint32     event_id;
+};
+
+
+struct que_sess_t {
+    kernel_sess_t*    kernel{NULL};
    // mutex_t          mutex;
-    uint32            id;  // session id
+    uint32            sess_id;
     command_id_t      cid;
     cm_stack_t        stack;
 
-    trx_t*            trx;
+    trx_t*            trx{NULL};
 
-    attribute_t*      attr;
+    attribute_t*      attr{NULL};
     bool32            is_free;
-    uint32            mem_page_size;
-    memory_page_t*    mem_page;
+    uint32            mem_page_size_for_stack;
+    memory_page_t*    mem_page_for_stack{NULL};
     char*             buf;
     uint32            buf_len;
     //row_header_t*    row;
 
+    resource_owner_t  resource;
+
+    volatile trx_slot_id_t wait_xid;
+    volatile row_id_t wait_row_id;
+    os_event_t wait_trx_event;
+
+    // caution !! do not assign killed to true directly, use g_knl_callback.kill_session instead
+    volatile bool8    is_killed;
+    volatile bool8    is_canceled;
+    volatile bool8    force_kill;
+
+
     //
-    memory_page_t*    fast_clean_pages;
+    fast_clean_mgr_t  fast_clean_mgr;
 
     mutex_t           scn_mutex;
     atomic64_t        current_scn;
 
-    memory_stack_context_t* mcontext_stack;
-    UT_LIST_NODE_T(struct st_que_sess) list_node;
-} que_sess_t;
+    memory_stack_context_t* mcontext_stack{NULL};
+    UT_LIST_NODE_T(que_sess_t) list_node;
+
+    status_t init();
+    void clean();
+    status_t wait_transaction_end(uint64 timeout_us = OS_WAIT_INFINITE_TIME);
+};
 
 
-typedef struct st_session_pool {
+class session_pool_t {
+public:
+    session_pool_t();
+    ~session_pool_t();
+
+    status_t init(uint32 sess_count, uint32 stack_size, attribute_t* attr);
+    que_sess_t* alloc_session();
+    void free_session(que_sess_t* sess);
+
+private:
     mutex_t        mutex;
     que_sess_t*    sessions;
 
-    UT_LIST_BASE_NODE_T(que_sess_t)  used_sess_list;
-    UT_LIST_BASE_NODE_T(que_sess_t)  free_sess_list;
-} session_pool_t;
+    UT_LIST_BASE_NODE_T(que_sess_t) used_sess_list;
+    UT_LIST_BASE_NODE_T(que_sess_t) free_sess_list;
+};
 
 
 extern status_t sess_pool_create(uint32 sess_count, uint32 session_stack_size);
@@ -77,10 +103,10 @@ extern void sess_pool_destroy();
 extern que_sess_t* que_sess_alloc();
 extern void que_sess_free(que_sess_t* sess);
 
-extern inline void sess_append_fast_clean_page_list(que_sess_t* sess, buf_block_t* block, uint8 itl_id);
 
 extern attribute_t       g_attribute;
 extern session_pool_t*   g_sess_pool;
+extern resource_t        g_resource;
 
 #ifdef __cplusplus
 }

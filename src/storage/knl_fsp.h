@@ -290,23 +290,25 @@ extern buf_block_t* fsp_page_create(const page_id_t& page_id, const page_size_t&
 extern bool32 fsp_is_system_temporary(space_id_t space_id);
 extern inline fsp_header_t* fsp_get_space_header(uint32 space_id, const page_size_t& page_size, mtr_t* mtr);
 
-extern status_t fsp_init_space(uint32 space_id, uint64 init_size, uint64 max_size, uint32 fsp_type);
+extern status_t fsp_init_space(uint32 space_id, uint64 init_size, uint64 max_size, uint32 flags);
 extern status_t fsp_reserve_system_space();
-//extern status_t fsp_system_space_reserve_pages(uint32 reserved_max_page_no);
+extern status_t fsp_open_space(uint32 space_id);
 
 extern void fsp_free_page(const page_id_t& page_id, const page_size_t& page_size, mtr_t* mtr);
-extern buf_block_t* fsp_alloc_free_page(uint32 space_id,
-    const page_size_t& page_size, Page_fetch mode, mtr_t* mtr);
+extern status_t fsp_alloc_free_page(uint32 space_id, const page_size_t& page_size,
+    Page_fetch mode, buf_block_t** block, mtr_t* mtr);
 
 extern void fsp_free_extent(    uint32 space_id,   xdes_t* xdes, mtr_t* mtr);
-extern xdes_t* fsp_alloc_free_extent(uint32 space_id, const page_size_t&  page_size, mtr_t* mtr);
+extern status_t fsp_alloc_free_extent(uint32 space_id,
+    const page_size_t& page_size, xdes_t** xdes, mtr_t* mtr);
 
 
 extern void fseg_init(fseg_inode_t* inode, uint64 seg_id, mtr_t* mtr);
 // Allocates a single free page from a segment.
-extern buf_block_t* fseg_alloc_free_page(
+extern status_t fseg_alloc_free_page(
     uint32          space_id,  /*!< in: space */
     fseg_inode_t*   inode, /*!< in/out: segment inode */
+    buf_block_t**   block,
     mtr_t*          mtr,        /*!< in/out: mini-transaction */
     mtr_t*          init_mtr);  /*!< in/out: mtr or another mini-transaction
                         in which the page should be initialized.
@@ -316,12 +318,14 @@ extern buf_block_t* fseg_alloc_free_page(
 // Frees a single page of a segment
 extern void fseg_free_page(uint32 space_id, fseg_inode_t* inode, uint32 page_no, mtr_t* mtr);
 
-extern xdes_t* fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, mtr_t* mtr);
+extern status_t fseg_alloc_free_extent(uint32 space_id, fseg_inode_t* inode, xdes_t** xdes, mtr_t* mtr);
 
 // Allocates free extents from table space
 extern xdes_t* fseg_reserve_free_extents(uint32 space_id, fseg_inode_t* inode, uint32 count, mtr_t* mtr);
 
-extern byte* fsp_replay_init_file_page(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* fsp_replay_fsp_init(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* fsp_replay_fsp_extend(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* fsp_replay_init_file_page(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
 
 #ifdef __cplusplus
 }

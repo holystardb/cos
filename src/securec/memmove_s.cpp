@@ -20,9 +20,9 @@
  * Implementing memory data movement
  */
 SECUREC_INLINE void SecUtilMemmove(void *dst, const void *src, size_t count)
+    const unsigned char *pSrc = (const unsigned char *)src;
 {
     unsigned char *pDest = (unsigned char *)dst;
-    const unsigned char *pSrc = (const unsigned char *)src;
     size_t maxCount = count;
 
     if (dst <= src || pDest >= (pSrc + maxCount)) {

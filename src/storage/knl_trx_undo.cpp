@@ -124,7 +124,7 @@ static inline buf_block_t* trx_undo_page_init(uint32 undo_space_id, uint32 undo_
     mach_write_to_2(seg_hdr + TRX_UNDO_LAST_LOG, 0xFFFF);
     flst_init(seg_hdr + TRX_UNDO_PAGE_LIST, NULL);
 
-    // 3 redo log
+    // 3 write redo log
     mlog_write_log(MLOG_UNDO_PAGE_INIT, undo_space_id, undo_page_no,
         page_hdr + TRX_UNDO_PAGE_TYPE, MLOG_2BYTES, &mtr);
 
@@ -238,7 +238,8 @@ static inline void trx_undo_write_log_header(trx_t* trx, trx_undo_page_t* undo_p
     trx_rseg_t* rseg = TRX_GET_RSEG(trx->trx_slot_id.rseg_id);
 
     page_id_t page_id(rseg->id, undo_page->page_no);
-    buf_block_t* block = buf_page_get_gen(page_id, undo_log_page_size, RW_X_LATCH, undo_page->guess_block, Page_fetch::NORMAL, mtr);
+    buf_block_t* block = buf_page_get_gen(page_id, undo_log_page_size,
+        RW_X_LATCH, undo_page->guess_block, Page_fetch::NORMAL, mtr);
     page_t* page = buf_block_get_frame(block);
 
     trx_undo_page_hdr_t* page_hdr = page + TRX_UNDO_PAGE_HDR;
@@ -261,7 +262,7 @@ static inline void trx_undo_write_log_header(trx_t* trx, trx_undo_page_t* undo_p
     mach_write_to_2(page_hdr + TRX_UNDO_PAGE_FREE, free + TRX_UNDO_LOG_HDR_SIZE);
     undo_page->page_offset = free + TRX_UNDO_LOG_HDR_SIZE;
 
-    // redo
+    // write redo log
     mlog_write_log(MLOG_UNDO_LOG_HDR_CREATE, block->get_space_id(), block->get_page_no(), NULL, 0, mtr);
     mlog_catenate_string(mtr, log_hdr, TRX_UNDO_LOG_HDR_SIZE);
     mlog_catenate_string(mtr, seg_hdr + TRX_UNDO_LAST_LOG, MLOG_2BYTES);
@@ -317,37 +318,37 @@ inline status_t trx_undo_prepare(que_sess_t* sess, undo_data_t* undo_data, mtr_t
     trx_t* trx = (trx_t *)sess->trx;
     trx_rseg_t* rseg = TRX_GET_RSEG(trx->trx_slot_id.rseg_id);
 
-    if (undo_rec_max_size < undo_data->rec.data_size + TRX_UNDO_LOG_HDR_SIZE) {
-        CM_SET_ERROR(ERR_UNDO_RECORD_TOO_BIG, undo_data->rec.data_size + TRX_UNDO_LOG_HDR_SIZE);
+    if (undo_rec_max_size < undo_data->rec_mgr.m_data_size) {
+        CM_SET_ERROR(ERR_UNDO_RECORD_TOO_BIG, undo_data->rec_mgr.m_data_size);
         return CM_ERROR;
     }
 
+    // get undo page
     if (undo_data->undo_op == UNDO_INSERT_OP) {
         if (SLIST_GET_LEN(trx->insert_undo) == 0) {
-            trx_undo_assign_undo_page(trx, undo_data->undo_op,
-                undo_data->rec.data_size + TRX_UNDO_LOG_HDR_SIZE, undo_data->query_min_scn, mtr);
+            trx_undo_assign_undo_page(trx, undo_data->undo_op, TRX_UNDO_LOG_HDR_SIZE, undo_data->query_min_scn, mtr);
         }
         undo_page = SLIST_GET_LAST(trx->insert_undo);
     } else {
         ut_ad(undo_data->undo_op == UNDO_MODIFY_OP);
         if (SLIST_GET_LEN(trx->update_undo) == 0) {
-            trx_undo_assign_undo_page(trx, undo_data->undo_op,
-                undo_data->rec.data_size + TRX_UNDO_LOG_HDR_SIZE, undo_data->query_min_scn, mtr);
+            trx_undo_assign_undo_page(trx, undo_data->undo_op, TRX_UNDO_LOG_HDR_SIZE, undo_data->query_min_scn, mtr);
         }
         undo_page = SLIST_GET_LAST(trx->update_undo);
     }
 
-    if (undo_page && UNDO_PAGE_LEFT(undo_page) <= undo_data->rec.data_size) {
+    // Check for free space
+    if (undo_page && UNDO_PAGE_LEFT(undo_page) < undo_data->rec_mgr.m_data_size) {
         // We have to extend the undo log by one page, add a page to an undo log
         undo_page = trx_undo_add_undo_page(trx, undo_data->undo_op,
-            undo_data->rec.data_size, undo_data->query_min_scn, mtr);
+            undo_data->rec_mgr.m_data_size, undo_data->query_min_scn, mtr);
     }
-
     if (undo_page == NULL) {
         CM_SET_ERROR(ERR_NO_FREE_UNDO_PAGE);
         return CM_ERROR;
     }
 
+    // 
     undo_data->undo_space_index = rseg->undo_space_id - DB_UNDO_START_SPACE_ID;
     undo_data->undo_page_no = undo_page->page_no;
     undo_data->undo_page_offset = undo_page->page_offset;
@@ -377,54 +378,33 @@ inline status_t trx_undo_write_log_rec(    que_sess_t* sess, undo_data_t* undo_d
     ut_ad(undo_page);
 
     // check enough space for writing
-    if (UNDO_PAGE_LEFT(undo_page) < TRX_UNDO_REC_HDR_SIZE + UNDO_REC_HEADER_SIZE + undo_data->rec.data_size) {
+    uint16 undo_rec_len = TRX_UNDO_REC_EXTRA_SIZE + undo_data->rec.m_data_size;
+    if (UNDO_PAGE_LEFT(undo_page) < undo_rec_len) {
         CM_SET_ERROR(ERR_NO_FREE_UNDO_PAGE);
         return CM_ERROR;
     }
 
-    //
+    // get undo log page
     trx_rseg_t* rseg = TRX_GET_RSEG(sess->trx->trx_slot_id.rseg_id);
     page_t* page = trx_undo_get_page(rseg->undo_space_id, undo_page, undo_data->undo_op, mtr);
 
+    // get the starting position of undo record
     uint32 first_free = mach_read_from_2(page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_FREE);
     ut_ad(first_free <= UNIV_PAGE_SIZE);
-
     trx_undo_rec_hdr_t* rec_ptr = page + first_free;
 
-    // 1. undo log record
+    // Write undo log record
+    undo_data->rec_mgr.serialize(rec_ptr, first_free);
 
-    // Reserve 2 bytes for offset to the next undo log record
-    rec_ptr += 2;
-    // undo type
-    mach_write_to_1(rec_ptr, undo_data->rec.type);
-    rec_ptr += 1;
-    // table id
-    //mach_write_to_8(rec_ptr, table->id);
-    //rec_ptr += 8;
-    // undo data
-    memcpy(rec_ptr, (byte *)&undo_data->rec, UNDO_REC_HEADER_SIZE);
-    rec_ptr += UNDO_REC_HEADER_SIZE;
-    if (undo_data->rec.data_size > 0) {
-        memcpy(rec_ptr, undo_data->rec.data, undo_data->rec.data_size);
-        rec_ptr += undo_data->rec.data_size;
-    }
-    // start offset of current undo log record
-    mach_write_to_2(rec_ptr, first_free);
-    rec_ptr += 2;
+    // Update the offset of the first free byte on the page
+    undo_page->page_offset = first_free + undo_rec_len;
+    mach_write_to_2(page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_FREE, first_free + undo_rec_len);
 
-    // Write offset of the next undo log record
-    uint16 next_rec_offset = (uint16)(rec_ptr - page);
-    mach_write_to_2(page + first_free, next_rec_offset);
-
-    // 2. Update the offset of the first free byte on the page
-    undo_page->page_offset = next_rec_offset;
-    mach_write_to_2(page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_FREE, next_rec_offset);
-
-    // 3. Write to the REDO log about this change in the UNDO log
-
-    mlog_write_log(MLOG_UNDO_INSERT, rseg->undo_space_id, undo_page->page_no,
-        page + first_free, (uint16)(rec_ptr - (page + first_free)), mtr);
-    mlog_catenate_string(mtr, page + TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_FREE, MLOG_2BYTES);
+    // Write to the REDO log about this change in the UNDO log
+    mlog_write_log(MLOG_UNDO_LOG_INSERT, rseg->undo_space_id, undo_page->page_no, NULL, 0, mtr);
+    mlog_catenate_uint32(mtr, undo_rec_len, MLOG_2BYTES);
+    mlog_catenate_uint32(mtr, first_free, MLOG_2BYTES);
+    mlog_catenate_string(mtr, rec_ptr, undo_rec_len);
 
     return CM_SUCCESS;
 }
@@ -530,6 +510,240 @@ inline void trx_undo_cleanup(trx_t* trx, bool32 is_commited, scn_t scn)
     trx_insert_undo_cleanup(rseg, trx);
 
     trx_update_undo_cleanup(rseg, trx, is_commited, scn);
+}
+
+
+
+
+
+
+
+
+trx_rollback_undo_mgr_t::trx_rollback_undo_mgr_t(trx_t* trx)  {
+        m_trx = trx;
+        m_rseg = NULL;
+        m_insert_seg_page = NULL;
+        m_insert_top_page = NULL;
+        m_insert_undo_log_hdr = NULL;
+        m_insert_seg_hdr = NULL;
+        m_insert_rec = NULL;
+        m_insert_top_block = NULL;
+        m_insert_top_offset = 0;
+
+        m_update_seg_page = NULL;
+        m_update_top_page = NULL;
+        m_update_undo_log_hdr = NULL;
+        m_update_seg_hdr = NULL;
+        m_update_rec = NULL;
+        m_update_top_block = NULL;
+        m_update_top_offset = 0;
+    }
+
+trx_rollback_undo_mgr_t::~trx_rollback_undo_mgr_t() {
+}
+
+void trx_rollback_undo_mgr_t::init(mtr_t* mtr) {
+    m_rseg = TRX_GET_RSEG(m_trx->trx_slot_id.rseg_id);
+
+    m_insert_seg_page = SLIST_GET_FIRST(m_trx->insert_undo);
+    m_insert_top_page = SLIST_GET_LAST(m_trx->insert_undo);
+    if (m_insert_seg_page) {
+        page_id_t page_id(m_rseg->id, m_insert_seg_page->page_no);
+        m_insert_top_block = buf_page_get_gen(page_id, undo_log_page_size,
+            RW_X_LATCH, m_insert_seg_page->guess_block, Page_fetch::NORMAL, mtr);
+        page_t* page = buf_block_get_frame(m_insert_top_block);
+        m_insert_seg_hdr = page + TRX_UNDO_SEG_HDR;
+        m_insert_undo_log_hdr = page + mach_read_from_2(m_insert_seg_hdr + TRX_UNDO_LAST_LOG);
+    }
+
+    m_update_seg_page = SLIST_GET_FIRST(m_trx->update_undo);
+    m_update_top_page = SLIST_GET_LAST(m_trx->update_undo);
+    if (m_update_seg_page) {
+        page_id_t page_id(m_rseg->id, m_update_seg_page->page_no);
+        m_update_top_block = buf_page_get_gen(page_id, undo_log_page_size,
+            RW_X_LATCH, m_update_seg_page->guess_block, Page_fetch::NORMAL, mtr);
+        page_t* page = buf_block_get_frame(m_update_top_block);
+        m_update_seg_hdr = page + TRX_UNDO_SEG_HDR;
+        m_update_undo_log_hdr = page + mach_read_from_2(m_update_seg_hdr + TRX_UNDO_LAST_LOG);
+    }
+}
+
+trx_undo_rec_hdr_t* trx_rollback_undo_mgr_t::get_top_insert_rec(uint32& undo_rec_size, mtr_t* mtr) {
+    if (m_insert_rec) {
+        undo_rec_size = m_insert_rec_size;
+        return m_insert_rec;
+    }
+
+    if (m_insert_top_page == NULL) {
+        return NULL;
+    }
+
+    if (m_insert_top_block == NULL) {
+        page_id_t page_id(m_rseg->id, m_insert_top_page->page_no);
+        m_insert_top_block = buf_page_get_gen(page_id, undo_log_page_size,
+            RW_X_LATCH, m_insert_top_page->guess_block, Page_fetch::NORMAL, mtr);
+        trx_undo_page_hdr_t* undo_page_hdr = buf_block_get_frame(m_insert_top_block) + TRX_UNDO_PAGE_HDR;
+        m_insert_top_offset = mach_read_from_2(undo_page_hdr + TRX_UNDO_PAGE_FREE - 2);
+    }
+
+    m_insert_rec = buf_block_get_frame(m_insert_top_block) + m_insert_top_offset;
+    m_insert_rec_size = mach_read_from_2(m_insert_rec) - m_insert_top_offset;
+    return m_insert_rec;
+}
+
+void trx_rollback_undo_mgr_t::pop_top_insert_rec() {
+    if (m_insert_rec == NULL) {
+        return;
+    }
+
+    m_insert_rec = NULL;
+
+    if (m_insert_seg_page == m_insert_top_page) {
+        if (m_insert_top_offset == mach_read_from_2(m_insert_seg_hdr + TRX_UNDO_LAST_LOG) + TRX_UNDO_LOG_HDR_SIZE) {
+            m_insert_top_page = NULL;
+            return;
+        }
+    } else if (m_insert_top_offset == FIL_PAGE_DATA) {
+        // get prev undo page
+        trx_undo_page_t* tmp_page = m_insert_seg_page;
+        while (SLIST_GET_NEXT(list_node, tmp_page) != m_insert_top_page) {
+            tmp_page = SLIST_GET_NEXT(list_node, tmp_page);
+        }
+        m_insert_top_page = tmp_page;
+        m_insert_top_block = NULL;
+        return;
+    }
+
+    ut_ad(m_insert_top_block);
+    page_t* page = buf_block_get_frame(m_insert_top_block);
+    m_insert_top_offset = mach_read_from_2(page + m_insert_top_offset - 2);
+}
+
+trx_undo_rec_hdr_t* trx_rollback_undo_mgr_t::get_top_update_rec(uint32& undo_rec_size, mtr_t* mtr) {
+    if (m_update_rec) {
+        undo_rec_size = m_update_rec_size;
+        return m_update_rec;
+    }
+
+    if (m_update_top_page == NULL) {
+        return NULL;
+    }
+
+    if (m_update_top_block == NULL) {
+        page_id_t page_id(m_rseg->id, m_update_top_page->page_no);
+        m_update_top_block = buf_page_get_gen(page_id, undo_log_page_size,
+            RW_X_LATCH, m_update_top_page->guess_block, Page_fetch::NORMAL, mtr);
+        trx_undo_page_hdr_t* undo_page_hdr = buf_block_get_frame(m_update_top_block) + TRX_UNDO_PAGE_HDR;
+        m_update_top_offset = mach_read_from_2(undo_page_hdr + TRX_UNDO_PAGE_FREE - 2);
+    }
+
+    m_update_rec = buf_block_get_frame(m_update_top_block) + m_update_top_offset;
+    m_update_rec_size = mach_read_from_2(m_update_rec) - m_update_top_offset;
+    return m_update_rec;
+
+}
+
+void trx_rollback_undo_mgr_t::pop_top_update_rec() {
+    if (m_update_rec == NULL) {
+        return;
+    }
+
+    m_update_rec = NULL;
+
+    if (m_update_seg_page == m_update_top_page) {
+        if (m_update_top_offset == mach_read_from_2(m_update_seg_hdr + TRX_UNDO_LAST_LOG) + TRX_UNDO_LOG_HDR_SIZE) {
+            m_update_top_page = NULL;
+            return;
+        }
+    } else if (m_update_top_offset == FIL_PAGE_DATA) {
+        // get prev undo page
+        trx_undo_page_t* tmp_page = m_update_seg_page;
+        while (SLIST_GET_NEXT(list_node, tmp_page) != m_update_top_page) {
+            tmp_page = SLIST_GET_NEXT(list_node, tmp_page);
+        }
+        m_update_top_page = tmp_page;
+        m_update_top_block = NULL;
+        return;
+    }
+
+    ut_ad(m_update_top_block);
+    page_t* page = buf_block_get_frame(m_update_top_block);
+    m_update_top_offset = mach_read_from_2(page + m_update_top_offset - 2);
+}
+
+
+// Pops the topmost record from the two undo logs of a transaction ordered by their undo numbers
+trx_undo_rec_hdr_t* trx_rollback_undo_mgr_t::pop_top_undo_rec(uint32& undo_rec_size, mtr_t* mtr)
+{
+    trx_undo_rec_hdr_t* undo_rec;
+    uint32 insert_undo_rec_size, update_undo_rec_size;
+    trx_undo_rec_hdr_t* insert_rec = get_top_insert_rec(insert_undo_rec_size, mtr);
+    trx_undo_rec_hdr_t* update_rec = get_top_update_rec(update_undo_rec_size, mtr);
+
+    if (insert_rec == NULL) {
+        undo_rec = update_rec;
+        undo_rec_size = update_undo_rec_size;
+        pop_top_update_rec();
+    } else if (update_rec == NULL) {
+        undo_rec = insert_rec;
+        undo_rec_size = insert_undo_rec_size;
+        pop_top_insert_rec();
+    } else if (mach_read_from_4(update_rec + TRX_UNDO_REC_NO) > mach_read_from_4(insert_rec + TRX_UNDO_REC_NO)) {
+        undo_rec = update_rec;
+        undo_rec_size = update_undo_rec_size;
+        pop_top_update_rec();
+    } else {
+        undo_rec = insert_rec;
+        undo_rec_size = insert_undo_rec_size;
+        pop_top_insert_rec();
+    }
+
+    return undo_rec;
+}
+
+// get undo record by row roll_ptr
+trx_undo_rec_hdr_t* trx_undo_get_undo_rec_by_rollptr(uint32& undo_rec_size, row_undo_rollptr_t roll_ptr, uint64 row_id, mtr_t* mtr)
+{
+    //
+    page_id_t page_id(FIL_UNDO_START_SPACE_ID + roll_ptr->undo_space_index, roll_ptr->undo_page_no);
+    buf_block_t* block = buf_page_get_gen(page_id, undo_log_page_size, RW_S_LATCH, NULL, Page_fetch::NORMAL, mtr);
+    page_t* page = buf_block_get_frame(block);
+
+    //check if undo log page has been reused
+
+    trx_undo_page_hdr_t* page_hdr = page + TRX_UNDO_PAGE_HDR;
+    uint32 free_offset = mach_read_from_2(page_hdr + TRX_UNDO_PAGE_FREE);
+    ut_a(roll_ptr.undo_page_offset >= TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_HDR_SIZE + TRX_UNDO_SEG_HDR_SIZE);
+    if (free_offset < roll_ptr.undo_page_offset ||
+        free_offset == (TRX_UNDO_PAGE_HDR + TRX_UNDO_PAGE_HDR_SIZE + TRX_UNDO_SEG_HDR_SIZE)) {
+        //CT_LOG_RUN_ERR("snapshot too old, detail: snapshot xid %llu, undo row xid %llu, query scn %llu",
+        //               snapshot->xid, ud_row->xid.value, query_info->query_scn);
+        CM_SET_ERROR(ERR_SNAPSHOT_TOO_OLD);
+        return NULL;
+    }
+
+    uint32 rec_offset = mach_read_from_2(page + free_offset - 2);
+    while (rec_offset > roll_ptr.undo_page_offset) {
+        rec_offset = mach_read_from_2(page + rec_offset - 2);
+    }
+    if (rec_offset < roll_ptr.undo_page_offset) {
+        //CT_LOG_RUN_ERR("snapshot too old, detail: snapshot xid %llu, undo row xid %llu, query scn %llu",
+        //               snapshot->xid, ud_row->xid.value, query_info->query_scn);
+        CM_SET_ERROR(ERR_SNAPSHOT_TOO_OLD);
+        return NULL;
+    }
+
+    uint64 undo_row_id = mach_read_from_8(undo_rec + TRX_UNDO_REC_ROW_ID);
+    if (undo_row_id != row_id) {
+        CM_SET_ERROR(ERR_SNAPSHOT_TOO_OLD);
+        return NULL;
+    }
+
+    //
+    trx_undo_rec_hdr_t* undo_rec = buf_block_get_frame(block) + roll_ptr.undo_page_offset;
+    undo_rec_size = mach_read_from_2(undo_rec) - roll_ptr.undo_page_offset;
+
+    return undo_rec;
 }
 
 

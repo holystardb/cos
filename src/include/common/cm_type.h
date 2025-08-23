@@ -10,10 +10,13 @@
 #include <ctype.h>
 #include <string.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
 #include <assert.h>
+
+#include <climits>
 
 #ifdef __WIN__
 #define WIN32_LEAN_ADD_MEAN
@@ -24,6 +27,7 @@
 #else  // __WIN__
 #include <unistd.h>
 #include <pthread.h>
+#include <arpa/inet.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -58,8 +62,10 @@ extern "C" {
 
 #ifdef __WIN__
 #define ALWAYS_INLINE       __forceinline
+#define THREAD_LOCAL        __declspec(thread)
 #else
 #define ALWAYS_INLINE       __attribute__((always_inline)) inline
+#define THREAD_LOCAL        __thread
 #endif
 
 /*
@@ -69,16 +75,10 @@ but not format or unused which we use quite a lot.
 */
 #ifndef MY_ATTRIBUTE
 #if defined(__GNUC__) || defined(__clang__)
-#define MY_ATTRIBUTE(A)     __attribute__(A)
+#define MY_ATTRIBUTE(A)     __attribute__((A))
 #else
-#define MY_ATTRIBUTE(A)
+#define MY_ATTRIBUTE(A)     
 #endif
-#endif
-
-#ifdef __WIN__
-#define THREAD_LOCAL        __declspec(thread)
-#else
-#define THREAD_LOCAL        __thread
 #endif
 
 
@@ -281,11 +281,18 @@ typedef unsigned char*          PUCHAR;
 #define OFFSET_OF                   offsetof
 
 #ifdef __WIN__
-#define os_file_t                           HANDLE
-#define OS_FILE_INVALID_HANDLE              INVALID_HANDLE_VALUE
+#define os_file_t                   HANDLE
+#define OS_FILE_INVALID_HANDLE      INVALID_HANDLE_VALUE
+#define unlink                      _unlink
+#define fseeki64                    _fseeki64
+#define ftelli64                    _ftelli64
 #else
-typedef int32                               os_file_t;
-#define OS_FILE_INVALID_HANDLE              -1
+typedef int32                       os_file_t;
+#define OS_FILE_INVALID_HANDLE      -1
+#define fseeki64                    fseeko64
+#define ftelli64                    ftello64
+#define fopen_s(pFile,name,mode)    ((*(pFile))=fopen((name),(mode)))==NULL
+#define errno_t                     int
 #endif
 
 
@@ -418,16 +425,148 @@ typedef void (*callback_func) (callback_data_t *data);
 #define EOK (0)
 #endif
 
-typedef enum st_status {
-    CM_EAGAIN = -2,
-    CM_ERROR = -1,
+typedef enum en_cm_errno {
     CM_SUCCESS = 0,
-    CM_TIMEDOUT = 1,
-} status_t;
+    CM_ERROR = 1,
+
+    /* The following are error codes */
+    /* internal errors or common errors: 11 - 99 */
+    ERR_READ_ONLY = 11, /* Update operation attempted in a read-only transaction */    
+    ERR_INTERRUPTED,
+    ERR_QUE_THR_SUSPENDED,
+    ERR_CORRUPTION,  /* data structure corruption noticed */
+
+    ERR_HASHTABLE_DUPLICATE_KEY = 30,
+    ERR_HASHTABLE_KEY_NOT_FOUND,
+
+    /* os errors: 100 - 199 */
+    ERR_ALLOC_MEMORY = 100,
+    ERR_ALLOC_MEMORY_REACH_LIMIT = 101,
+    ERR_OUT_OF_MEMORY = 102,
+    ERR_STACK_OVERFLOW = 103,
+    ERR_CREATE_MEMORY_POOL = 104,
+    ERR_CREATE_MEMORY_CONTEXT = 105,
+
+    ERR_VM_NOT_OPEN = 110,
+    ERR_VM_OPEN_LIMIT_EXCEED  = 111,
+
+    ERR_IO_ERROR = 120, /* Generic IO error */
+    ERR_SYSTEM_CALL = 121,
+
+
+    /* invalid configuration errors: 200 - 299 */
+
+    /* network errors: 300 - 399 */
+
+    /* privilege error: 400 - 499 */
+
+    /* client errors: 500 - 599 */
+
+    /* transaction & XA & lock Errors: 600 - 699 */
+    ERR_TOO_MANY_CONCURRENT_TRXS = 600,
+    ERR_NO_FREE_UNDO_PAGE,
+    ERR_LOCK_WAIT = 601,
+    ERR_LOCK_WAIT_TIMEOUT,
+    ERR_DEADLOCK,
+    ERR_ROLLBACK,
+    ERR_MISSING_HISTORY,  /* required history data has been deleted due to lack of space in rollback segment */
+
+    /* resource manager error: 700 - 799 */
+    ERR_OUT_OF_FILE_SPACE,
+    ERR_MUST_GET_MORE_FILE_SPACE,  /* the database has to be stopped and restarted with more file space */
+    ERR_DISK_IS_FULL,
+
+    /* meta data error: 800 - 899 */
+    ERR_TABLESPACE_EXISTS = 800,  /* file of the same name already exists */
+    ERR_TABLESPACE_DELETED,       /* tablespace was deleted or is being dropped right now */
+    ERR_TABLESPACE_NOT_FOUND,     /* Attempt to delete a tablespace instance that was not found in the tablespace hash table */
+    ERR_TABLESPACE_IS_FULL,
+
+    ERR_TABLE_EXISTS,
+    ERR_TABLE_OR_VIEW_NOT_FOUND,
+    ERR_TABLE_IS_BEING_USED,
+    ERR_TABLE_CHANGED,        /* Some part of table dictionary has changed. Such as index dropped or foreign key dropped */
+
+    ERR_COLUMN_COUNT_REACH_LIMIT,
+    ERR_COLUMN_NOT_EXIST,
+    ERR_COLUMN_EXISTS,
+    ERR_COLUMN_INDEXED,
+
+    ERR_DUPLICATE_KEY = 811,
+    ERR_FOREIGN_DUPLICATE_KEY,  /* foreign key constraints activated by the operation would lead to a duplicate key in some table */
+    ERR_CLUSTER_NOT_FOUND,
+    ERR_CANNOT_ADD_CONSTRAINT,  /* adding a foreign key constraint to a table failed */
+    ERR_CANNOT_DROP_CONSTRAINT, /* dropping a foreign key constraint from a table failed */
+    ERR_NO_REFERENCED_ROW,  /* referenced key value not found for a foreign key in an insert or update of a row */
+    ERR_ROW_IS_REFERENCED,  /* cannot delete or update a row because it contains a key value which is referenced */
+
+    ERR_USER_NOT_EXIST = 820,
+    ERR_ROLE_NOT_EXIST,
+    ERR_FUNCTION_NOT_EXIST,
+
+
+    /* sql engine: 1000 - 1199*/
+    ERR_UNSUPPORTED = 1000,
+    ERR_TYPE_NOT_FOUND,            /*!< Generic error code for "Not found" type of errors */
+
+    // JSON
+    // sql engine parallel
+
+
+    /* PL/SQL Error: 1200 - 1299 */
+    ERR_TYPE_DATETIME_OVERFLOW = 1250,
+    ERR_TYPE_TIMESTAMP_OVERFLOW,
+    ERR_TEXT_FORMAT_ERROR,
+    ERR_UNRECOGNIZED_FORMAT_ERROR,
+    ERR_TYPE_OVERFLOW,
+    ERR_MUTIPLE_FORMAT_ERROR,
+
+    /* job error , 1300 - 1399 */
+
+    /* SPM: 1400 - 1499 */
+
+    /* storage engine: 1500 - 1699 */
+    ERR_ROW_RECORD_TOO_BIG  = 1500,
+    ERR_UNDO_RECORD_TOO_BIG = 1501,
+    ERR_VARIANT_DATA_TOO_BIG = 1502,
+    ERR_RECORD_NOT_FOUND,
+    ERR_END_OF_INDEX,
+    ERR_SNAPSHOT_TOO_OLD,
+    ERR_ALLOC_ITL,
+
+    /* partition error: 1700 - 1799 */
+
+    /* replication error: 1800 - 1899 */
+
+    /* archive error: 2000 - 2099 */
+
+    /* backup error: 2100 - 2199 */
+    /* Tools: 2200 - 2299 */
+    /* dblink: 2300 - 2399 */
+
+    /* tenant error: 3000 - 3299 */
+    /* sharding error: 3300 - 3499 */
+    // re-balance error
+
+    /* CMS:  3500 - 3599 */
+
+    // The max error number defined in g_error_desc[]
+    ERR_ERRNO_CEIL = 3999,
+
+    /* user define errors */
+    ERR_MIN_USER_DEFINE_ERROR = 5000,
+    //ERR_MAX_USER_DEFINE_ERROR = 20000,
+
+    // The max error number can be used in raise exception, it not need to defined in g_error_desc[]
+    ERR_CODE_CEIL = 10000,
+
+} cm_errno_t;
+
+#define status_t     cm_errno_t
 
 // break the loop if ret is not CT_SUCCESS
-#define CM_BREAK_IF_ERROR(ret) \
-    if ((ret) != CM_SUCCESS) { \
+#define CM_BREAK_IF_ERROR(err) \
+    if ((err) != CM_SUCCESS) { \
         break;                 \
     }
 
@@ -443,45 +582,45 @@ typedef enum st_status {
         continue;                \
     }
 
-#define CM_RETURN_IF_ERROR(ret)                 \
+#define CM_RETURN_IF_ERROR(err)                 \
     do {                                        \
-        status_t _status_ = (ret);              \
+        status_t _status_ = (err);              \
         if (UNLIKELY(_status_ != CM_SUCCESS)) { \
             return _status_;                    \
         }                                       \
     } while (0)
 
-#define CM_RETURN_IF_NULL(ret)                 \
+#define CM_RETURN_IF_NULL(err)                 \
     do {                                       \
-        if (UNLIKELY((ret) == NULL)) {         \
+        if (UNLIKELY((err) == NULL)) {         \
             return NULL;                       \
         }                                      \
     } while (0)
 
-#define CM_RETURN_VOID_IF_FALSE(ret)      \
+#define CM_RETURN_VOID_IF_FALSE(err)      \
     do {                                  \
-        if ((ret) == FALSE) {             \
+        if ((err) == FALSE) {             \
             return;                       \
         }                                 \
     } while (0)
 
-#define CM_RETURN_VOID_IF_TRUE(ret)       \
+#define CM_RETURN_VOID_IF_TRUE(err)       \
     do {                                  \
-        if ((ret) == TRUE ) {             \
+        if ((err) == TRUE ) {             \
             return;                       \
         }                                 \
     } while (0)
 
-#define CM_RETURN_FALSE_IF_FALSE(ret)     \
+#define CM_RETURN_FALSE_IF_FALSE(err)     \
     do {                                  \
-        if ((ret) == FALSE) {             \
+        if ((err) == FALSE) {             \
             return FALSE;                 \
         }                                 \
     } while (0)
 
-#define CM_RETURN_TRUE_IF_TRUE(ret)     \
+#define CM_RETURN_TRUE_IF_TRUE(err)     \
     do {                                  \
-        if ((ret) == TRUE) {             \
+        if ((err) == TRUE) {             \
             return TRUE;                 \
         }                                 \
     } while (0)

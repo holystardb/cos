@@ -22,9 +22,7 @@
     <ClInclude Include="..\..\src\include\common\cm_timewheel.h" />
     <ClInclude Include="..\..\src\include\common\cm_type.h" />
     <ClInclude Include="..\..\src\include\common\cm_util.h" />
-    <ClInclude Include="..\..\src\include\common\cm_virtual_mem.h" />
     <ClInclude Include="..\..\src\include\common\cm_datetime.h" />
-    <ClInclude Include="..\..\src\include\common\cm_hashtable.h" />
     <ClInclude Include="..\..\src\include\common\cm_random.h" />
     <ClInclude Include="..\..\src\include\common\cm_error.h" />
     <ClInclude Include="..\..\src\include\common\cm_rwlock.h" />
@@ -36,6 +34,9 @@
     <ClInclude Include="..\..\src\include\common\cm_timer.h" />
     <ClInclude Include="..\..\src\include\common\cm_text.h" />
     <ClInclude Include="..\..\src\include\common\cm_date.h" />
+    <ClInclude Include="..\..\src\include\common\cm_io_cache.h" />
+    <ClInclude Include="..\..\src\include\common\cm_hash_table.h" />
+    <ClInclude Include="..\..\src\include\common\cm_vm_pool.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\src\common\cm_base64.cpp" />
@@ -56,9 +57,7 @@
     <ClCompile Include="..\..\src\common\cm_thread_pool.cpp" />
     <ClCompile Include="..\..\src\common\cm_timewheel.cpp" />
     <ClCompile Include="..\..\src\common\cm_util.cpp" />
-    <ClCompile Include="..\..\src\common\cm_virtual_mem.cpp" />
     <ClCompile Include="..\..\src\common\cm_datetime.cpp" />
-    <ClCompile Include="..\..\src\common\cm_hashtable.cpp" />
     <ClCompile Include="..\..\src\common\cm_random.cpp" />
     <ClCompile Include="..\..\src\common\cm_error.cpp" />
     <ClCompile Include="..\..\src\common\cm_rwlock.cpp" />
@@ -66,5 +65,9 @@
     <ClCompile Include="..\..\src\common\cm_date.cpp" />
     <ClCompile Include="..\..\src\common\cm_timezone.cpp" />
     <ClCompile Include="..\..\src\common\cm_text.cpp" />
+    <ClCompile Include="..\..\src\common\cm_io_cache.cpp" />
+    <ClCompile Include="..\..\src\common\cm_hash_table.cpp" />
+    <ClCompile Include="..\..\src\common\cm_vm_pool.cpp" />
+    <ClCompile Include="..\..\src\common\cm_string.cpp" />
   </ItemGroup>
 </Project>

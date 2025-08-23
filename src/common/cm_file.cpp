@@ -5,9 +5,14 @@
 
 #ifdef __WIN__
 #include "io.h"
+#else
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dlfcn.h>
 #endif // __WIN__
 
-extern shutdown_state_enum_t srv_shutdown_state;
+//extern shutdown_state_enum_t srv_shutdown_state;
 
 /*================================================ file io  ==================================================*/
 
@@ -34,8 +39,6 @@ void os_file_init()
 bool32 os_open_file(char *name, uint32 create_mode, uint32 purpose, os_file_t *file)
 {
     bool32 success = TRUE;
-
-try_again:
 
 #ifdef __WIN__
     DWORD create_flag;
@@ -72,7 +75,6 @@ try_again:
 #else
 
     int create_flag;
-    bool32 retry;
 
     if (create_mode == OS_FILE_OPEN) {
         create_flag = O_RDWR;
@@ -85,7 +87,7 @@ try_again:
         ut_error;
     }
 
-    if (purpose == OS_FILE_NORMAL) {
+    if (purpose == OS_FILE_SYNC) {
         create_flag = create_flag | O_SYNC;
     }
 
@@ -330,14 +332,29 @@ bool32 os_chmod_file(os_file_t file, uint32 perm)
 bool32 os_truncate_file(os_file_t file, uint64 offset)
 {
 #ifdef __WIN__
-    //if (_chsize_s(file, offset) != 0) {
-    if (0) {
-#else
-    if (ftruncate(file, offset) != 0) {
-#endif
+    if (SetFileValidData(file, offset) == 0) {
         return FALSE;
     }
+    if (SetEndOfFile(file) == 0) {
+        return FALSE;
+    }
+#else
+    if (ftruncate(file, offset) != 0) {
+        return FALSE;
+    }
+#endif
+
     return TRUE;
+}
+
+bool32 os_file_set_eof(os_file_t file)
+{
+#ifdef __WIN__
+    return(SetEndOfFile(file));
+#else /* __WIN__ */
+    off_t offs = lseek(file, 0, SEEK_CUR);
+    return(!ftruncate(file, offs));
+#endif /* __WIN__ */
 }
 
 inline void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size)
@@ -584,16 +601,6 @@ bool32 os_file_status(const char* path, bool32 *exists, os_file_type_t *type)
 #endif
 }
 
-bool32 os_file_set_eof(os_file_t file)
-{
-#ifdef __WIN__
-    //HANDLE h = (HANDLE) _get_osfhandle(fileno(file));
-    return(SetEndOfFile(file));
-#else /* __WIN__ */
-    return(!ftruncate(fileno(file), ftell(file)));
-#endif /* __WIN__ */
-}
-
 bool32 os_file_create_directory(const char *pathname, bool32 fail_if_exists)
 {
 #ifdef __WIN__
@@ -637,11 +644,11 @@ int32 get_file_size(char *file_name, long long *file_byte_size)
     if (err != 0) {
         return -1;
     }
-    if (0 != _fseeki64(fp, 0, SEEK_END)) {
+    if (0 != fseeki64(fp, 0, SEEK_END)) {
         fclose(fp);
         return -1;
     }
-    *file_byte_size = _ftelli64(fp);
+    *file_byte_size = ftelli64(fp);
     fclose(fp);
 
     return 0;
@@ -654,12 +661,12 @@ int32 get_file_size(char *file_name, long long *file_byte_size)
 
 #ifndef __WIN__
 
-typedef int (*os_aio_setup)(int max_events, io_context_t *ctx);
+typedef int (*os_aio_setup)(int max_events, io_context_t *ctxp);
 typedef int (*os_aio_destroy)(io_context_t ctx);
-typedef int (*os_aio_submit)(io_context_t ctx, long nr, struct iocb *ios[]);
-typedef int (*os_aio_cancel)(io_context_t ctx, struct iocb *iocb, io_event_t *event);
+typedef int (*os_aio_submit)(io_context_t ctx, long nr, struct iocb *cbp[]);
+typedef int (*os_aio_cancel)(io_context_t ctx, struct iocb *iocb, struct io_event *event);
 typedef int (*os_aio_getevents)(io_context_t ctx, long min_nr, long nr,
-                                      io_event_t *events, struct timespec *timeout);
+                                      struct io_event *events, struct timespec *timeout);
 
 static os_aio_setup aio_setup_func = NULL;
 static os_aio_destroy aio_destroy_func = NULL;
@@ -713,7 +720,7 @@ static os_aio_slot_t* os_aio_context_alloc_slot(
 #ifdef __WIN__
     OVERLAPPED*     control;
 #else
-    cm_iocb_t*      iocb;
+    struct iocb*    iocb;
     off_t           aio_offset;
 #endif /* __WIN__ */
 
@@ -756,8 +763,6 @@ loop:
 #else
     /* Check if we are dealing with 64 bit arch. If not then make sure that offset fits in 32 bits. */
     aio_offset = (off_t) offset;
-
-    ut_a(sizeof(aio_offset) >= sizeof(offset) || ((os_offset_t) aio_offset) == offset);
 
     iocb = &slot->control;
     if (type == OS_FILE_READ) {
@@ -823,15 +828,15 @@ static int32 os_aio_windows_handle(
         index = WaitForMultipleObjects(context->slot_count, context->handles, FALSE, dwMilliseconds);
     }
 
-    if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
-        if (message1 && *message1) {
-            *message1 = NULL;
-        }
-        if (message2 && *message2) {
-            *message2 = NULL;
-        }
-        return OS_FILE_IO_COMPLETION;
-    }
+    //if (srv_shutdown_state == SHUTDOWN_EXIT_THREADS) {
+    //    if (message1 && *message1) {
+    //        *message1 = NULL;
+    //    }
+    //    if (message2 && *message2) {
+    //        *message2 = NULL;
+    //    }
+    //    return OS_FILE_IO_COMPLETION;
+    //}
 
     if (index >= WAIT_OBJECT_0 && index < WAIT_OBJECT_0 + context->slot_count) {
         // get current slot
@@ -889,25 +894,30 @@ static int32 os_aio_windows_handle(
 
 static bool32 os_aio_linux_handle(
     os_aio_context_t* context,
+    os_aio_slot_t**   slot, // in and out:
     uint64            timeout_us,
     void**            message1, /* out: message to be passed along with the aio operation */
     void**            message2, /* out: message to be passed along with the aio operation */
     uint32*           type) /* out: OS_FILE_WRITE or OS_FILE_READ */
 {
-    os_aio_slot_t*    slot;
-    int               ret;
+    int32             ret;
     struct timespec   timeout;
 
 retry:
 
+    memset(context->io_events, 0, sizeof(struct io_event) * context->slot_count);
     if (timeout_us != OS_WAIT_INFINITE_TIME) {
         timeout.tv_sec = timeout_us / 1000000;
         timeout.tv_nsec = (timeout_us % 1000000) * 1000;
     }
 
-    ret = aio_getevents_func(context->io_context, 1,
-        context->slot_count, context->io_events,
-        timeout_us == OS_WAIT_INFINITE_TIME ? NULL : &timeout);
+    if (slot && *slot) {
+        ret = aio_getevents_func(context->io_context, 1, 1, context->io_events,
+            timeout_us == OS_WAIT_INFINITE_TIME ? NULL : &timeout);
+    } else {
+        ret = aio_getevents_func(context->io_context, 1, context->slot_count, context->io_events,
+            timeout_us == OS_WAIT_INFINITE_TIME ? NULL : &timeout);
+    }
     if (ret <= 0) {
         //if (unlikely(srv_shutdown_state == SRV_SHUTDOWN_EXIT_THREADS)) {
         //    return;
@@ -935,21 +945,22 @@ retry:
     }
 
     //
+    os_aio_slot_t* tmp_slot;
     for (uint32 i = 0; i < ret; i++) {
-        struct iocb* control = (struct iocb*) events[i].obj;
+        struct iocb* control = (struct iocb*)context->io_events[i].obj;
         ut_a(control != NULL);
 
-        slot = (os_aio_slot_t*) control->data;
-        ut_a(slot != NULL);
-        ut_a(slot->is_used);
+        tmp_slot = (os_aio_slot_t*)control->data;
+        ut_a(tmp_slot != NULL);
+        ut_a(tmp_slot->is_used);
 
         /* Mark this request as completed.
            The error handling will be done in the calling function. */
-        if (events[i].res2 == 0 && events[i].res == (long) slot->len) {
-            slot->ret = OS_FILE_IO_COMPLETION;
+        if (context->io_events[i].res2 == 0 && context->io_events[i].res == (long)tmp_slot->len) {
+            tmp_slot->ret = OS_FILE_IO_COMPLETION;
         } else {
-            errno = -events[i].res2;
-            slot->ret = os_file_get_last_error();
+            errno = -context->io_events[i].res2;
+            tmp_slot->ret = os_file_get_last_error();
         }
     }
 
@@ -959,13 +970,13 @@ retry:
 static bool32 os_aio_linux_submit(os_aio_context_t* context, os_aio_slot_t* slot)
 {
     int           ret;
-    cm_iocb_t*    iocb;
+    struct iocb*  iocb;
 
     ut_ad(slot != NULL);
     ut_a(slot->is_used == TRUE);
 
     iocb = &slot->control;
-    ret = aio_submit_func(context, 1, &iocb);
+    ret = aio_submit_func(context->io_context, 1, &iocb);
 
     /* io_submit returns number of successfully queued requests or -errno. */
     if (unlikely(ret != 1)) {
@@ -1054,7 +1065,7 @@ inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us)
 #ifdef __WIN__
     ret = os_aio_windows_handle(slot->context, &slot, timeout_us, NULL, NULL, NULL);
 #else
-    ret = os_aio_linux_handle(slot->context, timeout_us, NULL, NULL, NULL);
+    ret = os_aio_linux_handle(slot->context, &slot, timeout_us, NULL, NULL, NULL);
 #endif /* WIN_ASYNC_IO */
 
     os_aio_context_free_slot(slot);
@@ -1162,13 +1173,13 @@ os_aio_array_t* os_aio_array_create(
         ctx->handles = (HANDLE *)ut_malloc_zero(ctx->slot_count * sizeof(HANDLE));
 #else
         // Initialize the io_context array
-        ctx->io_context = (io_context_t *)ut_malloc_zero(sizeof(io_context_t));
+        //ctx->io_context = (io_context_t *)ut_malloc_zero(sizeof(io_context_t));
         if (aio_setup_func(ctx->slot_count, &ctx->io_context) != 0) {
             // If something bad happened during aio setup
             return NULL;
         }
         // Initialize the event array. One event per slot
-        ctx->aio_events = (struct io_event *)ut_malloc_zero(ctx->slot_count * sizeof(struct io_event)));
+        ctx->io_events = (struct io_event *)ut_malloc_zero(ctx->slot_count * sizeof(struct io_event));
 #endif
 
         ctx->slots = (os_aio_slot_t *)ut_malloc_zero(ctx->slot_count * sizeof(os_aio_slot_t));
@@ -1183,7 +1194,7 @@ os_aio_array_t* os_aio_array_create(
             over->hEvent = slot->handle;
             ctx->handles[i] = slot->handle;
 #else
-            memset(&slot->control, 0x0, sizeof(slot->control));
+            memset(&slot->control, 0x0, sizeof(struct iocb));
             slot->n_bytes = 0;
 #endif /* __WIN__ */
         }
@@ -1210,8 +1221,8 @@ void os_aio_array_free(os_aio_array_t* array)
 #ifdef __WIN__
         ut_free(ctx->handles);
 #else
-        aio_setup_func(ctx->io_context);
-        ut_free(ctx->io_context);
+        aio_destroy_func(ctx->io_context);
+        //ut_free(ctx->io_context);
         ut_free(ctx->io_events);
 #endif
         os_event_destroy(ctx->slot_event);

@@ -14,6 +14,9 @@
 buf_pool_t *buf_pool_ptr;
 uint32      buf_pool_instances;
 
+/** Number of attemtps made to read in a page in the buffer pool */
+static const uint32 BUF_PAGE_READ_MAX_RETRIES = 100;
+
 
 static void buf_block_init_low(buf_block_t *block);
 
@@ -194,7 +197,7 @@ inline mutex_t* buf_page_get_mutex(const buf_page_t *bpage) /*!< in: pointer to 
 // Calculates a folded value of a file page address to use in the page hash table
 uint32 buf_page_address_fold(const page_id_t *page_id)
 {
-    return (page_id->space_id() << 20) + page_id->space_id() + page_id->page_no();
+    return (page_id->get_space_id() << 20) + page_id->get_space_id() + page_id->get_page_no();
 }
 
 
@@ -275,8 +278,8 @@ inline bool32 buf_page_io_complete(buf_page_t* bpage, buf_io_fix_t io_type, bool
     buf_pool_t *buf_pool = buf_pool_from_bpage(bpage);
 
     ut_a(buf_page_in_file(bpage));
-    ut_ad(bpage->id.page_no() == mach_read_from_4(((buf_block_t*)bpage)->frame + FIL_PAGE_OFFSET));
-    ut_ad(bpage->id.space_id() == mach_read_from_4(((buf_block_t*)bpage)->frame + FIL_PAGE_SPACE));
+    ut_ad(bpage->id.get_page_no() == mach_read_from_4(((buf_block_t*)bpage)->frame + FIL_PAGE_OFFSET));
+    ut_ad(bpage->id.get_space_id() == mach_read_from_4(((buf_block_t*)bpage)->frame + FIL_PAGE_SPACE));
 
     switch (io_type) {
     case BUF_IO_READ: {
@@ -376,7 +379,7 @@ static status_t buf_read_page_callback(int32 code, os_aio_slot_t* slot)
 // return:
 //   1 if a read request was queued,
 //   0 if the page already resided in buf_pool, or if the tablespace does not exist or is being dropped
-static inline bool32 buf_read_page_low(
+static inline uint32 buf_read_page_low(
     buf_pool_t* buf_pool,
     status_t* err, // out: CM_SUCCESS or DB_TABLESPACE_DELETED if we are trying
                    //      to read from a non-existent tablespace,
@@ -394,7 +397,7 @@ static inline bool32 buf_read_page_low(
     bpage = buf_page_init_for_read(buf_pool, err, page_id, page_size);
     if (bpage == NULL) {
         // The page is already in the buffer pool
-        return TRUE;
+        return 0;
     }
 
     ut_ad(buf_page_in_file(bpage));
@@ -405,8 +408,9 @@ static inline bool32 buf_read_page_low(
     if (*err != CM_SUCCESS) {
         if (*err == ERR_TABLESPACE_DELETED) {
             buf_read_page_handle_error(buf_pool, bpage);
-            return FALSE;
+            return 0;
         }
+        /* else */
         ut_error;
     }
 
@@ -415,7 +419,7 @@ static inline bool32 buf_read_page_low(
         buf_page_io_complete(bpage, BUF_IO_READ, FALSE);
     }
 
-    return TRUE;
+    return 1;
 }
 
 // High-level function which reads a page asynchronously
@@ -425,20 +429,20 @@ static inline bool32 buf_read_page_low(
 // return TRUE if page has been read in, FALSE in case of failure */
 static inline bool32 buf_read_page(buf_pool_t* buf_pool, const page_id_t& page_id, const page_size_t& page_size)
 {
-    bool32    ret;
-    status_t  err;
+    uint32 count;
+    status_t err;
 
     // We do the i/o in the synchronous aio mode to save thread switches: hence TRUE
-    ret = buf_read_page_low(buf_pool, &err, TRUE, page_id, page_size);
-    srv_stats.buf_pool_reads.add(1);
+    count = buf_read_page_low(buf_pool, &err, TRUE, page_id, page_size);
+    srv_stats.buf_pool_reads.add(count);
     if (err == ERR_TABLESPACE_DELETED) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
             "Error: trying to access tablespace %lu page no. %lu,\n"
             "but the tablespace does not exist or is just being dropped.\n",
-            page_id.space_id(), page_id.page_no());
+            page_id.get_space_id(), page_id.get_page_no());
     }
 
-    return ret;
+    return (count > 0);
 }
 
 static bool32 buf_block_wait_complete_io(buf_block_t* block, buf_io_fix_t io_fix)
@@ -489,7 +493,43 @@ static inline void buf_page_update_touch_number(buf_page_t* bpage)
     buf_page_set_accessed(bpage, now_us);
 }
 
-inline buf_block_t *buf_page_get_gen(const page_id_t& page_id, const page_size_t& page_size,
+static inline void buf_page_prefetch_read(const page_id_t& page_id, const page_size_t& page_size)
+{
+    uint32 space_size = fil_space_get_size(page_id.get_space_id());
+    if (space_size == 0) {
+        return;
+    }
+
+    //
+    const uint32 buf_prefetch_read_area = 64;
+    uint32 low  = (page_id.get_page_no() / buf_prefetch_read_area) * buf_prefetch_read_area;
+    uint32 high = (page_id.get_page_no() / buf_prefetch_read_area + 1) * buf_prefetch_read_area;
+    if (high > space_size) {
+        high = space_size;
+    }
+
+    status_t err;
+    uint32 count = 0;
+    for (uint32 i = low; i < high; i++) {
+        const page_id_t prefetch_page_id(page_id.get_space_id(), low);
+
+        buf_pool_t* buf_pool = buf_pool_from_page_id(prefetch_page_id);
+        buf_pool->stat.n_page_gets++;
+
+        // We do the i/o in the asynchronous aio mode
+        count += buf_read_page_low(buf_pool, &err, FALSE, prefetch_page_id, page_size);
+        if (err == ERR_TABLESPACE_DELETED) {
+            LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
+                "Error: trying to access tablespace %lu page no. %lu,\n"
+                "but the tablespace does not exist or is just being dropped.\n",
+                page_id.get_space_id(), page_id.get_page_no());
+        }
+    }
+
+    srv_stats.buf_pool_reads.add(count);
+}
+
+inline buf_block_t* buf_page_get_gen(const page_id_t& page_id, const page_size_t& page_size,
     rw_lock_type_t rw_latch, buf_block_t* guess, Page_fetch mode, mtr_t* mtr)
 {
     buf_block_t* block;
@@ -532,15 +572,20 @@ retry:
             return NULL;
         }
 
-        if (!buf_read_page(buf_pool, page_id, page_size)) {
+        if (buf_read_page(buf_pool, page_id, page_size)) {
+            // prefetch page
+            buf_page_prefetch_read(page_id, page_size);
+            retries = 0;
+        } else if (retries < BUF_PAGE_READ_MAX_RETRIES) {
+            retries++;
+        } else {
             LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
                 "Error: Unable to read tablespace %lu page no %lu into the buffer pool\n"
-                "The most probable cause of this error may be that the"
-                " table has been corrupted. Aborting...\n",
-                page_id.space_id(), page_id.page_no());
+                "The most probable cause of this error may be that the table has been corrupted. Aborting...\n",
+                page_id.get_space_id(), page_id.get_page_no());
             ut_error;
         }
-        retries++;
+
         goto retry;
     }
 
@@ -572,7 +617,7 @@ retry:
     // prefetch
     //if (!block->page.is_resident && mode != BUF_PEEK_IF_IN_POOL && !access_time) {
         // In the case of a first access, try to apply linear read-ahead
-        //buf_read_ahead_linear(page_id, page_size, ibuf_inside(mtr));
+        //buf_page_prefetch_read_linear(page_id, page_size);
     //}
 
     return block;
@@ -619,7 +664,7 @@ static void buf_page_init(buf_pool_t* buf_pool, const page_id_t& page_id,
     } else {
         LOGGER_ERROR(LOGGER, LOG_MODULE_BUFFERPOOL,
             "buf_page_init: Page (space %lu, page %lu) already found in the hash table: %p, %p",
-            page_id.space_id(), page_id.page_no(), (const void*)hash_page, (const void*)block);
+            page_id.get_space_id(), page_id.get_page_no(), (const void*)hash_page, (const void*)block);
         ut_error;
     }
 
@@ -660,7 +705,7 @@ inline buf_block_t* buf_page_create(const page_id_t& page_id, const page_size_t&
     // If we get here, the page was not in buf_pool: init it there
 
     LOGGER_DEBUG(LOGGER, LOG_MODULE_BUFFERPOOL,
-        "buf_page_create: create page %lu : %lu", page_id.space_id(), page_id.page_no());
+        "buf_page_create: create page %lu : %lu", page_id.get_space_id(), page_id.get_page_no());
 
     block = free_block;
 
@@ -697,8 +742,8 @@ inline buf_block_t* buf_page_create(const page_id_t& page_id, const page_size_t&
     } else {
         mach_write_to_2(frame + FIL_PAGE_TYPE, FIL_PAGE_TYPE_ALLOCATED);
     }
-    mach_write_to_4(frame + FIL_PAGE_SPACE, page_id.space_id());
-    mach_write_to_4(frame + FIL_PAGE_OFFSET, page_id.page_no());
+    mach_write_to_4(frame + FIL_PAGE_SPACE, page_id.get_space_id());
+    mach_write_to_4(frame + FIL_PAGE_OFFSET, page_id.get_page_no());
     memset(frame + FIL_PAGE_FILE_FLUSH_LSN, 0, 8);
 
     return block;
@@ -831,17 +876,17 @@ inline void buf_page_unfix(buf_page_t* bpage)
 {
     ut_a(bpage->buf_fix_count > 0);
     atomic32_dec(&bpage->buf_fix_count);
-    if (bpage->id.space_id() == 0 && bpage->id.page_no() == 322) {
+    if (bpage->id.get_space_id() == 0 && bpage->id.get_page_no() == 322) {
         printf("buf_page_unfix: page no %lu fix count %lu\n",
-            bpage->id.page_no(), bpage->buf_fix_count);
+            bpage->id.get_page_no(), bpage->buf_fix_count);
     }
 }
 
 inline void buf_block_lock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* mtr)
 {
-    if (block->page.id.space_id() == 0 && block->page.id.page_no() == 322) {
+    if (block->page.id.get_space_id() == 0 && block->page.id.get_page_no() == 322) {
         printf("buf_block_lock: lock %lu page no %lu fix count %lu\n",
-            lock_type, block->page.id.page_no(), block->page.buf_fix_count);
+            lock_type, block->page.id.get_page_no(), block->page.buf_fix_count);
     }
     if (lock_type == RW_S_LATCH) {
         rw_lock_s_lock(&(block->rw_lock));
@@ -870,11 +915,37 @@ inline void buf_block_unlock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t
     } else {
         mtr_memo_release(mtr, block, MTR_MEMO_BUF_FIX);
     }
-    if (block->page.id.space_id() == 0 && block->page.id.page_no() == 322) {
+    if (block->page.id.get_space_id() == 0 && block->page.id.get_page_no() == 322) {
         printf("buf_block_unlock: lock %lu page no %lu fix count %lu\n",
-            lock_type, block->page.id.page_no(), block->page.buf_fix_count);
+            lock_type, block->page.id.get_page_no(), block->page.buf_fix_count);
     }
 }
+
+// Increments the modify clock of a frame by 1.
+// The caller must (1) own the buf_pool mutex and block bufferfix count has to be zero,
+//                 (2) or own an x-lock on the block.
+inline void buf_block_modify_clock_inc(buf_block_t* block)
+{
+#ifdef UNIV_SYNC_DEBUG
+    buf_pool_t* buf_pool = buf_pool_from_bpage((buf_page_t*)block);
+    ut_ad((buf_pool_mutex_own(buf_pool)  && (block->page.buf_fix_count == 0))
+          || rw_lock_own(&(block->rw_lock), RW_LOCK_EXCLUSIVE));
+#endif /* UNIV_SYNC_DEBUG */
+
+    block->modify_clock++;
+}
+
+// Returns the value of the modify clock.
+// The caller must have an s-lock or x-lock on the block.
+inline uint64 buf_block_get_modify_clock(buf_block_t* block)
+{
+#ifdef UNIV_SYNC_DEBUG
+    ut_ad(rw_lock_own(&(block->rw_lock), RW_LOCK_SHARED)  || rw_lock_own(&(block->rw_lock), RW_LOCK_EXCLUSIVE));
+#endif /* UNIV_SYNC_DEBUG */
+
+    return(block->modify_clock);
+}
+
 
 inline buf_block_t *buf_block_alloc(buf_pool_t *buf_pool)
 {
@@ -994,10 +1065,6 @@ static void buf_block_init(
     mutex_create(&block->mutex);
 
     rw_lock_create(&block->rw_lock);
-
-    //ut_d(rw_lock_create(buf_block_debug_latch_key, &block->debug_latch, SYNC_NO_ORDER_CHECK));
-
-    block->rw_lock.is_block_lock = 1;
 
     ut_ad(rw_lock_validate(&(block->rw_lock)));
 }
@@ -1239,8 +1306,8 @@ status_t buf_pool_init(uint64 total_size, uint32 n_instances, uint32 page_hash_l
 inline buf_pool_t* buf_pool_from_page_id(const page_id_t& page_id)
 {
     /* 2log of BUF_READ_AHEAD_AREA (64) */
-    page_no_t ignored_page_no = page_id.page_no() >> 6;
-    page_id_t id(page_id.space_id(), ignored_page_no);
+    page_no_t ignored_page_no = page_id.get_page_no() >> 6;
+    page_id_t id(page_id.get_space_id(), ignored_page_no);
 
     uint32 i = id.fold() % buf_pool_instances;
 
@@ -1289,7 +1356,7 @@ lsn_t buf_pool_get_recovery_lsn(void)
 
         mutex_enter(&buf_pool->flush_list_mutex);
 
-        block = UT_LIST_GET_LAST(buf_pool->flush_list);
+        block = UT_LIST_GET_FIRST(buf_pool->flush_list);
         if (block != NULL) {
             ut_ad(block->page.in_flush_list);
             lsn = block->page.recovery_lsn;

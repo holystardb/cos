@@ -140,10 +140,10 @@ public:
     //        - BUF_BLOCK_ZIP_PAGE:   zip_clean
     //UT_LIST_NODE_T(buf_page_t) list_node;
 
-    // Writes to this field must be covered by both block->mutex and buf_pool->flush_list_mutex.
+    // Writes to this field must be covered by both block->rw_lock and buf_pool->flush_list_mutex.
     // Hence reads can happen while holding any one of the two mutexes.
     uint64 recovery_lsn;
-    // protected by block->mutex
+    // protected by block->rw_lock
     uint64 newest_modification;
 
     UT_LIST_NODE_T(buf_page_t) LRU_list_node;
@@ -201,8 +201,9 @@ public:
 
     mutex_t mutex;
 
-    page_no_t get_page_no() const { return (page.id.page_no()); }
-    space_id_t get_space_id() const { return (page.id.space_id()); }
+    page_id_t get_page_id() const { return page.id; }
+    page_no_t get_page_no() const { return (page.id.get_page_no()); }
+    space_id_t get_space_id() const { return (page.id.get_space_id()); }
     page_no_t get_next_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_NEXT)); }
     page_no_t get_prev_page_no() const { return (mach_read_from_4(frame + FIL_PAGE_PREV)); }
     page_type_t get_page_type() const { return (mach_read_from_2(frame + FIL_PAGE_TYPE) & FIL_PAGE_TYPE_MASK); }
@@ -372,6 +373,9 @@ extern buf_block_t* buf_block_align(const byte* ptr);
 
 extern inline void buf_block_lock_and_fix(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* mtr);
 extern inline void buf_block_unlock(buf_block_t* block, rw_lock_type_t lock_type, mtr_t* mtr);
+
+extern inline void buf_block_modify_clock_inc(buf_block_t* block);
+extern inline uint64 buf_block_get_modify_clock(buf_block_t* block);
 
 extern inline void buf_block_set_state(buf_block_t *block, buf_page_state_t state);
 extern inline buf_page_state_t buf_block_get_state(const buf_block_t *block);

@@ -21,7 +21,7 @@ typedef struct ST_HASH_CELL{
 typedef struct ST_HASH_TABLE {
     enum hash_table_sync_t type; /*!< type of hash_table. */
 
-    HASH_CELL_T         *array; /* pointer to cell array */
+    HASH_CELL_T       *array; /* pointer to cell array */
     uint32             n_cells; /* number of cells in the hash table */
     uint32 n_sync_obj; /* if sync_objs != NULL, then the number of either the number of mutexes or 
                           the number of rw_locks depending on the type. Must be a power of 2 */

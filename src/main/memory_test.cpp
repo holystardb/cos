@@ -20,14 +20,14 @@ void test_memory()
     memory_pool_t* pool;
     memory_context_t* context;
     memory_stack_context_t* stack_context;
-    uint64 size = 1024 * 1024 * 10;
+    uint64 memory_size = 1024 * 1024 * 10;
     bool32 is_extend = FALSE;
-    uint32 local_page_count = 8;
-    uint32 max_page_count = 1024;
+    uint32 initial_page_count = 8;
+    uint32 lower_page_count = 1024;
     uint32 page_size = 1024 * 8;
 
-    area = marea_create(size, is_extend);
-    pool = mpool_create(area, 0, local_page_count, max_page_count, page_size);
+    area = marea_create(memory_size, is_extend);
+    pool = mpool_create(area, "mem pool", memory_size, page_size, initial_page_count, lower_page_count);
     
 
     printf("case 1:\n");

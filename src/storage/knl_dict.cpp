@@ -502,13 +502,13 @@ dict_table_t* dict_mem_table_create(
         return NULL;
     }
 
-    if (column_count > DICT_TABLE_COLUMN_MAX_COUNT) {
+    if (column_count == 0 || column_count > DICT_TABLE_COLUMN_MAX_COUNT) {
         return NULL;
     }
 
     memory_stack_context_t* mem_stack_ctx = dict_cache_alloc_mem_stack_context();
     if (mem_stack_ctx == NULL) {
-        CM_SET_ERROR(ERR_ALLOC_MEMORY_CONTEXT, "creating table");
+        CM_SET_ERROR(ERR_CREATE_MEMORY_CONTEXT, "creating table");
         return NULL;
     }
     table = (dict_table_t *)dict_cache_alloc_memory(table_id, mem_stack_ctx, sizeof(dict_table_t));
@@ -530,18 +530,8 @@ dict_table_t* dict_mem_table_create(
     table->column_count = column_count;
     table->column_index = 0;
     table->status = 0;
-
     mutex_create(&table->mutex);
     UT_LIST_INIT(table->indexes);
-
-    if (column_count > 0) {
-        table->columns = (dict_col_t*)dict_cache_alloc_memory(table_id, table->mcontext_stack,
-                                                              column_count * sizeof(dict_col_t));
-        if (table->columns == NULL) {
-            CM_SET_ERROR(ERR_ALLOC_MEMORY, column_count * sizeof(dict_col_t), "creating table");
-            goto err_exit;
-        }
-    }
 
     table->name = (char *)dict_cache_alloc_memory(table_id, table->mcontext_stack, name_len);
     if (table->name == NULL) {
@@ -549,6 +539,14 @@ dict_table_t* dict_mem_table_create(
         goto err_exit;
     }
     memcpy(table->name, name, name_len);
+
+    table->columns = (dict_col_t**)dict_cache_alloc_memory(table_id, table->mcontext_stack,
+                                                           column_count * sizeof(dict_col_t*));
+    if (table->columns == NULL) {
+        CM_SET_ERROR(ERR_ALLOC_MEMORY, column_count * sizeof(dict_col_t*), "creating table");
+        goto err_exit;
+    }
+    memset((char *)table->columns, 0x00, column_count * sizeof(dict_col_t*));
 
     return table;
 
@@ -572,25 +570,30 @@ status_t dict_mem_table_add_col(
     }
 
     for (uint32 i = 0; i < table->column_index; i++) {
-        if (strncasecmp(name, table->columns[i].name, strlen(name)) == 0) {
+        if (strncasecmp(name, table->columns[i]->name, strlen(name) + 1) == 0) {
             CM_SET_ERROR(ERR_COLUMN_EXISTS, name);
             return CM_ERROR;
         }
     }
 
-    dict_col_t* col = dict_table_get_nth_col(table, table->column_index);
-    col->ind = table->column_index;
-    table->column_index++;
+    void* save_ptr = mcontext_stack_save(table->mcontext_stack);
+
+    dict_col_t* col = (dict_col_t*)dict_cache_alloc_memory(table->id, table->mcontext_stack, sizeof(dict_col_t));
+    if (col == NULL) {
+        CM_SET_ERROR(ERR_ALLOC_MEMORY, sizeof(dict_col_t), "add column");
+        goto err_exit;
+    }
+    memset((char *)col, 0x00, sizeof(dict_col_t));
+    col->mtype = mtype;
 
     col->name = (char *)dict_cache_alloc_memory(table->id, table->mcontext_stack, (uint32)strlen(name) + 1);
     if (col->name == NULL) {
-        CM_SET_ERROR(ERR_ALLOC_MEMORY, sizeof(dict_table_t), "creating table");
+        CM_SET_ERROR(ERR_ALLOC_MEMORY, (uint32)strlen(name) + 1, "add column");
         return CM_ERROR;
     }
     memcpy(col->name, name, strlen(name) + 1);
-    col->mtype = mtype;
 
-    switch (mtype) {
+    switch (col->mtype) {
     case DATA_VARCHAR:
     case DATA_STRING:
     case DATA_CHAR:
@@ -613,12 +616,10 @@ status_t dict_mem_table_add_col(
     case DATA_TINYINT:
     case DATA_BOOLEAN:
         break;
-
     case DATA_FLOAT:
     case DATA_DOUBLE:
     case DATA_REAL:
         break;
-
     case DATA_TIMESTAMP:
     case DATA_TIMESTAMP_TZ:
     case DATA_TIMESTAMP_LTZ:
@@ -629,12 +630,22 @@ status_t dict_mem_table_add_col(
     case DATA_INTERVAL_YM:
     case DATA_INTERVAL_DS:
         break;
-
     default:
         break;
     }
 
+    //
+    col->index = table->column_index;
+    table->columns[col->index] = col;
+    table->column_index++;
+
     return CM_SUCCESS;
+
+err_exit:
+
+    mcontext_stack_restore(table->mcontext_stack, save_ptr);
+
+    return CM_ERROR;
 }
 
 // Adds a field definition to an index
@@ -649,7 +660,7 @@ status_t dict_mem_index_add_field(
 
     uint32 ind = DICT_TABLE_COLUMN_MAX_COUNT;
     for (uint32 i = 0; i < index->table->column_index; i++) {
-        if (strncasecmp(name, index->table->columns[i].name, strlen(name)) == 0) {
+        if (strncasecmp(name, index->table->columns[i]->name, strlen(name)+1) == 0) {
             ind = i;
             break;
         }
@@ -695,7 +706,7 @@ dict_index_t* dict_mem_index_create(
 
     index = (dict_index_t *)dict_cache_alloc_memory(table->id, table->mcontext_stack, sizeof(dict_index_t));
     if (index == NULL) {
-        return NULL;
+        goto err_exit;
     }
     memset((char*)index, 0x00, sizeof(dict_index_t));
 
@@ -710,7 +721,7 @@ dict_index_t* dict_mem_index_create(
     if (index->fields == NULL) {
         goto err_exit;
     }
-
+    memset((char*)index->fields, 0x00, sizeof(dict_field_t));
     index->table = table;
     index->type = type;
     index->id = index_id;
@@ -1049,6 +1060,79 @@ static dict_table_t* dict_load_table(que_sess_t* sess, uint64 user_id, char* tab
     return table;
 }
 
+
+
+
+
+
+
+
+void heap_fetch()
+{
+    dict_table_t* table;
+    tuple_slot_t *slot;
+    memory_context_t mem_ctx;
+    snapshot_t* snapshot;
+    scan_cursor_t* scan;
+    row_fetch_direction_t direction;
+
+    scan = heap_begin_scan(mem_ctx, table, snapshot, 0, NULL);
+    slot = create_tuple_table_slot(mem_ctx, table);
+
+    while (heap_get_next_slot(scan, direction, slot)) {
+        /* Deconstruct the tuple ... */
+        heap_slot_get_attrs(slot);
+        
+    }
+
+    heap_end_scan(scan);
+    destroy_tuple_table_slot(slot);
+
+}
+
+
+
+
+/*
+ * slot_getattr - fetch one attribute of the slot's contents.
+ */
+static inline Datum slot_get_attr(tuple_slot_t* slot, int col_ind, bool32* isnull)
+{
+    *isnull = slot->tts_isnull[col_ind - 1];
+    return slot->values[col_ind - 1];
+}
+
+
+/* ----------------
+ *		FormIndexDatum
+ *			Construct values[] and isnull[] arrays for a new index tuple.
+ */
+void FormIndexDatum(dict_index_t* index, tuple_slot_t *slot, Datum *values, bool32 *isnull)
+{
+    for (uint32 i = 0; i < index->field_count; i++)
+    {
+        dict_field_t* field = index->fields[i];
+        values[i] = slot_getattr(slot, field->col_ind, &isnull[i]);
+    }
+}
+
+
+void index_fetch()
+{
+    IndexScanDesc index_scan;
+	ScanKeyData scankeys[INDEX_MAX_KEYS];
+
+	index_scan = index_beginscan(heap, index, &DirtySnapshot, indnkeyatts, 0);
+	index_rescan(index_scan, scankeys, indnkeyatts, NULL, 0);
+    TupleTableSlot* slot = table_slot_create(heap, NULL);
+
+	while (index_getnext_slot(index_scan, ForwardScanDirection, slot))
+	{
+	}
+	index_endscan(index_scan);
+	ExecDropSingleTupleTableSlot(existing_slot);
+
+}
 
 inline status_t dict_get_table(que_sess_t* sess, uint64 user_id, char* table_name, dict_table_t** table)
 {

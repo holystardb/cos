@@ -103,13 +103,13 @@ MY_LOCALE my_locale_en_US
 
 /***** LOCALE BEGIN zh_CN: Chinese - Peoples Republic of China *****/
 static const char *my_locale_month_names_zh_CN[13] = 
- {"涓€�?,"浜屾湀","涓夋湀","鍥涙湀","浜旀湀","鍏湀","涓冩湀","鍏湀","涔濇湀","鍗佹湀","鍗佷竴鏈?,"鍗佷簩鏈?, NullS };
+ {"一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月", NullS };
 static const char *my_locale_ab_month_names_zh_CN[13] = 
- {" 1�?," 2�?," 3�?," 4�?," 5�?," 6�?," 7�?," 8�?," 9�?,"10�?,"11�?,"12�?, NullS };
+ {" 1月"," 2月"," 3月"," 4月"," 5月"," 6月"," 7月"," 8月"," 9月","10月","11月","12月", NullS };
 static const char *my_locale_day_names_zh_CN[8] = 
- {"鏄熸湡涓�?,"鏄熸湡浜?,"鏄熸湡涓?,"鏄熸湡鍥?,"鏄熸湡浜?,"鏄熸湡鍏?,"鏄熸湡鏃?, NullS };
+ {"星期一","星期二","星期三","星期四","星期五","星期六","星期日", NullS };
 static const char *my_locale_ab_day_names_zh_CN[8] = 
- {"涓€","�?,"�?,"�?,"�?,"�?,"�?, NullS };
+ {"一","二","三","四","五","六","日", NullS };
 static TYPELIB my_locale_typelib_month_names_zh_CN = 
  { array_elements(my_locale_month_names_zh_CN)-1, "", my_locale_month_names_zh_CN, NULL };
 static TYPELIB my_locale_typelib_ab_month_names_zh_CN = 

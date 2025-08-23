@@ -95,8 +95,7 @@ bool32 buf_flush_single_page_from_LRU(buf_pool_t *buf_pool)
 // Inserts a modified block into the flush list
 static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_block_t* block)
 {
-    ut_ad(mutex_own(&block->mutex));
-    ut_ad(block->is_resident() || rw_lock_own(&block->rw_lock, RW_LOCK_EXCLUSIVE));
+    ut_ad(rw_lock_own(&block->rw_lock, RW_LOCK_EXCLUSIVE));
 
     mutex_enter(&buf_pool->flush_list_mutex, &buf_pool->stat.flush_list_mutex_stat);
 
@@ -111,7 +110,7 @@ static inline void buf_flush_insert_into_flush_list(buf_pool_t* buf_pool, buf_bl
 
     LOGGER_DEBUG(LOGGER, LOG_MODULE_BUFFERPOOL,
         "buf_flush_insert_into_flush_list: block (space id = %lu, page no = %lu) newest_modification = %llu recovery_lsn = %llu",
-        block->page.id.space_id(), block->page.id.page_no(), block->page.newest_modification, block->page.recovery_lsn);
+        block->page.id.get_space_id(), block->page.id.get_page_no(), block->page.newest_modification, block->page.recovery_lsn);
 }
 
 // Puts the block to the list of modified blocks, if it is not already in it.
@@ -124,8 +123,6 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
     ut_ad(buf_block_get_state(block) == BUF_BLOCK_FILE_PAGE);
     ut_ad(mtr->modifications);
 
-    mutex_enter(&block->mutex);
-
     ut_ad(block->page.newest_modification <= mtr->end_lsn);
     block->page.newest_modification = mtr->end_lsn;
 
@@ -137,8 +134,6 @@ inline void buf_flush_note_modification(buf_block_t* block, mtr_t* mtr)
         //    2) A block added multiple times to mtr
         //ut_ad(block->page.recovery_lsn <= mtr->start_buf_lsn.val.lsn);
     }
-
-    mutex_exit(&block->mutex);
 
     srv_stats.buf_pool_write_requests.inc();
 }

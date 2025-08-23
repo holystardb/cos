@@ -8,7 +8,7 @@
 
 
 // We scan these many blocks when looking for a clean page to evict during LRU eviction
-static const uint32 BUF_LRU_SEARCH_EVICTION_THRESHOLD = 32;
+static const uint32 BUF_LRU_SEARCH_EVICTION_THRESHOLD = 16;
 
 inline void buf_LRU_insert_block_to_lru_list(buf_pool_t* buf_pool, buf_page_t* bpage)
 {
@@ -37,14 +37,10 @@ inline void buf_LRU_insert_block_to_free_list(buf_pool_t* buf_pool, buf_block_t*
         ut_error;
     }
 
-    ut_ad(!block->page.in_free_list);
     ut_ad(!block->page.in_flush_list);
     ut_ad(!block->page.in_LRU_list);
-
-    buf_block_set_state(block, BUF_BLOCK_NOT_USED);
-    // Wipe page_no and space_id
-    memset(block->frame + FIL_PAGE_OFFSET, 0xfe, 4);
-    memset(block->frame + FIL_PAGE_SPACE, 0xfe, 4);
+    ut_ad(block->page.id.get_space_id() == INVALID_SPACE_ID);
+    ut_ad(block->page.id.get_page_no() == INVALID_PAGE_NO);
 
     mutex_enter(&buf_pool->free_list_mutex, NULL);
     ut_ad(block->page.in_free_list == FALSE);
@@ -64,6 +60,20 @@ inline void buf_LRU_remove_block_from_lru_list(buf_pool_t* buf_pool, buf_page_t*
     // Remove the block from the LRU list
     UT_LIST_REMOVE(LRU_list_node, buf_pool->LRU, bpage);
     bpage->in_LRU_list = FALSE;
+
+    switch (buf_page_get_state(bpage)) {
+    case BUF_BLOCK_FILE_PAGE:
+        buf_block_modify_clock_inc((buf_block_t*) bpage);
+        break;
+    case BUF_BLOCK_POOL_WATCH:
+    case BUF_BLOCK_ZIP_DIRTY:
+    case BUF_BLOCK_NOT_USED:
+    case BUF_BLOCK_READY_FOR_USE:
+    case BUF_BLOCK_MEMORY:
+    case BUF_BLOCK_REMOVE_HASH:
+        ut_error;
+        break;
+    }
 
     buf_pool->stat.LRU_bytes -= bpage->size.physical();
 }
@@ -129,25 +139,29 @@ static inline bool32 buf_LRU_free_page(buf_pool_t* buf_pool, buf_page_t* bpage)
     //
     ut_ad(!bpage->in_flush_list);
 
-    // remove page from LRU list
-    buf_LRU_remove_block_from_lru_list(buf_pool, bpage);
+    // 
+    buf_block_set_state((buf_block_t*)bpage, BUF_BLOCK_NOT_USED);
+    bpage->id.reset(INVALID_SPACE_ID, INVALID_PAGE_NO);
 
     // remove page from page_hash
     ut_ad(bpage->in_page_hash);
     bpage->in_page_hash = FALSE;
     HASH_DELETE(buf_page_t, hash, buf_pool->page_hash, bpage->id.fold(), bpage);
+    rw_lock_x_unlock(hash_lock);
+
+    // remove page from LRU list
+    buf_LRU_remove_block_from_lru_list(buf_pool, bpage);
 
     // Puts a block back to the free list
     buf_LRU_insert_block_to_free_list(buf_pool, (buf_block_t*)bpage);
 
     mutex_exit(block_mutex);
-    rw_lock_x_unlock(hash_lock);
 
     return TRUE;
 }
 
 // Removes a block to the begin from the LRU list
-static inline void buf_LRU_remove_block_to_lru_list_first(buf_pool_t* buf_pool, buf_page_t* bpage)
+static inline void buf_LRU_remove_block_to_lru_list_head(buf_pool_t* buf_pool, buf_page_t* bpage)
 {
     ut_ad(buf_pool == buf_pool_from_bpage(bpage));
     ut_ad(mutex_own(&buf_pool->LRU_list_mutex));
@@ -159,23 +173,35 @@ static inline void buf_LRU_remove_block_to_lru_list_first(buf_pool_t* buf_pool, 
     UT_LIST_ADD_FIRST(LRU_list_node, buf_pool->LRU, bpage);
 }
 
-inline bool32 buf_LRU_scan_and_free_block(buf_pool_t* buf_pool)
+inline bool32 buf_LRU_scan_and_free_block(buf_pool_t* buf_pool, uint32 free_block_count)
 {
     uint32 scanned = 0, scan_count, evicted = 0;
     buf_page_t *bpage, *prev_bpage;
 
+retry_loop:
+
+    mutex_enter(&buf_pool->mutex, NULL);
+    if (buf_pool->try_LRU_scan) {
+        mutex_exit(&buf_pool->mutex);
+        os_thread_sleep(20); // 20us
+        goto retry_loop;
+    }
+    buf_pool->try_LRU_scan = TRUE;
+    mutex_exit(&buf_pool->mutex);
+
+    //
     mutex_enter(&buf_pool->LRU_list_mutex, NULL);
 
     scan_count = UT_LIST_GET_LEN(buf_pool->LRU);
     bpage = UT_LIST_GET_LAST(buf_pool->LRU);
-    while (bpage && scanned < scan_count && evicted < BUF_LRU_SEARCH_EVICTION_THRESHOLD) {
+    while (bpage && scanned < scan_count && evicted < free_block_count) {
         prev_bpage = UT_LIST_GET_PREV(LRU_list_node, bpage);
 
         if (buf_LRU_free_page(buf_pool, bpage)) {
             evicted++;
         } else {
             // move block to the begin of the LRU list
-            buf_LRU_remove_block_to_lru_list_first(buf_pool, bpage);
+            buf_LRU_remove_block_to_lru_list_head(buf_pool, bpage);
         }
 
         bpage = prev_bpage;
@@ -185,6 +211,10 @@ inline bool32 buf_LRU_scan_and_free_block(buf_pool_t* buf_pool)
     mutex_exit(&buf_pool->LRU_list_mutex);
 
     buf_pool->stat.n_ra_pages_evicted += evicted;
+
+    mutex_enter(&buf_pool->mutex, NULL);
+    buf_pool->try_LRU_scan = FALSE;
+    mutex_exit(&buf_pool->mutex);
 
     return evicted;
 }
@@ -224,6 +254,17 @@ static inline buf_block_t *buf_LRU_get_free_only(buf_pool_t* buf_pool)
     return NULL;
 }
 
+static inline uint32 buf_LRU_get_free_block_count(buf_pool_t* buf_pool)
+{
+    uint32 count;
+
+    mutex_enter(&buf_pool->free_list_mutex, NULL);
+    count = UT_LIST_GET_LEN(buf_pool->free_pages);
+    mutex_exit(&buf_pool->free_list_mutex);
+
+    return count;
+}
+
 // Returns a free block from the buf_pool.
 // The block is taken off the free list.
 // If free list is empty, blocks are moved from the end of the LRU list to the free list.
@@ -243,23 +284,9 @@ loop:
         return block;
     }
 
-    // If no block was in the free list,
-    // search from the end of the LRU list and try to free a block there.
-    mutex_enter(&buf_pool->mutex, NULL);
-    if (buf_pool->try_LRU_scan) {
-        mutex_exit(&buf_pool->mutex);
-        os_thread_sleep(20); // 20us
-        goto loop;
-    }
-    buf_pool->try_LRU_scan = TRUE;
-    mutex_exit(&buf_pool->mutex);
-
-    freed = buf_LRU_scan_and_free_block(buf_pool);
-
-    mutex_enter(&buf_pool->mutex, NULL);
-    buf_pool->try_LRU_scan = FALSE;
-    mutex_exit(&buf_pool->mutex);
-
+    // If no block was in the free list, search from the end of the LRU list and try to free a block there.
+    // 16 block, total 256KB
+    freed = buf_LRU_scan_and_free_block(buf_pool, BUF_LRU_SEARCH_EVICTION_THRESHOLD);
     if (freed) {
         goto loop;
     }
@@ -290,4 +317,27 @@ loop:
     goto loop;
 }
 
+void* buf_LRU_scan_and_free_block_thread(void *arg)
+{
+
+    LOGGER_INFO(LOGGER, LOG_MODULE_BUFFERPOOL,"buf_LRU_scan_and_free_block thread starting ...");
+
+    // 640 block, totoal 10MB
+    const uint32 free_block_count = BUF_LRU_SEARCH_EVICTION_THRESHOLD * 40;
+
+    while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
+        for (uint32 i = 0; i < buf_pool_instances && (srv_shutdown_state != SHUTDOWN_EXIT_THREADS); i++) {
+            buf_pool_t* buf_pool = buf_pool_get(i);
+            uint32 count = buf_LRU_get_free_block_count(buf_pool);
+            if (count < free_block_count) {
+                buf_LRU_scan_and_free_block(buf_pool, free_block_count - count);
+            }
+       }
+        os_thread_sleep(10000); // 10ms
+    }
+
+    LOGGER_INFO(LOGGER, LOG_MODULE_BUFFERPOOL,"buf_LRU_scan_and_free_block thread exited");
+
+    return NULL;
+}
 

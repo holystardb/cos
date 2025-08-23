@@ -14,7 +14,7 @@
 #define UT_XOR_RND1 187678878
 #define UT_XOR_RND2 143537923
 
-THREAD_LOCAL uint64 ut_rnd_uint64_counter = 65654363;
+static uint64 ut_rnd_uint64_counter = 65654363;
 
 inline uint64 ut_rnd_gen_next_uint64(uint64 rnd) // in: the previous random number value
 {

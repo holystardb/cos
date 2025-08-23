@@ -40,10 +40,11 @@ typedef struct st_ha_create_information
 
 
 // Search direction for the interface
-enum row_fetch_direction {
-    FETCH_ROW_NEXT = 0, // ascending direction
-    FETCH_ROW_PREV = 1  // descending direction
-};
+typedef enum st_row_fetch_direction {
+    FETCH_ROW_NOMOVE = 0,
+    FETCH_ROW_NEXT = 1, // ascending direction
+    FETCH_ROW_PREV = 2  // descending direction
+} row_fetch_direction_t;
 
 // Match mode for the interface
 enum row_fetch_match_mode {
@@ -71,11 +72,100 @@ typedef struct st_scan_key
     Datum     argument; // data to compare
 } scan_key_t;
 
-class scan_cursor_t {
+typedef enum en_scan_cursor_action {
+    CURSOR_ACTION_FOR_UPDATE_SCAN = 1,
+    CURSOR_ACTION_SELECT = 2,
+    CURSOR_ACTION_UPDATE = 3,
+    CURSOR_ACTION_INSERT = 4,
+    CURSOR_ACTION_DELETE = 5,
+} scan_cursor_action_t;
+
+
+
+typedef enum en_snapshot_type
+{
+	/*-------------------------------------------------------------------------
+	 * A tuple is visible iff the tuple is valid for the given MVCC snapshot.
+	 *
+	 * Here, we consider the effects of:
+	 * - all transactions committed as of the time of the given snapshot
+	 * - previous commands of this transaction
+	 *
+	 * Does _not_ include:
+	 * - transactions shown as in-progress by the snapshot
+	 * - transactions started after the snapshot was taken
+	 * - changes made by the current command
+	 * -------------------------------------------------------------------------
+	 */
+	SNAPSHOT_MVCC = 0,
+
+	/*-------------------------------------------------------------------------
+	 * A tuple is visible iff the tuple is valid "for itself".
+	 *
+	 * Here, we consider the effects of:
+	 * - all committed transactions (as of the current instant)
+	 * - previous commands of this transaction
+	 * - changes made by the current command
+	 *
+	 * Does _not_ include:
+	 * - in-progress transactions (as of the current instant)
+	 * -------------------------------------------------------------------------
+	 */
+	SNAPSHOT_SELF,
+
+	/*
+	 * Any tuple is visible.
+	 */
+	SNAPSHOT_ANY,
+
+	/*
+	 * A tuple is visible iff the tuple is valid as a TOAST row.
+	 */
+	SNAPSHOT_TOAST,
+
+	/*-------------------------------------------------------------------------
+	 * A tuple is visible iff the tuple is valid including effects of open
+	 * transactions.
+	 *
+	 * Here, we consider the effects of:
+	 * - all committed and in-progress transactions (as of the current instant)
+	 * - previous commands of this transaction
+	 * - changes made by the current command
+	 *
+	 * This is essentially like SNAPSHOT_SELF as far as effects of the current
+	 * transaction and committed/aborted xacts are concerned.  However, it
+	 * also includes the effects of other xacts still in progress.
+	 *
+	 * A special hack is that when a snapshot of this type is used to
+	 * determine tuple visibility, the passed-in snapshot struct is used as an
+	 * output argument to return the xids of concurrent xacts that affected
+	 * the tuple.  snapshot->xmin is set to the tuple's xmin if that is
+	 * another transaction that's still in progress; or to
+	 * InvalidTransactionId if the tuple's xmin is committed good, committed
+	 * dead, or my own xact.  Similarly for snapshot->xmax and the tuple's
+	 * xmax.  If the tuple was inserted speculatively, meaning that the
+	 * inserter might still back down on the insertion without aborting the
+	 * whole transaction, the associated token is also returned in
+	 * snapshot->speculativeToken.  See also InitDirtySnapshot().
+	 * -------------------------------------------------------------------------
+	 */
+	SNAPSHOT_DIRTY,
+} snapshot_type_t;
+
+typedef struct st_snapshot
+{
+    snapshot_type_t type;
+    uint32          cid;
+    uint64          scn;
+    trx_slot_id_t   trx_id;
+} snapshot_t;
+
+
+class scan_cursor_t : public BaseObject {
 public:
-    scan_cursor_t(memory_stack_context_t* context)
+    scan_cursor_t(memory_stack_context_t* mcontext_stack)
     {
-        reset_memory_stack_context(context);
+        reset_memory_stack_context(mcontext_stack);
     }
 
     ~scan_cursor_t()
@@ -83,21 +173,37 @@ public:
         restore_mcontext_stack();
     }
 
-    void reset_memory_stack_context(memory_stack_context_t* context)
+    void reset_memory_stack_context(memory_stack_context_t* mcontext_stack)
     {
         restore_mcontext_stack();
         //
-        mcontext_stack = context;
-        mcontext_stack_save_ptr = mcontext_stack_save(mcontext_stack);
+        m_mcontext_stack = mcontext_stack;
+        m_mcontext_stack_save_ptr = mcontext_stack_save(m_mcontext_stack);
     }
 
     void restore_mcontext_stack()
     {
-        if (mcontext_stack) {
-            mcontext_stack_restore(mcontext_stack, mcontext_stack_save_ptr);
+        if (m_mcontext_stack) {
+            mcontext_stack_restore(m_mcontext_stack, m_mcontext_stack_save_ptr);
         }
     }
 
+public:
+    // heap position
+    row_id_t        row_id;
+    row_dir_t       row_dir;
+    row_header_t*   row;  // current row data, point to cache_page_buf
+    char*           cache_page_buf; // a copy of page for select
+
+    // btree position
+    uint32          old_stored; /*!< BTR_PCUR_OLD_STORED or BTR_PCUR_OLD_NOT_STORED */
+    rec_t*          old_rec; /*!< if cursor position is stored, contains an initial segment of the
+                                latest record cursor was positioned either on, before, or after */
+    uint32          old_n_fields;  /*!< number of fields in old_rec */
+    uint32          rel_pos; /*!< BTR_PCUR_ON, BTR_PCUR_BEFORE, or BTR_PCUR_AFTER,
+                  depending on whether cursor was on, before, or after the old_rec record */
+    buf_block_t*    block_when_stored;/* buffer block when the position was stored */
+    uint64          modify_clock; /*!< the modify clock value of the buffer block when the cursor position was stored */
 
 public:
     scan_key_t*     keys;
@@ -105,6 +211,23 @@ public:
     dict_table_t*   table;
     dict_index_t*   index; // current index for a search, if any
     trx_t*          trx;   // current transaction handle
+
+    uint64          query_scn;
+
+    scan_cursor_action_t action;
+
+    //
+    uint64  row_scn;
+    row_undo_rollptr_t row_undo_rollptr;
+    uint32  undo_space_index : 4;
+    uint32  undo_page_no : 12;
+    uint32  undo_page_offset : 16;
+
+    bool32          is_valid;                // cursor is valid
+    bool32          is_eof;
+    bool32          is_found;
+    uint32          isolevel;       // isolation level for current table scan
+    bool32          is_cleanout;    // page cleanout during full page scan
 
     insert_node_t*  insert_node;
     byte*           insert_upd_rec_buff;// buffer for storing data converted to the Innobase format from the MySQL format
@@ -117,7 +240,6 @@ public:
 
     uint32          n_rows_fetched; // number of rows fetched after positioning the current cursor
     uint32          fetch_direction;// ROW_SEL_NEXT or ROW_SEL_PREV
-
     // a cache for fetched rows if we fetch many rows from the same cursor:
     //    it saves CPU time to fetch them in a batch;
 #define FETCH_CACHE_SIZE     8
@@ -127,8 +249,8 @@ public:
 
     uint32          select_lock_type;// LOCK_NONE, LOCK_S, or LOCK_X
 
-    void*           mcontext_stack_save_ptr;
-    memory_stack_context_t* mcontext_stack;
+    void*           m_mcontext_stack_save_ptr;
+    memory_stack_context_t* m_mcontext_stack;
 };
 
 inline void scan_key_init(scan_key_t* entry, uint32 attr_no, uint32 strategy, Datum argument)
@@ -149,6 +271,17 @@ inline void scan_cursor_end(scan_cursor_t* scan)
 {
 
 }
+
+inline void scan_rescan(scan_cursor_t* scan)
+{
+}
+
+status_t scan_getnext(scan_cursor_t* scan, row_fetch_direction direction)
+{
+    return CM_SUCCESS;
+}
+
+
 
 
 class knl_handler//: public handler

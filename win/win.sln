@@ -17,6 +17,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libstrings", "libstrings\li
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libsecurec", "libsecurec\libsecurec.vcxproj", "{85138DFC-AFE6-41A6-9A5F-439AC5D2672A}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "test", "test\test.vcxproj", "{D0074A80-F5C8-4607-990F-E98D9F830324}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -81,6 +83,14 @@ Global
 		{85138DFC-AFE6-41A6-9A5F-439AC5D2672A}.Release|x64.Build.0 = Release|x64
 		{85138DFC-AFE6-41A6-9A5F-439AC5D2672A}.Release|x86.ActiveCfg = Release|Win32
 		{85138DFC-AFE6-41A6-9A5F-439AC5D2672A}.Release|x86.Build.0 = Release|Win32
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Debug|x64.ActiveCfg = Debug|x64
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Debug|x64.Build.0 = Debug|x64
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Debug|x86.ActiveCfg = Debug|Win32
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Debug|x86.Build.0 = Debug|Win32
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Release|x64.ActiveCfg = Release|x64
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Release|x64.Build.0 = Release|x64
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Release|x86.ActiveCfg = Release|Win32
+		{D0074A80-F5C8-4607-990F-E98D9F830324}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

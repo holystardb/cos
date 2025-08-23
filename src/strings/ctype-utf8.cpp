@@ -5343,7 +5343,7 @@ static inline int bincmp(const uchar *s, const uchar *se,
 }
 
 
-static int my_utf8_uni(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static int my_utf8_uni(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                        my_wc_t * pwc, const uchar *s, const uchar *e)
 {
   uchar c;
@@ -5394,7 +5394,7 @@ static int my_utf8_uni(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
   for example, for a null-terminated string
 */
 static int my_utf8_uni_no_range(const CHARSET_INFO *cs
-                                MY_ATTRIBUTE((unused)),
+                                MY_ATTRIBUTE(unused),
                                 my_wc_t * pwc, const uchar *s)
 {
   uchar c;
@@ -5435,7 +5435,7 @@ static int my_utf8_uni_no_range(const CHARSET_INFO *cs
 }
 
 
-static int my_uni_utf8 (const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static int my_uni_utf8 (const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                         my_wc_t wc, uchar *r, uchar *e)
 {
   int count;
@@ -5471,7 +5471,7 @@ static int my_uni_utf8 (const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
   The same as above, but without range check.
 */
 static int my_uni_utf8_no_range(const CHARSET_INFO *cs
-                                MY_ATTRIBUTE((unused)),
+                                MY_ATTRIBUTE(unused),
                                 my_wc_t wc, uchar *r)
 {
   int count;
@@ -5904,7 +5904,7 @@ int my_wildcmp_utf8(const CHARSET_INFO *cs,
 
 
 static
-size_t my_strnxfrmlen_utf8(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+size_t my_strnxfrmlen_utf8(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                            size_t len)
 {
   return (len * 2 + 2) / 3;
@@ -5912,7 +5912,7 @@ size_t my_strnxfrmlen_utf8(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 
 
 static
-int my_valid_mbcharlen_utf8(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+int my_valid_mbcharlen_utf8(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                             const uchar *s, const uchar *e)
 {
   uchar c;
@@ -5999,7 +5999,7 @@ static uint my_ismbchar_utf8(const CHARSET_INFO *cs,const char *b,
   return (res>1) ? res : 0;
 }
 
-static uint my_mbcharlen_utf8(const CHARSET_INFO *cs  MY_ATTRIBUTE((unused)),
+static uint my_mbcharlen_utf8(const CHARSET_INFO *cs  MY_ATTRIBUTE(unused),
                               uint c)
 {
   if (c < 0x80)
@@ -7521,7 +7521,7 @@ static const char filename_safe_char[128]=
 #define MY_FILENAME_ESCAPE '@'
 
 static int
-my_mb_wc_filename(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_mb_wc_filename(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                   my_wc_t *pwc, const uchar *s, const uchar *e)
 {
   int byte1, byte2;
@@ -7581,7 +7581,7 @@ my_mb_wc_filename(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 
 
 static int
-my_wc_mb_filename(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_wc_mb_filename(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                   my_wc_t wc, uchar *s, uchar *e)
 {
   int code;
@@ -7845,7 +7845,7 @@ bincmp_utf8mb4(const uchar *s, const uchar *se,
 
 
 static int
-my_mb_wc_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_mb_wc_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                  my_wc_t * pwc, const uchar *s, const uchar *e)
 {
   uchar c;
@@ -7931,7 +7931,7 @@ my_mb_wc_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
   for example, for a null-terminated string
 */
 static int
-my_mb_wc_utf8mb4_no_range(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_mb_wc_utf8mb4_no_range(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                           my_wc_t *pwc, const uchar *s)
 {
   uchar c;
@@ -7986,7 +7986,7 @@ my_mb_wc_utf8mb4_no_range(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 
 
 static int
-my_wc_mb_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_wc_mb_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                  my_wc_t wc, uchar *r, uchar *e)
 {
   int count;
@@ -8021,7 +8021,7 @@ my_wc_mb_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
   The same as above, but without range check.
 */
 static int
-my_wc_mb_utf8mb4_no_range(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_wc_mb_utf8mb4_no_range(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                           my_wc_t wc, uchar *r)
 {
   int count;
@@ -8465,7 +8465,7 @@ my_wildcmp_utf8mb4(const CHARSET_INFO *cs,
 
 
 static size_t
-my_strnxfrmlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_strnxfrmlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                        size_t len)
 {
   /* TODO: fix when working on WL "Unicode new version" */
@@ -8474,7 +8474,7 @@ my_strnxfrmlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 
 
 static int
-my_valid_mbcharlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_valid_mbcharlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                            const uchar *s, const uchar *e)
 {
   uchar c;
@@ -8556,7 +8556,7 @@ my_ismbchar_utf8mb4(const CHARSET_INFO *cs, const char *b, const char *e)
 
 
 static uint
-my_mbcharlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)), uint c)
+my_mbcharlen_utf8mb4(const CHARSET_INFO *cs MY_ATTRIBUTE(unused), uint c)
 {
   if (c < 0x80)
     return 1;

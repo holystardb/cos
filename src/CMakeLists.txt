@@ -1,2 +1,10 @@
-add_subdirectory(os)
-add_subdirectory(socks)
+include_directories(include)
+include_directories(include/securec)
+include_directories(include/strings)
+include_directories(include/common)
+include_directories(include/vio)
+
+add_subdirectory(strings)
+add_subdirectory(securec)
+add_subdirectory(common)
+add_subdirectory(vio)

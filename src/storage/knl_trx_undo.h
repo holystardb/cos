@@ -28,15 +28,15 @@ enum undo_op_type {
 typedef byte    trx_undo_page_hdr_t;
 
 // The offset of the undo log page header on pages of the undo log
-#define TRX_UNDO_PAGE_HDR       FSEG_PAGE_DATA
+#define TRX_UNDO_PAGE_HDR           FIL_PAGE_DATA
 
 #define TRX_UNDO_PAGE_TYPE          0 // TRX_UNDO_INSERT_OP or TRX_UNDO_MODIFY_OP
-// Byte offset where the undo log header for the FIRST transaction start on this page
-// (remember that in an update undo log, the first page can contain several undo logs)
+// Byte offset where the undo log record for the LATEST transaction start on this page
+// (remember that in an update undo log, the first page can contain several undo_log_hdr)
 #define TRX_UNDO_PAGE_START         2
-// byte offset of the first free byte on the page
+// byte offset of the first free byte on each page of undo_page_hdr
 #define TRX_UNDO_PAGE_FREE          4
-// The file list node in the chain of undo log pages
+// The file list node in the chain of undo_page_hdr pages
 #define TRX_UNDO_PAGE_FLST_NODE     6  // for base node TRX_UNDO_PAGE_LIST
 
 /* Size of the transaction undo log page header, in bytes */
@@ -67,8 +67,6 @@ typedef byte    trx_undo_seg_hdr_t;
 // There can be several undo log headers on the first page of an update undo log segment.
 typedef byte    trx_undo_log_hdr_t;
 
-#define TRX_UNDO_LOG_HDR        (TRX_UNDO_SEG_HDR + TRX_UNDO_SEG_HDR_SIZE)
-
 #define TRX_UNDO_TRX_ID         0 // Transaction id
 // Transaction number of the transaction;
 // defined only if the log is in a history list
@@ -96,13 +94,21 @@ typedef byte    trx_undo_log_hdr_t;
 // trx undo log record
 typedef byte    trx_undo_rec_hdr_t;
 
-#define TRX_UNDO_NEXT_REC       0
-#define TRX_UNDO_REC_TYPE       2 // TRX_UNDO_INSERT_REC
-#define TRX_UNDO_REC_TABLE_ID   3
-#define TRX_UNDO_REC_DATA       11
-#define TRX_UNDO_REC_START      13
+// 2B: next rec offset
+// 1B: rec type
+// 4B: rec no
+// 8B: table id
+// data size: data
+// 2B: prev rec offset
 
-#define TRX_UNDO_REC_HDR_SIZE   13
+#define TRX_UNDO_NEXT_REC       0 //
+#define TRX_UNDO_REC_TYPE       2 // TRX_UNDO_INSERT_REC
+#define TRX_UNDO_REC_NO         3
+#define TRX_UNDO_REC_ROW_ID     7
+#define TRX_UNDO_REC_TABLE_ID   7
+#define TRX_UNDO_REC_DATA       15
+
+#define TRX_UNDO_REC_EXTRA_SIZE 17
 
 
 //-----------------------------------------------------------------
@@ -130,7 +136,7 @@ typedef byte    trx_undo_rec_hdr_t;
 
 //-----------------------------------------------------------------
 
-typedef enum en_undo_type {
+typedef enum en_undo_type : uint8 {
     /* heap */
     UNDO_HEAP_INSERT = 1,      /* < heap insert */
     UNDO_HEAP_DELETE = 2,      /* < heap delete */
@@ -194,50 +200,232 @@ typedef enum en_undo_type {
     UNDO_LOB_TEMP_DELETE = 55,
 } undo_type_t;
 
-#define UNDO_REC_HEADER_SIZE         OFFSET_OF(undo_rec_t, data)
 
 typedef struct st_undo_snapshot {
     uint64  scn; // commit scn or command id
+    uint64  xid;
     uint32  undo_page_no;
     uint32  offsets;  // heap page offset and undo page offset
 } undo_snapshot_t;
 
-typedef struct st_undo_rec {
-    undo_type_t     type;
-    uint32          ssn;  // ssn generate current undo
-    undo_snapshot_t snapshot;  // old dir value
 
-    union {
-        uint64 row_id; // rowid to locate row or itl
-        struct {
-            uint32 space_id;
-            uint32 page_no;
-            uint16 dir_slot;
-            uint64 seg_file : 10; /* < btree segment entry file_id */
-            uint64 seg_page : 30; /* < btree segment entry page_id */
-            uint64 user_id : 14;  /* < user id */
-            uint64 index_id : 6;  /* < index id */
-            uint64 unused : 4;
-        };
-    };
+/* snapshot for history version read */
+typedef struct st_undo_snapshot1 {
+    uint64 scn;            /* < commit scn of (cursor) snapshot row */
+    undo_page_id_t undo_page; /* < prev undo page of (cursor) snapshot row */
+    uint64 xid;
+    uint16 undo_slot;         /* < prev undo slot of (cursor) snapshot row */
+    uint16 is_xfirst : 1;     /* < whether is first time change or first allocated dir or itl for PCR */
+    uint16 is_owscn : 1;      /* < whether the snapshot commit scn is overwrite scn */
+    uint16 is_valid : 1;      /* < whether to do snapshot query or snapshot consistent check(in read committed ) */
+    uint16 contain_subpartno : 1;    /* < whether the undo data contain subpart_no */
+    uint16 unused : 12;       /* < unused flag */
+} undo_snapshot1_t;
 
-    uint32  data_size;
-    char*   data;
-} undo_rec_t;
+struct undo_insert_rec_t {
+    row_id_t  row_id; // undo row if trx rollbacked
+};
+
+struct undo_delete_rec_t {
+    row_id_t  row_id; // undo row if trx rollbacked
+    row_dir_t old_dir;
+    uint8     old_itl_id;
+};
+
+struct undo_update_rec_t {
+    row_id_t  row_id; // undo row if trx rollbacked
+    row_header_t* row;
+};
+
+class undo_rec_mgr_t {
+public:
+    undo_rec_mgr_t() {
+        m_trx = NULL;
+    }
+
+    ~undo_rec_mgr_t() {}
+
+public:
+    /*
+     * Serialize the undo record
+     * buf: param[out]
+     * buf_size: param[in,out]
+     */
+    void serialize(byte* rec_ptr, uint16 rec_offset) {
+        switch (m_type) {
+        case UNDO_HEAP_INSERT:
+            serialize_heap_insert_undo_rec(rec_ptr, rec_offset);
+            break;
+        case UNDO_HEAP_DELETE:
+            serialize_heap_insert_undo_rec(rec_ptr, rec_offset);
+            break;
+        case UNDO_HEAP_UPDATE:
+            serialize_heap_insert_undo_rec(rec_ptr, rec_offset);
+            break;
+        default:
+            ut_error
+            break;
+        }
+    }
+
+    void deserialize(const byte* rec_ptr, uint32 rec_len) {
+        m_type = mach_read_from_1(rec_ptr + TRX_UNDO_REC_TYPE);
+        switch (m_type) {
+        case UNDO_HEAP_INSERT:
+            deserialize_heap_insert_undo_rec(rec_ptr, rec_len);
+            break;
+        case UNDO_HEAP_DELETE:
+            deserialize_heap_insert_undo_rec(rec_ptr, rec_len);
+            break;
+        case UNDO_HEAP_UPDATE:
+            deserialize_heap_insert_undo_rec(rec_ptr, rec_len);
+            break;
+        default:
+            ut_error;
+            break;
+        }
+    }
+
+private:
+    void serialize_heap_insert_undo_rec(byte* rec_ptr, uint16 rec_offset) {
+        // offset of the next undo log record
+        mach_write_to_2(rec_ptr, rec_offset + TRX_UNDO_REC_EXTRA_SIZE + m_data_size);
+        rec_ptr += 2;
+
+        mach_write_to_1(rec_ptr + TRX_UNDO_REC_TYPE, m_type);
+        mach_write_to_4(rec_ptr + TRX_UNDO_REC_NO, m_trx->undo_rec_no);
+        m_trx->undo_rec_no++;
+        //mach_write_to_8(rec_ptr + TRX_UNDO_REC_TABLE_ID, table->id);
+        memcpy(rec_ptr + TRX_UNDO_REC_DATA, &m_insert.row_id, sizeof(row_id_t));
+
+        // start offset of current undo log record
+        mach_write_to_2(rec_ptr + TRX_UNDO_REC_DATA + m_data_size, rec_offset);
+   }
+
+    void deserialize_heap_insert_undo_rec(const byte* rec_ptr, uint32 rec_len) {
+        ut_ad(rec_len == TRX_UNDO_REC_EXTRA_SIZE + sizeof(row_id_t));
+
+        memcpy(&m_insert.row_id, rec_ptr + TRX_UNDO_REC_DATA, sizeof(row_id_t));
+    }
+
+    void serialize_heap_delete_undo_rec(byte* rec_ptr, uint32 rec_offset) {
+        // offset of the next undo log record
+        mach_write_to_2(rec_ptr, rec_offset + TRX_UNDO_REC_EXTRA_SIZE + m_data_size);
+
+        mach_write_to_1(rec_ptr + TRX_UNDO_REC_TYPE, m_type);
+        mach_write_to_4(rec_ptr + TRX_UNDO_REC_NO, m_trx->undo_rec_no);
+        m_trx->undo_rec_no++;
+        //mach_write_to_8(rec_ptr + TRX_UNDO_REC_TABLE_ID, table->id);
+        memcpy(rec_ptr + TRX_UNDO_REC_DATA, &m_delete.row_id, sizeof(row_id_t));
+        memcpy(rec_ptr + TRX_UNDO_REC_DATA + sizeof(row_id_t), &m_delete.old_dir, sizeof(row_dir_t));
+        mach_write_to_1(rec_ptr + TRX_UNDO_REC_DATA + sizeof(row_id_t) + sizeof(row_dir_t), m_delete.old_itl_id);
+
+        // start offset of current undo log record
+        mach_write_to_2(rec_ptr + TRX_UNDO_REC_DATA + m_data_size, rec_offset);
+    }
+
+    void deserialize_heap_delete_undo_rec(const byte* rec_ptr, uint32 rec_len) {
+        ut_ad(rec_len == TRX_UNDO_REC_EXTRA_SIZE + sizeof(row_id_t) + sizeof(row_dir_t) + 1);
+
+        byte* ptr = rec_ptr + TRX_UNDO_REC_DATA;
+        memcpy(&m_delete.row_id, ptr, sizeof(row_id_t));
+        ptr += sizeof(row_id_t);
+        memcpy(&m_delete.dir, ptr, sizeof(row_dir_t));
+        ptr += sizeof(row_dir_t);
+        m_itl_id = mach_read_from_1(ptr);
+    }
+
+    void serialize_heap_update_undo_rec(byte* rec_ptr, uint32 rec_offset) {
+        // offset of the next undo log record
+        mach_write_to_2(rec_ptr, rec_offset + TRX_UNDO_REC_EXTRA_SIZE + m_data_size);
+
+        mach_write_to_1(rec_ptr + TRX_UNDO_REC_TYPE, m_type);
+        mach_write_to_4(rec_ptr + TRX_UNDO_REC_NO, m_trx->undo_rec_no);
+        m_trx->undo_rec_no++;
+        //mach_write_to_8(rec_ptr + TRX_UNDO_REC_TABLE_ID, table->id);
+
+        if (m_update.row->is_migrate) {
+            memcpy(rec_ptr + TRX_UNDO_REC_DATA, &m_update.row_id, sizeof(row_id_t));
+        } else if (m_update.row->is_ext) {
+        } else {
+            
+        }
+        
+        memcpy(rec_ptr + TRX_UNDO_REC_DATA, &m_delete.row_id, sizeof(row_id_t));
+        memcpy(rec_ptr + TRX_UNDO_REC_DATA + sizeof(row_id_t), &m_delete.dir, sizeof(row_dir_t));
+
+        // start offset of current undo log record
+        mach_write_to_2(rec_ptr + TRX_UNDO_REC_DATA + m_data_size, rec_offset);
+
+    }
+
+    void deserialize_heap_update_undo_rec(const byte* rec_ptr, uint32 rec_len) {
+    }
+
+public:
+    trx_t* m_trx;
+    undo_type_t m_type;
+    uint8 m_itl_id;
+    uint16 m_data_size; // undo record data size for insert/delete/update
+    uint32 m_cid;  // command id
+
+    undo_insert_rec_t m_insert;
+    undo_delete_rec_t m_delete;
+    undo_update_rec_t m_update;
+};
 
 typedef struct st_undo_data {
-    uint64       query_min_scn;
-    undo_op_type undo_op;
-    uint32       undo_space_index;  // start from 0 (DB_UNDO_START_SPACE_ID)
-    uint32       undo_page_no;
-    uint32       undo_page_offset;
-    undo_rec_t   rec;
+    uint64           query_min_scn;
+    undo_op_type     undo_op;
+    uint32           undo_space_index;  // start from 0 (DB_UNDO_START_SPACE_ID)
+    uint32           undo_page_no;
+    uint32           undo_page_offset;
+    undo_rec_mgr_t   rec_mgr;
 } undo_data_t;
+
+
+class trx_rollback_undo_mgr_t {
+public:
+    trx_rollback_undo_mgr_t(trx_t* trx);
+    ~trx_rollback_undo_mgr_t();
+
+    void init(mtr_t* mtr);
+    trx_undo_rec_hdr_t* pop_top_undo_rec(uint32& undo_rec_size, mtr_t* mtr);
+
+private:
+    trx_undo_rec_hdr_t* get_top_insert_rec(uint32& undo_rec_size, mtr_t* mtr);
+    trx_undo_rec_hdr_t* get_top_update_rec(uint32& undo_rec_size, mtr_t* mtr);
+    void pop_top_insert_rec();
+    void pop_top_update_rec();
+
+private:
+    trx_t* m_trx;
+    trx_rseg_t* m_rseg;
+
+    trx_undo_page_t* m_insert_seg_page;
+    trx_undo_page_t* m_insert_top_page;
+    trx_undo_log_hdr_t* m_insert_undo_log_hdr;
+    trx_undo_seg_hdr_t* m_insert_seg_hdr;
+    trx_undo_rec_hdr_t* m_insert_rec;
+    buf_block_t* m_insert_top_block;
+    uint16 m_insert_rec_size;
+    uint16 m_insert_top_offset;
+
+    trx_undo_page_t* m_update_seg_page;
+    trx_undo_page_t* m_update_top_page;
+    trx_undo_log_hdr_t* m_update_undo_log_hdr;
+    trx_undo_seg_hdr_t* m_update_seg_hdr;
+    trx_undo_rec_hdr_t* m_update_rec;
+    buf_block_t* m_update_top_block;
+    uint16 m_update_rec_size;
+    uint16 m_update_top_offset;
+};
+
 
 //-----------------------------------------------------------------
 
 extern inline status_t trx_undo_prepare(que_sess_t* sess, undo_data_t* undo_data, mtr_t* mtr);
 extern inline status_t trx_undo_write_log_rec(que_sess_t* sess, undo_data_t* undo_data, mtr_t* mtr);
-
+extern inline trx_undo_rec_hdr_t* trx_roll_pop_top_rec_of_trx(trx_undo_mgr_t* trx_undo_mgr, mtr_t* mtr);
 
 #endif  /* _KNL_TRX_UNDO_H */

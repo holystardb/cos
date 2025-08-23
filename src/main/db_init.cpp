@@ -35,24 +35,24 @@ status_t create_database(char* base_dir, attribute_t* attr)
 {
     db_ctrl_create_database("cosdb", "utf8mb4_bin");
 
-    db_ctrl_add_system("D:\\MyWork\\cos\\data\\system.dbf", 1024 * 1024, 100 * 1024 * 1024, TRUE);
-    db_ctrl_add_systrans("D:\\MyWork\\cos\\data\\systrans", 64);
+    db_ctrl_add_system_file("D:\\MyWork\\cos\\data\\system.dbf", 1024 * 1024, 100 * 1024 * 1024, TRUE);
+    db_ctrl_add_systrans_file("D:\\MyWork\\cos\\data\\systrans", 64);
 
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo01", 4 * 1024 * 1024);
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo02", 4 * 1024 * 1024);
-    db_ctrl_add_redo("D:\\MyWork\\cos\\data\\redo03", 4 * 1024 * 1024);
+    db_ctrl_add_redo_file("D:\\MyWork\\cos\\data\\redo01", 4 * 1024 * 1024);
+    db_ctrl_add_redo_file("D:\\MyWork\\cos\\data\\redo02", 4 * 1024 * 1024);
+    db_ctrl_add_redo_file("D:\\MyWork\\cos\\data\\redo03", 4 * 1024 * 1024);
 
-    db_ctrl_add_undo("D:\\MyWork\\cos\\data\\undo01", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
-    db_ctrl_add_undo("D:\\MyWork\\cos\\data\\undo02", 4 * 1024 * 1024, 4 * 1024 * 1024, FALSE);
+    db_ctrl_add_undo_file("D:\\MyWork\\cos\\data\\undo01", 4 * 1024 * 1024, 4 * 1024 * 1024);
+    db_ctrl_add_undo_file("D:\\MyWork\\cos\\data\\undo02", 4 * 1024 * 1024, 4 * 1024 * 1024);
 
-    db_ctrl_add_dbwr("D:\\MyWork\\cos\\data\\dbwr", 4 * 1024 * 1024);
+    db_ctrl_add_dbwr_file("D:\\MyWork\\cos\\data\\dbwr", 4 * 1024 * 1024);
 
-    db_ctrl_add_temp("D:\\MyWork\\cos\\data\\temp01", 4 * 1024 * 1024, 8 * 1024 * 1024, TRUE);
+    db_ctrl_add_temp_file("D:\\MyWork\\cos\\data\\temp01", 4 * 1024 * 1024, 8 * 1024 * 1024);
 
     db_ctrl_add_user_space("default_user_space");
-    db_ctrl_add_space_file("default_user_space",
+    db_ctrl_add_user_space_file("default_user_space",
         "D:\\MyWork\\cos\\data\\user01", 4 * 1024 * 1024, 100 * 1024 * 1024, FALSE);
-    db_ctrl_add_space_file("default_user_space",
+    db_ctrl_add_user_space_file("default_user_space",
         "D:\\MyWork\\cos\\data\\user02", 4 * 1024 * 1024, 100 * 1024 * 1024, TRUE);
 
     return knl_server_init(base_dir, attr);
@@ -60,8 +60,6 @@ status_t create_database(char* base_dir, attribute_t* attr)
 
 status_t start_database(char* base_dir, attribute_t* attr)
 {
-    db_ctrl_init_database();
-
     return knl_server_init(base_dir, attr);
 }
 
@@ -165,7 +163,46 @@ bool32 create_user(que_sess_t* sess)
 
     dict_release_table(sys_users);
 
-    que_sess_free(sess);
+    return TRUE;
+}
+
+bool32 drop_user(que_sess_t* sess)
+{
+    return TRUE;
+}
+
+bool32 update_user(que_sess_t* sess)
+{
+    return TRUE;
+}
+
+bool32 get_user(que_sess_t* sess)
+{
+    dict_table_t* sys_users;
+    status_t status = dict_get_table(sess, 0, "SYS_USERS", &sys_users);
+    if (sys_users == NULL) {
+        return FALSE;
+    }
+
+    //
+    insert_node_t insert_node;
+    insert_node.type = 0;
+    insert_node.table = sys_users;
+    insert_node.heap_row = dict_create_users_tuple(sess->mcontext_stack, "sys", "sys_pwd");
+
+    knl_handler handler;
+    scan_cursor_t cursor(sess->mcontext_stack);
+    cursor.insert_node = &insert_node;
+    status_t err = handler.insert_row(sess, &cursor);
+    if (err != CM_SUCCESS) {
+        handler.rollback(sess);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_COMMON, "Failed to knl_insert");
+        return FALSE;
+    }
+
+    handler.commit(sess);
+
+    dict_release_table(sys_users);
 
     return TRUE;
 }
@@ -188,9 +225,9 @@ int main(int argc, const char *argv[])
 
     LOGGER.log_init(log_level, log_path, "initdb", batch_flush);
     //LOGGER.set_module_log_level(LOG_MODULE_REDO, LOG_LEVEL_ALL & (~LOG_LEVEL_TRACE));
-    LOGGER.set_module_log_level(LOG_MODULE_RECOVERY, LOG_LEVEL_ALL & (~LOG_LEVEL_TRACE));
+    //LOGGER.set_module_log_level(LOG_MODULE_RECOVERY, LOG_LEVEL_ALL & (~LOG_LEVEL_TRACE));
     //LOGGER.set_module_log_level(LOG_MODULE_MTR, LOG_LEVEL_ALL);
-    //LOGGER.set_module_log_level(LOG_MODULE_CHECKPOINT, LOG_LEVEL_ALL);
+    //LOGGER.set_module_log_level(LOG_MODULE_CHECKPOINT, LOG_LEVEL_DEBUG);
     
     if (batch_flush) {
         os_thread_id_t thread_id;
@@ -229,13 +266,13 @@ int main(int argc, const char *argv[])
 
     uint32 sess_count = 100;
     uint32 session_stack_size  = SIZE_M(1);
-    //sess_pool_create(sess_count, session_stack_size);
+    sess_pool_create(sess_count, session_stack_size);
 
     //
-    //que_sess_t* sess = que_sess_alloc();
-    //create_user(sess);
+    que_sess_t* sess = que_sess_alloc();
+    create_user(sess);
 
-    //que_sess_free(sess);
+    que_sess_free(sess);
 
     while (TRUE) {
         os_thread_sleep(100000);

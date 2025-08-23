@@ -99,206 +99,95 @@ enum mlog_id_t {
 
 	/** one byte is written */
 	MLOG_1BYTE = 1,
-
 	/** 2 bytes ... */
 	MLOG_2BYTES = 2,
-
 	/** 4 bytes ... */
 	MLOG_4BYTES = 4,
-
 	/** 8 bytes ... */
 	MLOG_8BYTES = 8,
+	/** write a string to a page */
+	MLOG_WRITE_STRING = 9,
 
-	/** Record insert */
-	MLOG_REC_INSERT = 9,
-
-	/** Mark clustered index record deleted */
-	MLOG_REC_CLUST_DELETE_MARK = 10,
-
-	/** Mark secondary index record deleted */
-	MLOG_REC_SEC_DELETE_MARK = 11,
-
-	/** update of a record, preserves record field sizes */
-	MLOG_REC_UPDATE_IN_PLACE = 13,
-
-	/*!< Delete a record from a page */
-	MLOG_REC_DELETE = 14,
-
-	/** Delete record list end on index page */
-	MLOG_LIST_END_DELETE = 15,
-
-	/** Delete record list start on index page */
-	MLOG_LIST_START_DELETE = 16,
-
-	/** Copy record list end to a new created index page */
-	MLOG_LIST_END_COPY_CREATED = 17,
+	/** log record about an .ibd file creation */
+	MLOG_FILE_CREATE = 10,
+	/** rename databasename/tablename (no .ibd file name suffix) */
+	MLOG_FILE_RENAME = 11,
+	/** delete a tablespace file that starts with (space_id,page_no) */
+	MLOG_FILE_DELETE = 12,
+	/** note the first use of a tablespace file since checkpoint */
+	MLOG_FILE_NAME = 13,
+    MLOG_FSP_INIT = 14,
+    MLOG_FSP_EXTEND = 15,
 
 	/** Reorganize page */
-	MLOG_PAGE_REORGANIZE = 18,
-
+	MLOG_PAGE_REORGANIZE = 20,
 	/** Create an index page */
-	MLOG_PAGE_CREATE = 19,
+	MLOG_PAGE_CREATE = 21,
+	MLOG_INIT_FILE_PAGE = 22,
+	/** initialize an ibuf bitmap page */
+	MLOG_IBUF_BITMAP_INIT = 23,
+	/** Create a R-Tree index page */
+	MLOG_PAGE_CREATE_RTREE = 24,
+	/** create a R-tree compact page */
+	MLOG_COMP_PAGE_CREATE_RTREE = 25,
+
+    MLOG_TRX_RSEG_PAGE_INIT = 30,
+    MLOG_TRX_RSEG_SLOT_END = 31,
+    MLOG_TRX_RSEG_SLOT_BEGIN = 32,
+    MLOG_TRX_RSEG_SLOT_XA_PREPARE = 33,
+    MLOG_TRX_RSEG_SLOT_XA_ROLLBACK = 34,
+
+
+    MLOG_HEAP_INIT_ITLS = 40,
+    MLOG_HEAP_NEW_ITL = 41,
+    MLOG_HEAP_REUSE_ITL = 42,
+    MLOG_HEAP_CLEAN_ITL = 43,
+    MLOG_HEAP_NEW_DIR = 44,
+    MLOG_HEAP_ALLOC_DIR = 45,
+    MLOG_HEAP_FREE_DIR = 46,
+
+    MLOG_HEAP_INSERT = 50,
+    MLOG_HEAP_UPDATE_INPLACE = 51,
+    MLOG_HEAP_UPDATE_INPAGE = 52,
+    MLOG_HEAP_DELETE = 53,
+
+    MLOG_HEAP_INSERT_MIGR = 54,
+    MLOG_HEAP_REMOVE_MIGR = 55,
+
+    MLOG_HEAP_SET_LINK = 56,
+    MLOG_HEAP_DELETE_LINK = 57,
+
 
 	/** Insert entry in an undo log */
-	MLOG_UNDO_INSERT = 20,
-
+	MLOG_UNDO_LOG_INSERT = 100,
 	/** erase an undo log page end */
-	MLOG_UNDO_ERASE_END = 21,
-
+	MLOG_UNDO_ERASE_END = 101,
 	/** initialize a page in an undo log */
-	MLOG_UNDO_PAGE_INIT = 22,
-
+	MLOG_UNDO_PAGE_INIT = 102,
 	/** discard an update undo log header */
-	MLOG_UNDO_HDR_DISCARD = 23,
-
+	MLOG_UNDO_HDR_DISCARD = 103,
 	/** reuse an insert undo log header */
-	MLOG_UNDO_PAGE_REUSE = 24,
-
+	MLOG_UNDO_PAGE_REUSE = 104,
 	/** create an undo log header */
-	MLOG_UNDO_LOG_HDR_CREATE = 25,
+	MLOG_UNDO_LOG_HDR_CREATE = 105,
+
+    MLOG_HEAP_UNDO_INSERT = 110,
+    MLOG_HEAP_UNDO_UPDATE_INPLACE = 111,
+    MLOG_HEAP_UNDO_UPDATE_INPAGE = 112,
+    MLOG_HEAP_UNDO_DELETE = 113,
+
+
 
 	/** mark an index record as the predefined minimum record */
 	MLOG_REC_MIN_MARK = 26,
 
-	/** initialize an ibuf bitmap page */
-	MLOG_IBUF_BITMAP_INIT = 27,
-
-	/** Current LSN */
-	MLOG_LSN = 28,
-
-	/** this means that a file page is taken into use and the prior
-	contents of the page should be ignored: in recovery we must not
-	trust the lsn values stored to the file page.
-	Note: it's deprecated because it causes crash recovery problem
-	in bulk create index, and actually we don't need to reset page
-	lsn in recv_recover_page_func() now. */
-	MLOG_INIT_FILE_PAGE = 29,
-
-	/** write a string to a page */
-	MLOG_WRITE_STRING = 30,
-
-	/** If a single mtr writes several log records, this log
-	record ends the sequence of these records */
-	MLOG_MULTI_REC_END = 31,
-
-	/** dummy log record used to pad a log block full */
-	MLOG_DUMMY_RECORD = 32,
-
-	/** log record about an .ibd file creation */
-	//MLOG_FILE_CREATE = 33,
-
-	/** rename databasename/tablename (no .ibd file name suffix) */
-	//MLOG_FILE_RENAME = 34,
-
-	/** delete a tablespace file that starts with (space_id,page_no) */
-	MLOG_FILE_DELETE = 35,
-
-	/** mark a compact index record as the predefined minimum record */
-	MLOG_COMP_REC_MIN_MARK = 36,
-
-	/** create a compact index page */
-	MLOG_COMP_PAGE_CREATE = 37,
-
-	/** compact record insert */
-	MLOG_COMP_REC_INSERT = 38,
-
-	/** mark compact clustered index record deleted */
-	MLOG_COMP_REC_CLUST_DELETE_MARK = 39,
-
-	/** mark compact secondary index record deleted; this log
-	record type is redundant, as MLOG_REC_SEC_DELETE_MARK is
-	independent of the record format. */
-	MLOG_COMP_REC_SEC_DELETE_MARK = 40,
-
-	/** update of a compact record, preserves record field sizes */
-	MLOG_COMP_REC_UPDATE_IN_PLACE = 41,
-
-	/** delete a compact record from a page */
-	MLOG_COMP_REC_DELETE = 42,
-
-	/** delete compact record list end on index page */
-	MLOG_COMP_LIST_END_DELETE = 43,
-
-	/*** delete compact record list start on index page */
-	MLOG_COMP_LIST_START_DELETE = 44,
-
-	/** copy compact record list end to a new created index page */
-	MLOG_COMP_LIST_END_COPY_CREATED = 45,
-
-	/** reorganize an index page */
-	MLOG_COMP_PAGE_REORGANIZE = 46,
-
-	/** log record about creating an .ibd file, with format */
-	MLOG_FILE_CREATE2 = 47,
-
-	/** write the node pointer of a record on a compressed
-	non-leaf B-tree page */
-	MLOG_ZIP_WRITE_NODE_PTR = 48,
-
-	/** write the BLOB pointer of an externally stored column
-	on a compressed page */
-	MLOG_ZIP_WRITE_BLOB_PTR = 49,
-
-	/** write to compressed page header */
-	MLOG_ZIP_WRITE_HEADER = 50,
-
-	/** compress an index page */
-	MLOG_ZIP_PAGE_COMPRESS = 51,
-
-	/** compress an index page without logging it's image */
-	MLOG_ZIP_PAGE_COMPRESS_NO_DATA = 52,
-
-	/** reorganize a compressed page */
-	MLOG_ZIP_PAGE_REORGANIZE = 53,
-
-	/** rename a tablespace file that starts with (space_id,page_no) */
-	MLOG_FILE_RENAME2 = 54,
-
-	/** note the first use of a tablespace file since checkpoint */
-	MLOG_FILE_NAME = 55,
-
-	/** note that all buffered log was written since a checkpoint */
-	MLOG_CHECKPOINT = 56,
-
-	/** Create a R-Tree index page */
-	MLOG_PAGE_CREATE_RTREE = 57,
-
-	/** create a R-tree compact page */
-	MLOG_COMP_PAGE_CREATE_RTREE = 58,
-
-	/** this means that a file page is taken into use.
-	We use it to replace MLOG_INIT_FILE_PAGE. */
-	MLOG_INIT_FILE_PAGE2 = 59,
-
 	/** Table is being truncated. (Marked only for file-per-table) */
 	MLOG_TRUNCATE = 60,
 
-	/** notify that an index tree is being loaded without writing
-	redo log about individual pages */
-	MLOG_INDEX_LOAD = 61,
 
-    MLOG_HEAP_INIT_ITLS = 62,
-    MLOG_HEAP_NEW_ITL = 63,
-    MLOG_HEAP_REUSE_ITL = 64,
-    MLOG_HEAP_CLEAN_ITL = 65,
 
-    MLOG_HEAP_INSERT = 66,
-    MLOG_HEAP_UPDATE_INPLACE = 67,
-    MLOG_HEAP_UPDATE_INPAGE = 68,
-    MLOG_HEAP_DELETE = 69,
-
-    MLOG_HEAP_INSERT_MIGR = 70,
-    MLOG_HEAP_REMOVE_MIGR = 71,
-
-    MLOG_HEAP_SET_LINK = 72,
-    MLOG_HEAP_DELETE_LINK = 73,
-
-    MLOG_TRX_RSEG_PAGE_INIT = 74,
-    MLOG_TRX_RSEG_SLOT_END = 75,
-    MLOG_TRX_RSEG_SLOT_BEGIN = 76,
-    MLOG_TRX_RSEG_SLOT_XA_PREPARE = 77,
-    MLOG_TRX_RSEG_SLOT_XA_ROLLBACK = 78,
-
+    /** If a single mtr writes several log records, this log record ends the sequence of these records */
+    MLOG_MULTI_REC_END = 126,
 
     /** biggest value (used in assertions) */
     MLOG_BIGGEST_TYPE = 127
@@ -438,6 +327,7 @@ extern inline void mtr_x_lock_func(rw_lock_t* lock, const char* file, uint32 lin
 
 extern inline byte* mlog_replay_nbytes(
     uint32 type, // in: log record type: MLOG_1BYTE, ...
+    uint64 lsn,
     byte* log_rec_ptr, // in: buffer
     byte* log_end_ptr, // in: buffer end
     void* block); // in: block where to apply the log record, or NULL

@@ -84,7 +84,7 @@ extern inline uint32 ut_2_exp(uint32 n);
 
 /** Calculates fast the number rounded up to the nearest power of 2.
  @return first power of 2 which is >= n */
-uint64 inline ut_2_power_up(uint64 n); /*!< in: number != 0 */
+extern inline uint64 ut_2_power_up(uint64 n); /*!< in: number != 0 */
 
 /** Calculates fast the remainder of n/m when m is a power of two.
     @param n in: numerator

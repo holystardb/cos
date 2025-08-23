@@ -27,7 +27,7 @@ typedef struct st_checkpoint_group {
 
 typedef struct st_checkpoint_dbwr {
     os_file_t       handle;
-    uint32          size;
+    uint64          size;
     char*           name;
     os_aio_array_t* aio_array;
 } checkpoint_dbwr_t;
@@ -74,7 +74,7 @@ typedef struct st_checkpoint {
 
 //-----------------------------------------------------------------
 
-extern status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size);
+extern status_t checkpoint_init(char* dbwr_file_name, uint64 dbwr_file_size);
 extern void* checkpoint_proc_thread(void *arg);
 extern inline void checkpoint_wake_up_thread();
 

@@ -3,23 +3,38 @@
 #include "cm_mutex.h"
 #include "cm_thread.h"
 #include "cm_file.h"
+#include "securec.h"
+
+#ifdef __WIN__
+#include "io.h"
+#else
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <dlfcn.h>
+#endif // __WIN__
 
 
 log_info    LOGGER;
 
 log_info::log_info()
-    : log_handle(OS_FILE_INVALID_HANDLE), log_level(LOG_LEVEL_DEFAULT),
-      write_pos(0), write_to_buffer_flag(FALSE), log_file_size(0),
-      log_file_create_time(0), batch_flush_flag(FALSE), batch_flush_pos(0)
 {
     write_buffer[0] = '\0';
     log_file_name[0] = '\0';
     log_file_path[0] = '\0';
-
+    log_handle = OS_FILE_INVALID_HANDLE;
+    log_level = LOG_LEVEL_DEFAULT;
+    write_pos = 0;
+    write_to_buffer_flag = FALSE;
+    log_file_size = 0;
+    log_file_create_time = 0;
+    batch_flush_flag = FALSE;
+    batch_flush_pos = 0;
     is_print_stderr = FALSE;
     mutex_create(&mutex);
 
-    for (uint32 i = 0; i < LOG_MODULE_END; i++) {
+    modules_log_level[0] = LOG_LEVEL_ALL;
+    for (uint32 i = 1; i < LOG_MODULE_END; i++) {
         modules_log_level[i] = LOG_LEVEL_DEFAULT;
     }
 }
@@ -91,7 +106,7 @@ bool32 log_info::create_log_file()
     if (log_handle == OS_FILE_INVALID_HANDLE) {
         char err_info[CM_ERR_MSG_MAX_LEN];
         os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
-        fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%lu] %s, error %s\n",
+        fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%u] %s, error %s\n",
             clock.year, clock.month, clock.day,
             clock.hour, clock.minute, clock.second,
             clock.milliseconds, "[ERROR] ", os_thread_get_curr_id(),
@@ -117,15 +132,17 @@ bool32 log_info::create_log_file()
     offset_low = (log_file_size & 0xFFFFFFFF);
     offset_high = (log_file_size >> 32);
 
+#ifdef __WIN__
     ret2 = SetFilePointer(log_handle, offset_low, &offset_high, FILE_BEGIN);
     if (ret2 == 0xFFFFFFFF && GetLastError() != NO_ERROR) {
         return FALSE;
     }
+#endif
 
     return TRUE;
 }
 
-void log_info::log_to_file(char* log_level_desc, uint32 module_id, const char *fmt, ...)
+void log_info::log_to_file(const char* log_level_desc, uint32 module_id, const char *fmt, ...)
 {
     int             len, write_size = 0;
     va_list         ap;
@@ -158,9 +175,6 @@ retry:
     write_buffer[write_pos] = '\0';
 
     if (log_handle != OS_FILE_INVALID_HANDLE) {
-#ifdef __WIN__
-        DWORD write_size = 0;
-        bool32 ret;
 
         if (log_file_create_time != clock.year * 10000 + clock.month * 100 + clock.day) {
             if (os_close_file(log_handle)) {
@@ -178,7 +192,10 @@ retry:
             fflush(stderr);
         }
 
-        //
+#ifdef __WIN__
+        DWORD write_size = 0;
+        bool32 ret;
+
         ret = WriteFile(log_handle, write_buffer, (DWORD)write_pos, &write_size, NULL);
         if (ret == 0 || write_pos != write_size) {
             char err_info[CM_ERR_MSG_MAX_LEN];
@@ -194,7 +211,7 @@ retry:
         }
 #else
         ssize_t ret = pwrite64(log_handle, (char *)write_buffer, write_pos, log_file_size);
-        if ((uint32)ret != size) {
+        if ((uint32)ret != write_pos) {
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
 
@@ -214,7 +231,7 @@ retry:
 
     mutex_enter(&mutex, NULL);
     log_file_size += write_pos;
-    if (log_file_size - batch_flush_pos >= 1024 * 1024) {
+    if (log_file_size - batch_flush_pos >= SIZE_M(1)) {
         batch_flush_pos = log_file_size;
         need_flush = TRUE;
     }
@@ -305,7 +322,7 @@ void log_info::coredump_to_file(char **symbol_strings, int len_symbols)
 }
 
 
-void log_info::log_to_stderr(char* log_level_desc, uint32 module_id, const char *fmt, ...)
+void log_info::log_to_stderr(const char* log_level_desc, uint32 module_id, const char *fmt, ...)
 {
     int             len;
     va_list         ap;

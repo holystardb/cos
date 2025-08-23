@@ -18,6 +18,9 @@ static mlog_dispatch_t g_mlog_replay_table[MLOG_BIGGEST_TYPE] = {
     {MLOG_4BYTES, mlog_replay_nbytes, mlog_replay_check},
     {MLOG_8BYTES, mlog_replay_nbytes, mlog_replay_check},
 
+    {MLOG_FSP_INIT, fsp_replay_fsp_init, mlog_replay_check},
+    {MLOG_FSP_EXTEND, fsp_replay_fsp_extend, mlog_replay_check},
+
     {MLOG_INIT_FILE_PAGE2, fsp_replay_init_file_page, mlog_replay_check},
     {MLOG_TRX_RSEG_PAGE_INIT, trx_rseg_replay_trx_slot_page_init, mlog_replay_check},
     {MLOG_TRX_RSEG_SLOT_BEGIN, trx_rseg_replay_begin_slot, mlog_replay_check},
@@ -38,8 +41,8 @@ static int32 recovery_block_cmp(const void* p1, const void* p2)
     ut_ad(b1 != NULL);
     ut_ad(b2 != NULL);
 
-    int32 ret = (int32)(b2->page.id.space_id() - b1->page.id.space_id());
-    return ret ? ret : (int32)(b2->page.id.page_no() - b1->page.id.page_no());
+    int32 ret = (int32)(b2->page.id.get_space_id() - b1->page.id.get_space_id());
+    return ret ? ret : (int32)(b2->page.id.get_page_no() - b1->page.id.get_page_no());
 }
 
 recovery_sys_t* recovery_init(memory_pool_t* mem_pool)
@@ -261,8 +264,12 @@ static inline uint32 recovery_parse_next_log_rec_size(recovery_sys_t* recv_sys)
     return mach_read_from_2(log_rec);
 }
 
+static bool32 recovery_check_log_rec_crc(redo_replay_record* record)
+{
+    return TRUE;
+}
 
-static status_t recovery_read_next_log_rec(recovery_sys_t* recv_sys)
+static status_t recovery_read_next_log_rec(recovery_sys_t* recv_sys, redo_replay_record* record)
 {
     status_t err;
 
@@ -395,7 +402,7 @@ static bool32 recovery_is_need_get_block(uint32 type, bool32* is_create_page)
         result = TRUE;
         break;
 
-    case MLOG_INIT_FILE_PAGE2:
+    case MLOG_INIT_FILE_PAGE:
     case MLOG_TRX_RSEG_PAGE_INIT:
         result = TRUE;
         *is_create_page = TRUE;
@@ -408,7 +415,140 @@ static bool32 recovery_is_need_get_block(uint32 type, bool32* is_create_page)
     return result;
 }
 
-static status_t recovery_replay_log_rec(recovery_sys_t* recv_sys)
+static status_t recovery_replay_log_rec(redo_replay_record* record)
+{
+    status_t ret = CM_SUCCESS;
+    mtr_t mtr;
+    uint32 type;
+    date_t begin_time = cm_now();
+
+    ut_ad(recv_sys->log_rec_len > MTR_LOG_LEN_SIZE);
+    ut_ad(recv_sys->log_rec != NULL);
+    ut_ad(recv_sys->log_rec_end_lsn - recv_sys->log_rec_start_lsn >= recv_sys->log_rec_len);
+
+    byte* end_ptr = record->main_data + record->len;
+    byte* log_rec_ptr = record->main_data;
+    uint32 single_rec = (uint32)*log_rec_ptr & MLOG_SINGLE_REC_FLAG;
+    if (single_rec == 0) {  // multi rec
+        if (MLOG_MULTI_REC_END != mach_read_from_1(end_ptr - 1)) {
+            LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
+                "recovery_replay_log_rec: invalid log at lsn (%llu - %llu) in group %s",
+                recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn,
+                log_sys->groups[recv_sys->cur_group_id].name);
+            return CM_ERROR;
+        }
+    }
+
+    LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
+        "starting an replay batch of log records at lsn (%llu - %llu) in group %s",
+        recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn,
+        log_sys->groups[recv_sys->cur_group_id].name);
+
+    mtr_start(&mtr);
+
+    while (log_rec_ptr < end_ptr) {
+        //
+        type = (byte)((uint32)*log_rec_ptr & ~MLOG_SINGLE_REC_FLAG);
+        ut_ad(type > 0 && type <= MLOG_BIGGEST_TYPE);
+        log_rec_ptr++;
+
+        if (type == MLOG_MULTI_REC_END) {
+            // Found the end mark for the records
+            LOGGER_TRACE(LOGGER, LOG_MODULE_RECOVERY,
+                "recovery_replay_log_rec: multi_rec_end for lsn (%llu - %llu) in group %s",
+                recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn,
+                log_sys->groups[recv_sys->cur_group_id].name);
+            ut_ad(single_rec == FALSE);
+            break;
+        }
+
+
+        //
+        buf_block_t* block = NULL;
+        bool32 is_create_page = FALSE;
+        space_id_t space_id = INVALID_SPACE_ID;
+        page_no_t page_no = INVALID_PAGE_NO;
+        if (recovery_is_need_get_block(type, &is_create_page)) {
+            space_id = mach_read_compressed(log_rec_ptr);
+            log_rec_ptr += mach_get_compressed_size(space_id);
+            page_no = mach_read_compressed(log_rec_ptr);
+            log_rec_ptr += mach_get_compressed_size(page_no);
+            //
+            Page_fetch mode;
+            if (is_create_page) {
+                uint32 page_type = mach_read_from_2(log_rec_ptr);
+                mode = (page_type & FIL_PAGE_TYPE_RESIDENT_FLAG) ? Page_fetch::RESIDENT : Page_fetch::NORMAL;
+            }
+            //
+            const page_id_t page_id(space_id, page_no);
+            const page_size_t page_size(space_id);
+            if (is_create_page) {
+                block = buf_page_create(page_id, page_size, RW_X_LATCH, mode, &mtr);
+            } else {
+                block = buf_page_get(page_id, page_size, RW_X_LATCH, &mtr);
+            }
+            if (block == NULL) {
+                LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
+                    "recovery_replay_log_rec: cannot find block(space id %u, page no %u)",
+                    space_id, page_no);
+                ret = CM_ERROR;
+                goto err_exit;
+            }
+            //buf_block_dbg_add_level(block, SYNC_NO_ORDER_CHECK);
+
+            //
+            const ib_rbt_node_t* rbt_node = rbt_lookup(recv_sys->block_rbt, &block);
+            if (rbt_node == NULL) {
+                rbt_insert(recv_sys->block_rbt, &block, &block);
+            }
+        }
+
+        // replay
+        if (g_mlog_dispatch[type].log_rec_replay == NULL) {
+            LOGGER_ERROR(LOGGER, LOG_MODULE_RECOVERY,
+                "recovery_replay_log_rec: invalid log type %lu block (%p space_id %lu page_no %lu)",
+                type, block, space_id, page_no);
+            ret = CM_ERROR;
+            goto err_exit;
+        }
+        log_rec_ptr = g_mlog_dispatch[type].log_rec_replay(type, record->end_lsn, log_rec_ptr, end_ptr, block);
+        if (log_rec_ptr == NULL) {
+            ret = CM_ERROR;
+            goto err_exit;
+        }
+    }
+    //
+    ut_a(log_rec_ptr == end_ptr);
+
+    // add block to flush_list
+    log_flush_order_mutex_enter();
+    for (const ib_rbt_node_t* rbt_node = rbt_first(recv_sys->block_rbt);
+         rbt_node != NULL;
+         rbt_node = rbt_next(recv_sys->block_rbt, rbt_node))
+    {
+        buf_block_t* block = *(buf_block_t **)rbt_value(buf_block_t**, rbt_node);
+        buf_flush_recv_note_modification(block, recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn);
+    }
+    log_flush_order_mutex_exit();
+
+err_exit:
+
+    mtr.modifications = FALSE;
+    mtr_commit(&mtr);
+
+    rbt_clear(recv_sys->block_rbt);
+
+    date_t end_time = cm_now();
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_RECOVERY,
+        "replay batch completed: len %u lsn (%llu - %llu) in group %s, total time %llu micro-seconds",
+        recv_sys->log_rec_len, recv_sys->log_rec_start_lsn, recv_sys->log_rec_end_lsn,
+        log_sys->groups[recv_sys->cur_group_id].name, end_time - begin_time);
+
+    return ret;
+}
+
+
+static status_t recovery_replay_log_rec1(recovery_sys_t* recv_sys)
 {
     status_t ret = CM_SUCCESS;
     mtr_t mtr;
@@ -659,21 +799,26 @@ status_t recovery_from_checkpoint_start(recovery_sys_t* recv_sys)
     recv_sys->base_lsn = recv_sys->checkpoint_lsn -
         (recv_sys->checkpoint_group_offset - LOG_BUF_WRITE_MARGIN); // lsn for block0
 
-    // read and replay log_rec
-    byte* log_rec = NULL;
-    err = recovery_read_next_log_rec(recv_sys);
-    if (err != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-    while (recv_sys->log_rec) {
-        // replay
-        err = recovery_replay_log_rec(recv_sys);
+
+
+    while (TRUE) {
+        // read log_rec
+        redo_replay_record record = {0, INVALID_SCN, INVALID_SCN, 0, 0, NULL};
+        err = recovery_read_next_log_rec(recv_sys, &record);
         if (err != CM_SUCCESS) {
             return CM_ERROR;
         }
+        if (record.len == 0) {
+            // reach to the end of redo
+            break;
+        }
+        // check crc
+        if (!recovery_check_log_rec_crc(&record)) {
+            return CM_ERROR;
+        }
 
-        // get next log_rec
-        err = recovery_read_next_log_rec(recv_sys);
+        // replay
+        err = recovery_replay_log_rec(&record);
         if (err != CM_SUCCESS) {
             return CM_ERROR;
         }

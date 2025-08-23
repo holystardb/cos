@@ -5,7 +5,7 @@ extern "C" {
 #endif
 
 
-void* thread_worker_routine(void *arg); 
+static void* thread_worker_routine(void *arg); 
 
 thread_pool_t* thread_pool_create(memory_pool_t *mem_pool, uint16 thread_count)
 {

@@ -35,13 +35,14 @@
 #undef my_snprinf
 #define my_snprintf "We cannot use my_snprintf in this file"
 
+/*
 enum loglevel {
     SYSTEM_LEVEL = 0,
     ERROR_LEVEL = 1,
     WARNING_LEVEL = 2,
     INFORMATION_LEVEL = 3
 };
-
+*/
 int (*my_string_stack_guard)(int)= NULL;
 
 static char *mstr(char *str,const char *src,size_t l1,size_t l2)

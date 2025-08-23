@@ -8,6 +8,15 @@
 #include "knl_mtr.h"
 
 
+typedef struct st_redo_replay_record
+{
+    uint32      len;       /* total len of entire record */
+    uint64      begin_lsn; /* start of record read */
+    uint64      end_lsn;   /* end+1 of record read */
+    uint32      time_line_id;
+    uint64      crc;
+    char*       main_data; /* record's main data portion */
+} redo_replay_record;
 
 
 
@@ -70,8 +79,8 @@ struct st_recovery_sys{
 typedef struct st_mlog_dispatch {
     uint32 type;
 
-    byte* (*log_rec_replay)(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
-    bool32 (*log_rec_check)(uint32 type, byte* log_rec_ptr, byte* log_end_ptr);
+    byte* (*log_rec_replay)(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+    bool32 (*log_rec_check)(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr);
 } mlog_dispatch_t;
 
 

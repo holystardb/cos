@@ -1,4 +1,7 @@
 #include "cm_config.h"
+#include "cm_util.h"
+#include "securec.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -310,7 +313,7 @@ int write_private_profile_string(const char *section, const char *entry, char *b
             /* Clean up and rename */
             fclose(rfp);
             fclose(wfp);
-            _unlink(file_name);
+            unlink(file_name);
             rename(tmp_name, file_name);
             return(1);
         }
@@ -327,7 +330,7 @@ int write_private_profile_string(const char *section, const char *entry, char *b
             /* Clean up and rename */
             fclose(rfp);
             fclose(wfp);
-            _unlink(file_name);
+            unlink(file_name);
             rename(tmp_name, file_name);
             return(1);
 
@@ -353,7 +356,7 @@ int write_private_profile_string(const char *section, const char *entry, char *b
     /* Clean up and rename */
     fclose(wfp);
     fclose(rfp);
-    _unlink(file_name);
+    unlink(file_name);
     rename(tmp_name, file_name);
     return(1);
 }
@@ -384,7 +387,6 @@ config_lines* read_lines_from_config_file(char *config_file)
     char *ep;;
     char buff[MAX_LINE_LENGTH];
     const int max_lines = 1024;
-    int n = 0;
     config_lines* result;
 
     result = (config_lines *)malloc(sizeof(config_lines) + max_lines * sizeof(char *));

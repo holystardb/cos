@@ -925,7 +925,7 @@ inline void log_write_complete(log_buf_lsn_t *log_lsn)
 }
 
 // Initializes the log
-bool32 log_group_add(char *name, uint64 file_size)
+status_t log_group_add(char* name, uint64 file_size)
 {
     log_group_t *group = NULL;
 
@@ -936,7 +936,7 @@ bool32 log_group_add(char *name, uint64 file_size)
     if ((log_sys->group_count + 1) >= LOG_GROUP_MAX_COUNT) {
         mutex_exit(&log_sys->mutex);
         LOGGER_ERROR(LOGGER, LOG_MODULE_REDO, "Error, REDO file has reached the maximum limit");
-        return FALSE;
+        return CM_ERROR;
     }
 
     for (uint32 i = 0; i < log_sys->group_count; i++) {
@@ -946,7 +946,7 @@ bool32 log_group_add(char *name, uint64 file_size)
             strncmp(log_sys->groups[i].name, name, strlen(name)) == 0) {
             mutex_exit(&log_sys->mutex);
             LOGGER_ERROR(LOGGER, LOG_MODULE_REDO, "redo file exists, name = %s", name);
-            return FALSE;
+            return CM_ERROR;
         }
     }
 
@@ -980,7 +980,7 @@ bool32 log_group_add(char *name, uint64 file_size)
         goto err_exit;
     }
 
-    return TRUE;
+    return CM_SUCCESS;
 
 err_exit:
 
@@ -993,7 +993,7 @@ err_exit:
     UT_LIST_REMOVE(list_node, log_sys->log_groups, group);
     mutex_exit(&log_sys->mutex);
 
-    return FALSE;
+    return CM_ERROR;
 }
 
 // Initializes the log

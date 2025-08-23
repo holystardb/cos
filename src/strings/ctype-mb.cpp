@@ -56,8 +56,8 @@ get_case_info_for_ch(const CHARSET_INFO *cs, uint page, uint offs)
   For character sets which don't change octet length in case conversion.
 */
 size_t my_caseup_mb(const CHARSET_INFO *cs, char *src, size_t srclen,
-                    char *dst MY_ATTRIBUTE((unused)),
-                    size_t dstlen MY_ATTRIBUTE((unused)))
+                    char *dst MY_ATTRIBUTE(unused),
+                    size_t dstlen MY_ATTRIBUTE(unused))
 {
   uint32 l;
   char *srcend= src + srclen;
@@ -91,8 +91,8 @@ size_t my_caseup_mb(const CHARSET_INFO *cs, char *src, size_t srclen,
 
 
 size_t my_casedn_mb(const CHARSET_INFO *cs, char *src, size_t srclen,
-                    char *dst MY_ATTRIBUTE((unused)),
-                    size_t dstlen MY_ATTRIBUTE((unused)))
+                    char *dst MY_ATTRIBUTE(unused),
+                    size_t dstlen MY_ATTRIBUTE(unused))
 {
   uint32 l;
   char *srcend= src + srclen;
@@ -137,7 +137,7 @@ size_t my_casedn_mb(const CHARSET_INFO *cs, char *src, size_t srclen,
 static size_t
 my_casefold_mb_varlen(const CHARSET_INFO *cs,
                       char *src, size_t srclen,
-                      char *dst, size_t dstlen MY_ATTRIBUTE((unused)),
+                      char *dst, size_t dstlen MY_ATTRIBUTE(unused),
                       const uchar *map,
                       size_t is_upper)
 {
@@ -355,7 +355,7 @@ int my_wildcmp_mb(const CHARSET_INFO *cs,
 }
 
 
-size_t my_numchars_mb(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+size_t my_numchars_mb(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 		      const char *pos, const char *end)
 {
   size_t count= 0;
@@ -369,7 +369,7 @@ size_t my_numchars_mb(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 }
 
 
-size_t my_charpos_mb(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+size_t my_charpos_mb(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 		     const char *pos, const char *end, size_t length)
 {
   const char *start= pos;
@@ -464,7 +464,7 @@ uint my_instr_mb(const CHARSET_INFO *cs,
 /* BINARY collations handlers for MB charsets */
 
 int
-my_strnncoll_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_strnncoll_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                     const uchar *s, size_t slen,
                     const uchar *t, size_t tlen,
                     my_bool t_is_prefix)
@@ -501,7 +501,7 @@ my_strnncoll_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 */
 
 int
-my_strnncollsp_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_strnncollsp_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                       const uchar *a, size_t a_length, 
                       const uchar *b, size_t b_length,
                       my_bool diff_if_only_endspace_difference)
@@ -652,7 +652,7 @@ pad:
 
 
 int
-my_strcasecmp_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_strcasecmp_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                      const char *s, const char *t)
 {
   return strcmp(s,t);
@@ -660,7 +660,7 @@ my_strcasecmp_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 
 
 void
-my_hash_sort_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+my_hash_sort_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                     const uchar *key, size_t len,ulong *nr1, ulong *nr2)
 {
   const uchar *pos = key;

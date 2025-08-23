@@ -2,14 +2,14 @@
 #include "m_ctype.h"
 
 //#ifdef HAVE_UCA_COLLATIONS
-
+/*
 enum loglevel {
     SYSTEM_LEVEL = 0,
     ERROR_LEVEL = 1,
     WARNING_LEVEL = 2,
     INFORMATION_LEVEL = 3
 };
-
+*/
 #define MY_UCA_NPAGES 256
 #define MY_UCA_NCHARS 256
 #define MY_UCA_CMASK  255

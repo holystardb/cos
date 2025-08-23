@@ -212,12 +212,12 @@ typedef struct st_log {
 /*-----------------------------------------------------------------------*/
 
 extern status_t log_init(uint32 log_buffer_size);
-extern bool32 log_group_add(char *name, uint64 file_size);
+extern status_t log_group_add(char* name, uint64 file_size);
 extern inline uint64 log_group_get_capacity(const log_group_t* group);
 
 extern inline void log_buffer_reserve(log_buf_lsn_t* buf_lsn, uint32 len);
-extern inline uint64 log_buffer_write(uint64 start_lsn, byte *str, uint32 str_len);
-extern inline void log_write_complete(log_buf_lsn_t *log_lsn);
+extern inline uint64 log_buffer_write(uint64 start_lsn, byte* str, uint32 str_len);
+extern inline void log_write_complete(log_buf_lsn_t* log_lsn);
 extern inline void log_write_up_to(lsn_t lsn);
 
 extern inline lsn_t log_get_flushed_to_disk_lsn();

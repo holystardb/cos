@@ -162,7 +162,7 @@ uint64 trx_scn_inc(que_sess_t* sess, time_t init_time)
 
     //(void)cm_gettimeofday(&time_val);
     date_t now = g_timer()->monotonic_now_us;
-    time_val.tv_sec = now / MICROSECS_PER_SECOND;
+    time_val.tv_sec = (uint32)(now / MICROSECS_PER_SECOND);
     time_val.tv_usec = now % MICROSECS_PER_SECOND;
     if (time_val.tv_sec <= old_time_val.tv_sec) {
         next_scn = TRX_SCN_INC(&sess->current_scn);
@@ -177,6 +177,31 @@ uint64 trx_scn_inc(que_sess_t* sess, time_t init_time)
 }
 
 
+static inline void trx_commit_fast_clean(que_sess_t* sess, trx_t* trx, scn_t scn)
+{
+    uint32 clean_block_count = sess->fast_clean_mgr.get_clean_block_count();
+    mtr_t mtr;
+
+    for (uint32 i = 0; i < clean_block_count; i++) {
+        mtr_start(&mtr);
+
+        fast_clean_block_t* clean_block = sess->fast_clean_mgr.find_clean_block(i);
+        const page_id_t page_id(clean_block->space_id, clean_block->page_no);
+        const page_size_t page_size(clean_block->space_id);
+        buf_block_t* block = buf_page_get_gen(page_id, page_size,
+            RW_X_LATCH, clean_block->block, Page_fetch::PEEK_IF_IN_POOL, &mtr);
+        if (block == NULL) {
+            continue;
+        }
+
+        // set itl status and fsc of data page
+        heap_set_itl_trx_end(block, trx->trx_slot_id, clean_block->itl_id, scn, &mtr);
+
+        mtr_commit(&mtr);
+    }
+    sess->fast_clean_mgr.clean();
+}
+
 
 inline trx_t* trx_begin(que_sess_t* sess)
 {
@@ -190,30 +215,8 @@ static inline void trx_commit_in_memory(que_sess_t* sess, trx_t* trx, scn_t scn)
         trx_undo_insert_cleanup(trx);
     }
 
-    // set itl status of data page
-    if (sess->fast_clean_pages) {
-        mtr_t mtr;
-        mtr_start(&mtr);
-        fast_clean_page_hdr_t* clean_page_hdr = (fast_clean_page_hdr_t *)MEM_PAGE_DATA_PTR(sess->fast_clean_pages);
-        uint16 page_count = mach_read_from_2(clean_page_hdr);
-        for (uint32 i = 0; i < page_count; i++) {
-            fast_clean_page_t* clean_page = clean_page_hdr + FAST_CLEAN_PAGE_HEADER_SIZE + i * FAST_CLEAN_PAGE_SIZE;
-            uint32 space_id = mach_read_from_4(clean_page_hdr + FAST_CLEAN_PAGE_SPACE_ID);
-            uint32 page_no = mach_read_from_4(clean_page_hdr + FAST_CLEAN_PAGE_PAGE_NO);
-            uint8  itl_id = mach_read_from_4(clean_page_hdr + FAST_CLEAN_PAGE_ITL_ID);
-            buf_block_t* guess = (buf_block_t*)DatumGetPointer(mach_read_from_8(clean_page_hdr + FAST_CLEAN_PAGE_BLOCK));
-
-            const page_id_t page_id(space_id, page_no);
-            const page_size_t page_size(space_id);
-            buf_block_t* block = buf_page_get_gen(page_id, page_size,
-                RW_NO_LATCH, guess, Page_fetch::PEEK_IF_IN_POOL, &mtr);
-            if (block) {
-                heap_set_itl_trx_end(block, trx->trx_slot_id, itl_id, scn, &mtr);
-            }
-        }
-        mach_write_to_2(clean_page_hdr, 0);
-        mtr_commit(&mtr);
-    }
+    // set itl status and fsc of data page
+    trx_commit_fast_clean(sess,trx, scn);
 }
 
 inline void trx_commit(que_sess_t* sess, trx_t* trx)
@@ -227,6 +230,56 @@ inline void trx_commit(que_sess_t* sess, trx_t* trx)
     srv_stats.trx_commits.inc();
 }
 
+static void trx_rollback_pcr_pages(que_sess_t* sess, trx_t* trx, trx_savepoint_t* savepoint)
+{
+}
+
+static void trx_rollback_one_row(que_sess_t* sess, trx_t* trx, trx_undo_rec_hdr_t* undo_rec, uint32 undo_rec_size)
+{
+    uint16 type = mach_read_from_2(undo_rec + TRX_UNDO_REC_TYPE);
+    switch (type) {
+    case UNDO_HEAP_INSERT:
+        heap_undo_insert(sess, trx, undo_rec, undo_rec_size);
+        break;
+    case UNDO_HEAP_DELETE:
+        break;
+    case UNDO_HEAP_UPDATE:
+        break;
+
+    default:
+        ut_error;
+        break;
+    }
+}
+
+static void trx_rollback_rcr_rows(que_sess_t* sess, trx_t* trx, trx_savepoint_t* savepoint)
+{
+    mtr_t mtr;
+    trx_rollback_undo_mgr_t undo_mgr(trx);
+
+    mtr_start(&mtr);
+    undo_mgr.init(&mtr);
+
+    uint32 undo_rec_size;
+    trx_undo_rec_hdr_t* undo_rec = undo_mgr.pop_top_undo_rec(undo_rec_size, mtr);
+    while (undo_rec) {
+        trx_rollback_one_row(sess, trx, undo_rec, undo_rec_size);
+        undo_rec = undo_mgr.pop_top_undo_rec(undo_rec_size, mtr);
+    }
+
+    //for (i = 0; i < heap_assist.rows; i++) {
+    //    session->change_list = heap_assist.change_list[i];
+    //    heap_try_change_map(session, heap_assist.heap, heap_assist.page_id[i]);
+    //}
+
+    // itl status
+
+    mtr_commit(&mtr);
+
+    // clean fast_clean_pages
+    sess->fast_clean_mgr.reset();
+}
+
 inline void trx_rollback(que_sess_t* sess, trx_t* trx, trx_savepoint_t* savepoint)
 {
     //
@@ -234,6 +287,11 @@ inline void trx_rollback(que_sess_t* sess, trx_t* trx, trx_savepoint_t* savepoin
 
     trx_rseg_release_trx(trx);
     srv_stats.trx_rollbacks.inc();
+
+    trx_rollback_pages(sess, trx, savepoint);
+
+
+
 }
 
 inline void trx_savepoint(que_sess_t* sess, trx_t* trx, trx_savepoint_t* savepoint)

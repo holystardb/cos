@@ -625,11 +625,13 @@ status_t cm_date2text_mysql_ex(uint32 datatype, date_t date, text_t *fmt, uint32
 static inline status_t cm_date2text_mysql(uint32 datatype, date_t date, text_t *fmt, text_t *text, uint32 max_len)
 {
     //return cm_date2text_mysql_ex(datatype, date, fmt, CT_MAX_DATETIME_PRECISION, text, max_len);
+    return CM_SUCCESS;
 }
 
 static inline status_t cm_date2text(date_t date, text_t *fmt, text_t *text, uint32 max_len)
 {
     //return cm_date2text_ex(date, fmt, CT_MAX_DATETIME_PRECISION, text, max_len);
+    return CM_SUCCESS;
 }
 
 static inline status_t cm_date2str(date_t date, const char *fmt, char *str, uint32 max_len)
@@ -642,6 +644,7 @@ static inline status_t cm_date2str(date_t date, const char *fmt, char *str, uint
 static inline status_t cm_timestamp2text(timestamp_t ts, text_t *fmt, text_t *text, uint32 max_len)
 {
     //return cm_timestamp2text_ex(ts, fmt, CT_MAX_DATETIME_PRECISION, text, max_len);
+    return CM_SUCCESS;
 }
 
 static inline status_t cm_timestamp2text_prec(timestamp_t ts, text_t *fmt, text_t *text, uint32 max_len,
@@ -655,12 +658,14 @@ static inline status_t cm_timestamp2str(timestamp_t ts, const char *fmt, char *s
     text_t fmt_text;
     cm_str2text((char *)fmt, &fmt_text);
     //return cm_timestamp2str_ex(ts, &fmt_text, CT_MAX_DATETIME_PRECISION, str, max_len);
+    return CM_SUCCESS;
 }
 
 static inline status_t cm_timestamp_tz2text(timestamp_tz_t *tstz, text_t *fmt, text_t *text,
                                             uint32 max_len)
 {
     //return cm_timestamp_tz2text_ex(tstz, fmt, CT_MAX_DATETIME_PRECISION, text, max_len);
+    return CM_SUCCESS;
 }
 
 static inline status_t cm_timestamp_tz2text_prec(timestamp_tz_t *tstz, text_t *fmt, text_t *text,
@@ -674,6 +679,7 @@ static inline status_t cm_timestamp_tz2str(timestamp_tz_t *tstz, const char *fmt
     text_t fmt_text;
     cm_str2text((char *)fmt, &fmt_text);
     //return cm_timestamp_tz2str_ex(tstz, &fmt_text, CT_MAX_DATETIME_PRECISION, str, max_len);
+    return CM_SUCCESS;
 }
 
 static inline date_t cm_adjust_date(date_t date)
@@ -692,7 +698,7 @@ static inline date_t cm_adjust_date_between_two_tzs(date_t src_time, timezone_in
 
 static inline uint64 cm_day_usec(void)
 {
-#ifdef WIN32
+#ifdef __WIN__
     uint64 usec;
     SYSTEMTIME sys_time;
     GetLocalTime(&sys_time);
@@ -707,13 +713,12 @@ static inline uint64 cm_day_usec(void)
     gettimeofday(&tv, NULL);
     usec = (uint64)(tv.tv_sec * MICROSECS_PER_SECOND);
     usec += (uint64)tv.tv_usec;
-static inline date_t cm_adjust_date_between_two_tzs(date_t src_time, timezone_info_t src_tz,
 #endif
 
     return usec;
 }
 
-#ifndef WIN32
+#ifndef __WIN__
 #define cm_gettimeofday(a) gettimeofday(a, NULL)
 #else
 

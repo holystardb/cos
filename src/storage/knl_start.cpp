@@ -24,38 +24,46 @@ static os_thread_id_t write_thread_ids[SRV_MAX_WRITE_IO_THREADS];
 
 static os_thread_t    checkpoint_thread;
 static os_thread_id_t checkpoint_thread_id;
-
+static os_thread_t    buf_LRU_free_block_thread;
+static os_thread_id_t buf_LRU_free_block_thread_id;
 
 status_t server_read_control_file()
 {
-    char      file_name[CM_FILE_PATH_BUF_SIZE];
-    db_ctrl_t ctrl_file[3] = {0};
-    uint64    version = 0, version_num = 0, idx = 0xFF;
+    const uint32 ctrl_file_count = 3;
+    char file_name[CM_FILE_PATH_BUF_SIZE];
+    db_ctrl_t* ctrl_file[3];
+    uint64 version = 0, version_num = 0, ctrl_file_idx = ctrl_file_count;
 
-    for (uint32 i = 0; i < 3; i++) {
+    ctrl_file[0] = new db_ctrl_t();
+    ctrl_file[1] = new db_ctrl_t();
+    ctrl_file[2] = new db_ctrl_t();
+
+    for (uint32 i = 0; i < ctrl_file_count; i++) {
         sprintf_s(file_name, CM_FILE_PATH_MAX_LEN, "%s%c%s%d", srv_data_home, SRV_PATH_SEPARATOR, "ctrl", i+1);
-        if (read_ctrl_file(file_name, &ctrl_file[i]) != CM_SUCCESS) {
-            ctrl_file[i].version = 0;
-            ctrl_file[i].ver_num = 0;
+        if (read_ctrl_file(file_name, ctrl_file[i]) != CM_SUCCESS) {
+            ctrl_file[i]->version = 0;
+            ctrl_file[i]->ver_num = 0;
             continue;
         }
 
-        if (version_num < ctrl_file[i].ver_num) {
-            version_num = ctrl_file[i].ver_num;
-            idx = i;
+        if (version_num < ctrl_file[i]->ver_num) {
+            version_num = ctrl_file[i]->ver_num;
+            ctrl_file_idx = i;
         }
     }
 
-    if (idx != 0xFF) {
-        srv_ctrl_file = ctrl_file[idx];
+    for (uint32 i = 0; i < ctrl_file_count; i++) {
+        if (i == ctrl_file_idx) {
+            srv_ctrl_file = ctrl_file[ctrl_file_idx];
+        } else {
+            delete ctrl_file[i];
+        }
     }
 
-    return idx == 0xFF ? CM_ERROR : CM_SUCCESS;
+    return ctrl_file_idx == ctrl_file_count ? CM_ERROR : CM_SUCCESS;
 }
 
-
-
-status_t read_write_aio_init()
+static status_t read_write_aio_init()
 {
     LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "aio of read and write is initializing ...");
 
@@ -85,7 +93,44 @@ status_t read_write_aio_init()
     return CM_SUCCESS;
 }
 
-status_t read_write_threads_startup()
+
+static void* write_io_handler_thread(void *arg)
+{
+    os_aio_context_t* context;
+    uint32 index = *(uint32 *)arg;
+
+    ut_ad(index < srv_write_io_threads);
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "write io thread (id = %lu) starting ...", index);
+
+    context = os_aio_array_get_nth_context(srv_os_aio_async_write_array, index);
+
+    while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
+        fil_aio_reader_and_writer_wait(context);
+    }
+
+    os_thread_exit(NULL);
+    OS_THREAD_DUMMY_RETURN;
+}
+
+static void* read_io_handler_thread(void *arg)
+{
+    os_aio_context_t* context;
+    uint32 index = *(uint32 *)arg;
+
+    LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "read io thread (id = %lu) starting ...", index);
+    ut_ad(index < srv_read_io_threads);
+
+    context = os_aio_array_get_nth_context(srv_os_aio_async_read_array, index);;
+
+    while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
+        fil_aio_reader_and_writer_wait(context);
+    }
+
+    os_thread_exit(NULL);
+    OS_THREAD_DUMMY_RETURN;
+}
+
+static status_t read_write_threads_startup()
 {
     LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "create io threads: read threads = %u, write threads = %u",
         srv_read_io_threads, srv_write_io_threads);
@@ -109,28 +154,18 @@ status_t checkpoint_thread_startup()
     return CM_SUCCESS;
 }
 
+status_t buf_LRU_scan_and_free_block_thread_startup()
+{
+    buf_LRU_free_block_thread = os_thread_create(buf_LRU_scan_and_free_block_thread, NULL, &buf_LRU_free_block_thread_id);
+    return CM_SUCCESS;
+}
 
 status_t server_create_data_files()
 {
-    if (!srv_create_ctrl_files()) {
+    if (srv_create_ctrl_files() != CM_SUCCESS) {
         return CM_ERROR;
     }
-    if (srv_create_redo_log_files() != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-    if (srv_create_undo_log_files() != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-    if (srv_create_double_write_file() != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-    if (srv_create_system_file() != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-    if (srv_create_systrans_file() != CM_SUCCESS) {
-        return CM_ERROR;
-    }
-    if (srv_create_user_data_files() != CM_SUCCESS) {
+    if (srv_create_data_files_at_createdatabase() != CM_SUCCESS) {
         return CM_ERROR;
     }
 
@@ -144,7 +179,7 @@ status_t memory_pool_create(attr_memory_t* attr)
     uint32 page_size_32K = SIZE_K(32);
     uint32 page_size_16K = SIZE_K(16);
     uint32 initial_page_count;
-    uint32 max_page_count;
+    uint32 lower_page_count;
 
     LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "memory pool is initializing ...");
 
@@ -159,30 +194,41 @@ status_t memory_pool_create(attr_memory_t* attr)
         return CM_ERROR;
     }
 
-    max_page_count = (uint32)(attr->common_memory_cache_size / page_size_16K);
-    srv_common_mpool = mpool_create(srv_memory_sga, 0, max_page_count, UINT32_UNDEFINED, page_size_16K);
+    lower_page_count = (uint32)(attr->common_memory_cache_size / page_size_16K);
+    initial_page_count = 0;
+    srv_common_mpool = mpool_create(srv_memory_sga, "common_memory_pool",
+        attr->common_memory_cache_size + attr->common_ext_memory_cache_size,
+        page_size_16K, initial_page_count, lower_page_count);
     if (srv_common_mpool == NULL) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create common memory pool");
         return CM_ERROR;
     }
 
     initial_page_count = SIZE_M(1) / page_size_16K;
-    max_page_count = (uint32)(attr->mtr_memory_cache_size / page_size_16K);
-    srv_mtr_memory_pool = mpool_create(srv_memory_sga, initial_page_count, max_page_count, UINT32_UNDEFINED, page_size_16K);
+    if (attr->mtr_memory_cache_size < SIZE_M(1)) {
+        attr->mtr_memory_cache_size = SIZE_M(1);
+    }
+    lower_page_count = (uint32)(attr->mtr_memory_cache_size / page_size_16K);
+    srv_mtr_memory_pool = mpool_create(srv_memory_sga, "mtr_memory_pool",
+        attr->mtr_memory_cache_size, page_size_16K, initial_page_count, lower_page_count);
     if (srv_mtr_memory_pool == NULL) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create mtr memory pool");
         return CM_ERROR;
     }
 
-    max_page_count = (uint32)(attr->dictionary_memory_cache_size / page_size_16K);
-    srv_dictionary_mem_pool = mpool_create(srv_memory_sga, 0, max_page_count, max_page_count, page_size_16K);
+    initial_page_count = 0;
+    lower_page_count = (uint32)(attr->dictionary_memory_cache_size / page_size_16K);
+    srv_dictionary_mem_pool = mpool_create(srv_memory_sga, "dictionary_memory_pool",
+        attr->dictionary_memory_cache_size, page_size_16K, initial_page_count, lower_page_count);
     if (srv_dictionary_mem_pool == NULL) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create dictionary memory pool");
         return CM_ERROR;
     }
 
-    max_page_count = (uint32)(attr->plan_memory_cache_size / page_size_16K);
-    srv_plan_mem_pool = mpool_create(srv_memory_sga, 0, max_page_count, max_page_count, page_size_16K);
+    initial_page_count = 0;
+    lower_page_count = (uint32)(attr->plan_memory_cache_size / page_size_16K);
+    srv_plan_mem_pool = mpool_create(srv_memory_sga, "plan_memory_pool",
+        attr->plan_memory_cache_size, page_size_16K, initial_page_count, lower_page_count);
     if (srv_plan_mem_pool == NULL) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to create plan memory pool");
         return CM_ERROR;
@@ -261,28 +307,43 @@ static status_t server_create_file_system(uint32 open_files_limit)
 static status_t server_create_table_spaces()
 {
     status_t err;
+    db_space_t* db_space;
+    db_data_file_t* data_file;
 
     // system tablespace: Filespace Header/Extent Descriptor
-    ut_a(srv_ctrl_file.system.size >= 16 * 1024 * FSP_DYNAMIC_FIRST_PAGE_NO);
-    err = fsp_init_space(FIL_SYSTEM_SPACE_ID, srv_ctrl_file.system.size, srv_ctrl_file.system.max_size, 0);
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_SYSTEM_FILNODE_ID);
+    err = fsp_init_space(FIL_SYSTEM_SPACE_ID, data_file->size, data_file->max_size, 0);
     CM_RETURN_IF_ERROR(err);
-
     err = fsp_reserve_system_space();
     CM_RETURN_IF_ERROR(err);
 
     // systrans
-    uint64 rseg_count = srv_ctrl_file.systrans.max_size;
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_SYSTRANS_FILNODE_ID);
+    uint64 rseg_count = data_file->max_size;
     ut_a(rseg_count >= TRX_RSEG_MIN_COUNT && rseg_count <= TRX_RSEG_MAX_COUNT);
     uint64 size = (FSP_FIRST_RSEG_PAGE_NO + rseg_count * TRX_SLOT_PAGE_COUNT_PER_RSEG) * UNIV_SYSTRANS_PAGE_SIZE;
-    ut_a(srv_ctrl_file.systrans.size == size);
-    err = fsp_init_space(FIL_SYSTRANS_SPACE_ID, srv_ctrl_file.systrans.size, srv_ctrl_file.systrans.size, 0);
+    ut_a(data_file->size == size);
+    err = fsp_init_space(FIL_SYSTRANS_SPACE_ID, data_file->size, data_file->size, 0);
     CM_RETURN_IF_ERROR(err);
 
     // undo tablespace
-    for (uint32 i = 0; i < srv_ctrl_file.undo_count; i++) {
-        ut_a(srv_ctrl_file.undo_group[i].size >= 4 * 1024 * 1024);
-        err = undo_fsm_tablespace_init(FIL_UNDO_START_SPACE_ID + i,
-            srv_ctrl_file.undo_group[i].size, srv_ctrl_file.undo_group[i].max_size);
+    for (uint32 i = 0; i < DB_UNDO_SPACE_MAX_COUNT; i++) {
+        data_file = srv_ctrl_file->get_data_file_by_node_id(DB_UNDO_START_FILNODE_ID + i);
+        if (data_file->node_id == DB_DATA_FILNODE_INVALID_ID) {
+            continue;
+        }
+        ut_a(data_file->size >= 4 * 1024 * 1024);
+        err = undo_fsm_tablespace_init(data_file->space_id, data_file->size, data_file->max_size);
+        CM_RETURN_IF_ERROR(err);
+    }
+
+    // user tablespace
+    for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
+        db_space = srv_ctrl_file->get_user_space_by_space_id(DB_USER_SPACE_FIRST_ID + i);
+        if (db_space == NULL || db_space->space_id == DB_SPACE_INVALID_ID) {
+            continue;
+        }
+        err = fsp_init_space(db_space->space_id, db_space->size, db_space->max_size, 0);
         CM_RETURN_IF_ERROR(err);
     }
 
@@ -291,108 +352,191 @@ static status_t server_create_table_spaces()
 
 static status_t server_open_table_spaces()
 {
+    status_t err;
 
-    return CM_SUCCESS;
-}
+    // system tablespace
+    err = fsp_open_space(FIL_SYSTEM_SPACE_ID);
+    CM_RETURN_IF_ERROR(err);
 
-static uint64 get_undo_segment_size()
-{
-    uint64 size = 0;
+    // systrans tablespace
+    err = fsp_open_space(FIL_SYSTRANS_SPACE_ID);
+    CM_RETURN_IF_ERROR(err);
 
-    for (uint32 i = 0; i < srv_ctrl_file.undo_count; i++) {
-        size += srv_ctrl_file.undo_group[i].max_size;
+    // dbwr tablespace
+    //err = fsp_open_space(FIL_DBWR_SPACE_ID);
+    //CM_RETURN_IF_ERROR(err);
+
+    // undo tablespace
+    for (uint32 i = 0; i < DB_UNDO_SPACE_MAX_COUNT; i++) {
+        db_space_t* db_space = srv_ctrl_file->get_system_space_by_space_id(DB_UNDO_START_SPACE_ID + i);
+        if (db_space->space_id == DB_SPACE_INVALID_ID) {
+            continue;
+        }
+        if (UT_LIST_GET_LEN(db_space->data_file_list) == 0 && db_space->size == 0) {
+            continue;
+        }
+        err = fsp_open_space(db_space->space_id);
+        CM_RETURN_IF_ERROR(err);
     }
 
-    return size;
+    // user tablespace
+    for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
+        db_space_t* db_space = srv_ctrl_file->get_user_space_by_space_id(DB_USER_SPACE_FIRST_ID + i);
+        if (db_space == NULL || db_space->space_id == DB_SPACE_INVALID_ID) {
+            continue;
+        }
+        err = fsp_open_space(db_space->space_id);
+        CM_RETURN_IF_ERROR(err);
+    }
+
+    return CM_SUCCESS;
 }
 
 static status_t server_open_tablespace_data_files()
 {
     LOGGER_INFO(LOGGER, LOG_MODULE_STARTUP, "open data files of table space");
 
+    db_data_file_t* data_file;
+    db_space_t* db_space;
+    fil_node_t* fil_node;
+    fil_space_t* fil_space;
+
+
     // system tablespace
-    fil_space_t* system_space = fil_space_create("system", FIL_SYSTEM_SPACE_ID, 0);
-    if (system_space == NULL) {
+    fil_space = fil_space_create("system", FIL_SYSTEM_SPACE_ID, 0);
+    if (fil_space == NULL) {
         return CM_ERROR;
     }
-    fil_node_t *node = fil_node_create(system_space, DB_SYSTEM_FILNODE_ID, srv_ctrl_file.system.name,
-        (uint32)(srv_ctrl_file.system.max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, srv_ctrl_file.system.autoextend);
-    if (!node) {
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_SYSTEM_FILNODE_ID);
+    if (data_file == NULL) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to find data file for system tablespace");
+        return CM_ERROR;
+    }
+    fil_node = fil_node_create(fil_space, data_file->node_id, data_file->file_name,
+        (uint32)(data_file->max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, data_file->autoextend);
+    if (!fil_node) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
-            "Failed to create fil_node for system tablespace, name %s", srv_ctrl_file.system.name);
+            "Failed to create fil_node for system tablespace, name %s", data_file->file_name);
         return CM_ERROR;
     }
 
     // systrans tablespace
-    fil_space_t* trans_space = fil_space_create("systrans", FIL_SYSTRANS_SPACE_ID, 0);
-    if (trans_space == NULL) {
+    fil_space = fil_space_create("systrans", FIL_SYSTRANS_SPACE_ID, 0);
+    if (fil_space == NULL) {
         return CM_ERROR;
     }
-    node = fil_node_create(trans_space, DB_SYSTRANS_FILNODE_ID, srv_ctrl_file.systrans.name,
-        (uint32)(srv_ctrl_file.systrans.size / UNIV_SYSTRANS_PAGE_SIZE), UNIV_SYSTRANS_PAGE_SIZE, FALSE);
-    if (!node) {
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_SYSTRANS_FILNODE_ID);
+    if (data_file == NULL) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to find data file for systrans tablespace");
+        return CM_ERROR;
+    }
+    fil_node = fil_node_create(fil_space, data_file->node_id, data_file->file_name,
+        (uint32)(data_file->size / UNIV_SYSTRANS_PAGE_SIZE), UNIV_SYSTRANS_PAGE_SIZE, FALSE);
+    if (!fil_node) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
-            "Failed to create fil_node for systrans tablespace, name %s", srv_ctrl_file.systrans.name);
+            "Failed to create fil_node for systrans tablespace, name %s", data_file->file_name);
         return CM_ERROR;
     }
 
     // double write tablespace
-    fil_space_t* dbwr_space = fil_space_create("dbwr", FIL_DBWR_SPACE_ID, 0);
-    if (dbwr_space == NULL) {
+    fil_space = fil_space_create("dbwr", FIL_DBWR_SPACE_ID, 0);
+    if (fil_space == NULL) {
         return CM_ERROR;
     }
-    node = fil_node_create(dbwr_space, DB_DBWR_FILNODE_ID, srv_ctrl_file.dbwr.name,
-        (uint32)(srv_ctrl_file.dbwr.max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, srv_ctrl_file.dbwr.autoextend);
-    if (!node) {
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_DBWR_FILNODE_ID);
+    if (data_file == NULL) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to find data file for dbwr tablespace");
+        return CM_ERROR;
+    }
+    fil_node = fil_node_create(fil_space, data_file->node_id, data_file->file_name,
+        (uint32)(data_file->max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, data_file->autoextend);
+    if (!fil_node) {
         LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
-            "Failed to create fil_node for double write tablespace, name %s", srv_ctrl_file.dbwr.name);
+            "Failed to create fil_node for dbwr tablespace, name %s", data_file->file_name);
         return CM_ERROR;
     }
 
     // redo log files
-    for (uint32 i = 0; i < srv_ctrl_file.redo_count; i++) {
-        bool32 ret = log_group_add(srv_ctrl_file.redo_group[i].name, srv_ctrl_file.redo_group[i].size);
-        if (!ret) {
-            return CM_ERROR;
-        }
+    db_space = srv_ctrl_file->get_system_space_by_space_id(DB_REDO_SPACE_ID);
+    if (UT_LIST_GET_LEN(db_space->data_file_list) == 0) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
+            "Failed to find data file for redo tablespace %s", db_space->space_name);
+        return CM_ERROR;
+    }
+    data_file = UT_LIST_GET_FIRST(db_space->data_file_list);
+    while (data_file) {
+        CM_RETURN_IF_ERROR( log_group_add(data_file->file_name, data_file->size));
+        data_file = UT_LIST_GET_NEXT(list_node, data_file);
     }
 
     // undo tablespace
-    for (uint32 i = 0; i < srv_ctrl_file.undo_count; i++) {
-        char undo_space_name[DB_OBJECT_NAME_MAX_LEN];
-        sprintf_s(undo_space_name, DB_OBJECT_NAME_MAX_LEN, "undo%02u", i+1);
-        db_data_file_t* data_file = &srv_ctrl_file.undo_group[i];
-        fil_space_t* space = fil_space_create(undo_space_name, data_file->space_id, 0);
-        if (space == NULL) {
+    for (uint32 i = 0; i < DB_UNDO_SPACE_MAX_COUNT; i++) {
+        db_space = srv_ctrl_file->get_system_space_by_space_id(DB_UNDO_START_SPACE_ID + i);
+        if (db_space->space_id == DB_SPACE_INVALID_ID) {
+            continue;
+        }
+        if (UT_LIST_GET_LEN(db_space->data_file_list) == 0 && db_space->size == 0) {
+            continue;
+        }
+        data_file = UT_LIST_GET_FIRST(db_space->data_file_list);
+        if (data_file == NULL) {
+            LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP, "Failed to find data file for undo tablespace");
             return CM_ERROR;
         }
-        fil_node_t *node = fil_node_create(space, data_file->node_id, data_file->name,
+
+        fil_space = fil_space_create(db_space->space_name, db_space->space_id, 0);
+        if (fil_space == NULL) {
+            return CM_ERROR;
+        }
+        fil_node = fil_node_create(fil_space, data_file->node_id, data_file->file_name,
             (uint32)(data_file->max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, data_file->autoextend);
-        if (node == NULL) {
+        if (fil_node == NULL) {
             return CM_ERROR;
         }
     }
 
     // user tablespace
-    for (uint32 i = 0; i < srv_ctrl_file.user_space_count; i++) {
-       db_space_t* space = &srv_ctrl_file.user_spaces[i];
-        if (fil_space_create(space->name, space->space_id, 0) == NULL) {
+    for (uint32 i = 0; i < DB_USER_SPACE_MAX_COUNT; i++) {
+        db_space = srv_ctrl_file->get_user_space_by_pos(i);
+        if (db_space == NULL || db_space->space_id == DB_SPACE_INVALID_ID) {
+            continue;
+        }
+
+        if (UT_LIST_GET_LEN(db_space->data_file_list) == 0) {
+            LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
+                "Failed to find data file for user tablespace %s", db_space->space_name);
             return CM_ERROR;
+        }
+
+        fil_space = fil_space_create(db_space->space_name, db_space->space_id, 0);
+        if (fil_space == NULL) {
+            return CM_ERROR;
+        }
+
+        data_file = UT_LIST_GET_FIRST(db_space->data_file_list);
+        while (data_file) {
+            fil_node = fil_node_create(fil_space, data_file->node_id, data_file->file_name,
+                (uint32)(data_file->max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, data_file->autoextend);
+            if (fil_node == NULL) {
+                return CM_ERROR;
+            }
+
+            data_file = UT_LIST_GET_NEXT(list_node, data_file);
         }
     }
 
-    // file for user tablespace
-    for (uint32 i = 0; i < srv_ctrl_file.user_space_data_file_count; i++) {
-        db_data_file_t* data_file = &srv_ctrl_file.user_space_data_files[i];
-        fil_space_t* space = fil_system_get_space_by_id(data_file->space_id);
-        if (space == NULL) {
-            return CM_ERROR;
-        }
-        fil_node_t *node = fil_node_create(space, data_file->node_id, data_file->name,
-            (uint32)(data_file->max_size / UNIV_PAGE_SIZE), UNIV_PAGE_SIZE, data_file->autoextend);
-        if (node == NULL) {
-            return CM_ERROR;
-        }
+    // temp tablespace
+    db_space = srv_ctrl_file->get_system_space_by_space_id(DB_TEMP_SPACE_ID);
+    if (UT_LIST_GET_LEN(db_space->data_file_list) == 0) {
+        LOGGER_ERROR(LOGGER, LOG_MODULE_STARTUP,
+            "Failed to find data file for user tablespace %s", db_space->space_name);
+        return CM_ERROR;
+    }
+    data_file = UT_LIST_GET_FIRST(db_space->data_file_list);
+    while (data_file) {
+        CM_RETURN_IF_ERROR(data_file->delete_data_file());
+        CM_RETURN_IF_ERROR(vm_pool_add_file(srv_temp_mem_pool, data_file->file_name, data_file->max_size));
+        data_file = UT_LIST_GET_NEXT(list_node, data_file);
     }
 
     return CM_SUCCESS;
@@ -402,6 +546,7 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
 {
     mtr_t   mtr;
     status_t err;
+    db_data_file_t* data_file;
 
     LOGGER_NOTICE(LOGGER, LOG_MODULE_STARTUP, "Service is starting ...");
 
@@ -473,23 +618,27 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
     }
 
     // temp file
-    err = srv_create_temp_files();
-    CM_RETURN_IF_ERROR(err);
+    //err = srv_create_temp_files();
+    //CM_RETURN_IF_ERROR(err);
 
     // create file node for data files
     err = server_open_tablespace_data_files();
     CM_RETURN_IF_ERROR(err);
 
     // checkpoint init
-    err = checkpoint_init(srv_ctrl_file.dbwr.name, (uint32)srv_ctrl_file.dbwr.max_size);
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_DBWR_FILNODE_ID);
+    err = checkpoint_init(data_file->file_name, data_file->max_size);
     CM_RETURN_IF_ERROR(err);
     // Create and startup checkpoint thread
-    //err = checkpoint_thread_startup();
+    err = checkpoint_thread_startup();
+    CM_RETURN_IF_ERROR(err);
+    err = buf_LRU_scan_and_free_block_thread_startup();
     CM_RETURN_IF_ERROR(err);
 
     // Creates trx_sys at a database start
-    uint32 rseg_count = (uint32)srv_ctrl_file.systrans.max_size;
-    err = trx_sys_create(srv_common_mpool, rseg_count, srv_ctrl_file.undo_count);
+    data_file = srv_ctrl_file->get_data_file_by_node_id(DB_SYSTRANS_FILNODE_ID);
+    uint32 rseg_count = (uint32)data_file->max_size;
+    err = trx_sys_create(srv_common_mpool, rseg_count, srv_ctrl_file->undo_data_file_count);
     CM_RETURN_IF_ERROR(err);
 
     //
@@ -498,7 +647,6 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
         CM_RETURN_IF_ERROR(err);
 
         // Creates transaction slots at a database start
-        uint32 rseg_count = (uint32)srv_ctrl_file.systrans.max_size;
         err = trx_sys_init_at_db_start(is_create_new_db);
         CM_RETURN_IF_ERROR(err);
 
@@ -577,9 +725,8 @@ status_t server_open_or_create_database(char* base_dir, attribute_t* attr)
 
     if (is_create_new_db) {
         log_checkpoint(LOG_BLOCK_HDR_SIZE);
-        log_checkpoint(LOG_BLOCK_HDR_SIZE);
         // Makes a checkpoint at a given lsn or later
-        //log_make_checkpoint_at(ut_duint64_max);
+        log_make_checkpoint_at(ut_duint64_max);
     }
 
     LOGGER_NOTICE(LOGGER, LOG_MODULE_STARTUP,

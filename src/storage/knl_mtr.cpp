@@ -340,9 +340,9 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
     void *object = slot->object;
     slot->object = NULL;
 
-    if (((buf_block_t*)object)->page.id.space_id() == 0 && ((buf_block_t*)object)->page.id.page_no() == 322) {
+    if (((buf_block_t*)object)->page.id.get_space_id() == 0 && ((buf_block_t*)object)->page.id.get_page_no() == 322) {
         printf("    mtr_memo_slot_release: lock %lu page no %lu fix count %lu\n",
-            slot->type, ((buf_block_t*)object)->page.id.page_no(), ((buf_block_t*)object)->page.buf_fix_count);
+            slot->type, ((buf_block_t*)object)->page.id.get_page_no(), ((buf_block_t*)object)->page.buf_fix_count);
     }
 
     switch (slot->type) {
@@ -365,9 +365,9 @@ static inline void mtr_memo_slot_release(mtr_t* mtr, mtr_memo_slot_t* slot)
             break;
 #ifdef UNIV_DEBUG
         default:
-            if (((buf_block_t*)object)->page.id.space_id() == 0 && ((buf_block_t*)object)->page.id.page_no() == 322) {
+            if (((buf_block_t*)object)->page.id.get_space_id() == 0 && ((buf_block_t*)object)->page.id.get_page_no() == 322) {
                 printf("pop MTR_MEMO_MODIFY: page no %lu fix count %lu\n",
-                    ((buf_block_t*)object)->page.id.page_no(), ((buf_block_t*)object)->page.buf_fix_count);
+                    ((buf_block_t*)object)->page.id.get_page_no(), ((buf_block_t*)object)->page.buf_fix_count);
             }
 
             ut_ad(slot->type == MTR_MEMO_MODIFY);
@@ -690,7 +690,7 @@ inline byte* mlog_write_initial_log_record_fast(
     if (!mtr_memo_contains(mtr, block, MTR_MEMO_MODIFY)) {
         if (block->get_space_id() == 0 && block->get_page_no() == 322) {
             printf("push MTR_MEMO_MODIFY: page no %lu fix count %lu\n",
-                block->page.id.page_no(), block->page.buf_fix_count);
+                block->page.id.get_page_no(), block->page.buf_fix_count);
         }
         mtr_memo_push(mtr, block, MTR_MEMO_MODIFY);
     }
@@ -829,14 +829,11 @@ inline void mlog_catenate_string(
     byte       *str,    /*!< in: string to write */
     uint32      len)    /*!< in: string length */
 {
-    dyn_array_t*    mlog;
-
     if (str == NULL || len == 0 || mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
         return;
     }
 
-    mlog = &(mtr->log);
-
+    dyn_array_t* mlog = &(mtr->log);
     dyn_push_string(mlog, str, len);
 }
 
@@ -846,15 +843,12 @@ inline void mlog_catenate_uint32(mtr_t *mtr,
     uint32 val, /*!< in: value to write */
     uint32 type) /*!< in: MLOG_1BYTE, MLOG_2BYTES, MLOG_4BYTES */
 {
-    dyn_array_t *mlog;
-    byte *ptr;
-
     if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
         return;
     }
 
-    mlog = &(mtr->log);
-    ptr = (byte*) dyn_array_push(mlog, type);
+    dyn_array_t* mlog = &(mtr->log);
+    byte* ptr = (byte*) dyn_array_push(mlog, type);
 
     if (type == MLOG_4BYTES) {
         mach_write_to_4(ptr, val);
@@ -870,10 +864,7 @@ inline void mlog_catenate_uint32(mtr_t *mtr,
 // Catenates a compressed ulint to mlog.
 inline void mlog_catenate_uint32_compressed(mtr_t* mtr, uint32 val)
 {
-    byte* log_ptr;
-
-    log_ptr = mlog_open(mtr, 10);
-
+    byte* log_ptr = mlog_open(mtr, 10);
     /* If no logging is requested, we may return now */
     if (log_ptr == NULL) {
         return;
@@ -1031,17 +1022,13 @@ inline void mtr_commit(mtr_t *mtr)
 
 inline byte* mlog_open(mtr_t *mtr, uint32 size)
 {
-    dyn_array_t *mlog;
-
     mtr->modifications = TRUE;
-
     if (mtr_get_log_mode(mtr) == MTR_LOG_NONE) {
-        return(NULL);
+        return NULL;
     }
 
-    mlog = &(mtr->log);
-
-    return(dyn_array_open(mlog, size));
+    dyn_array_t* mlog = &(mtr->log);
+    return dyn_array_open(mlog, size);
 }
 
 inline void mlog_close(mtr_t *mtr, byte *ptr)
@@ -1084,30 +1071,35 @@ inline void mtr_x_lock_func(rw_lock_t* lock, /*!< in: rw-lock */
 // return parsed record end, NULL if not a complete record or a corrupt record */
 inline byte* mlog_replay_nbytes(
     uint32 type, // in: log record type: MLOG_1BYTE, ...
+    uint64 lsn,
     byte* log_rec_ptr, // in: buffer
     byte* log_end_ptr, // in: buffer end
     void* block) // in: block where to apply the log record, or NULL
 {
-    uint32 offset;
-    uint32 val;
-    uint64 dval;
-    byte* page = block ? buf_block_get_frame((buf_block_t*)block) : NULL;
-
     ut_a(type <= MLOG_8BYTES);
-
     if (log_end_ptr < log_rec_ptr + 2) {
         goto corrupt;
     }
 
-    offset = mach_read_from_2(log_rec_ptr);
-    log_rec_ptr += 2;
+    byte* page = block ? buf_block_get_frame((buf_block_t*)block) : NULL;
+    if (page) {
+        uint64 page_lsn = mach_read_from_8(page + HEAP_HEADER_OFFSET + HEAP_HEADER_LSN);
+        if (page_lsn >= lsn) {
+            return log_rec_ptr + 2 /* offset */ +
+                (type == MLOG_8BYTES) ? mach_ull_get_compressed_size(log_rec_ptr + 2)
+                                      : mach_get_compressed_size(log_rec_ptr + 2);
+        }
+    }
 
+    uint32 offset = mach_read_from_2(log_rec_ptr);
+    log_rec_ptr += 2;
     if (offset >= UNIV_PAGE_SIZE) {
         //recv_sys->found_corrupt_log = TRUE;
         goto corrupt;
     }
 
     if (type == MLOG_8BYTES) {
+        uint64 dval;
         log_rec_ptr = mach_ull_parse_compressed(log_rec_ptr, log_end_ptr, &dval);
         if (log_rec_ptr == NULL) {
             goto corrupt;
@@ -1118,6 +1110,7 @@ inline byte* mlog_replay_nbytes(
         return log_rec_ptr;
     }
 
+    uint32 val;
     log_rec_ptr = mach_parse_compressed(log_rec_ptr, log_end_ptr, &val);
     if (log_rec_ptr == NULL) {
         goto corrupt;

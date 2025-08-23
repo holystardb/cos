@@ -13,10 +13,10 @@ extern "C" {
 // File objects
 typedef byte    trx_sysf_t;          // Transaction system header
 typedef byte    trx_rsegf_t;         // Rollback segment header
-typedef byte    trx_undo_seg_hdr_t;  // Undo segment header
-typedef byte    trx_undo_log_hdr_t;  // Undo log header
-typedef byte    trx_undo_page_hdr_t; // Undo log page header
-typedef byte    trx_undo_rec_t;      //Undo log record
+//typedef byte    trx_undo_seg_hdr_t;  // Undo segment header
+//typedef byte    trx_undo_log_hdr_t;  // Undo log header
+//typedef byte    trx_undo_page_hdr_t; // Undo log page header
+//typedef byte    trx_undo_rec_t;      //Undo log record
 
 
 
@@ -84,12 +84,14 @@ typedef struct st_trx_pcr_itl {
     };
 } trx_pcr_itl_t;
 
+/*
 typedef struct st_trx_info {
     uint64    scn;
     bool8     is_overwrite_scn;
     uint8     status;  // XACT_BEGIN / XACT_END / XACT_XA_PREPARE / XACT_XA_ROLLBACK
     uint8     unused[2];
 } trx_info_t;
+*/
 
 #pragma pack()
 
@@ -117,10 +119,10 @@ union trx_slot_id_t {
 
 // 32bytes, Transaction undo log page memory object;
 struct st_trx_undo_page {
-    uint32           node_page_no : 16;
-    uint32           node_page_offset : 16;
-    uint32           page_no;
-    uint64           page_offset : 16;
+    uint32           node_page_no : 16;  // page for fil_addr_t
+    uint32           node_page_offset : 16;  // position for fil_addr_t
+    uint32           page_no;  // undo log page
+    uint64           page_offset : 16;  // starting position of undo record
     uint64           scn_timestamp : 48;
     buf_block_t*     guess_block;
     SLIST_NODE_T(trx_undo_page_t) list_node;
@@ -141,6 +143,10 @@ typedef struct st_trx {
     trx_slot_id_t     trx_slot_id;
     mutex_t           mutex;
     bool32            is_active;
+    // next undo log record number, since the undo log is private for a transaction,
+    // this is a simple ascending sequence with no gaps;
+    // thus it represents the number of modified/inserted rows in a transaction
+    uint32            undo_rec_no;
 
     //SLIST_BASE_NODE_T(trx_undo_page_t) insert_undo;
     //SLIST_BASE_NODE_T(trx_undo_page_t) update_undo;
@@ -160,7 +166,7 @@ typedef struct st_trx {
 typedef struct st_trx_status {
     uint64    scn;
     bool32    is_ow_scn;  // overwrite scn
-    uint32    status;
+    uint32    status; // XACT_BEGIN / XACT_END / XACT_XA_PREPARE / XACT_XA_ROLLBACK
 } trx_status_t;
 
 #define TRX_SLOT_PAGE_COUNT_PER_RSEG     8  // total 4KB * 8 = 32KB

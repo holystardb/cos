@@ -1,10 +1,10 @@
 #include "cm_string.h"
 #include "cm_util.h"
+#include "m_string.h"
 
-
-bool32 String::mem_realloc(size_t alloc_length)
+bool32 string_t::realloc_memory(uint32 alloc_length)
 {
-    size_t len = ut_align8(alloc_length + 1);
+    uint32 len = ut_align8(alloc_length + 1);
 
     if (len <= alloc_length)
         return FALSE; /* Overflow */
@@ -15,7 +15,7 @@ bool32 String::mem_realloc(size_t alloc_length)
             if (!(new_ptr = (char *)my_realloc(m_ptr, len)))
                 return FALSE;  // Signal error
 
-        } else if ((new_ptr = (char *)my_malloc(len))) {
+        } else if ((new_ptr = (char *)ut_malloc(len))) {
             if (m_length > len - 1) {
                 m_length = 0;
             }
@@ -35,7 +35,7 @@ bool32 String::mem_realloc(size_t alloc_length)
     return TRUE;
 }
 
-bool32 String::append(const String &s)
+bool32 string_t::append(const string_t &s)
 {
     uint32 alloc_length = s.length();
     if (alloc_length) {
@@ -46,8 +46,9 @@ bool32 String::append(const String &s)
         alloc_length = (m_is_alloced && m_alloced_length < alloc_length)
             ? alloc_length + (m_length / 4) : alloc_length;
 
-        if (!mem_realloc(alloc_length))
+        if (!realloc_memory(alloc_length)) {
             return FALSE;
+        }
 
         memcpy(m_ptr + m_length, s.ptr(), s.length());
         m_length += s.length();
@@ -55,12 +56,12 @@ bool32 String::append(const String &s)
     return TRUE;
 }
 
-bool32 String::append(char chr)
+bool32 string_t::append(char chr)
 {
     if (m_length < m_alloced_length) {
         m_ptr[m_length++] = chr;
     } else {
-        if (!mem_realloc(m_length + 1))
+        if (!realloc_memory(m_length + 1))
             return FALSE;
 
         m_ptr[m_length++] = chr;
@@ -69,17 +70,17 @@ bool32 String::append(char chr)
 }
 
 //Append an ASCII string to the a string of the current character set
-bool32 String::append(const char *s, size_t arg_length)
+bool32 string_t::append(const char *s, uint32 arg_length)
 {
     if (!arg_length)
         return FALSE;
 
     //For an ASCII incompatible string, e.g. UCS-2, we need to convert
     if (m_charset->mbminlen > 1) {
-        size_t add_length = arg_length * m_charset->mbmaxlen;
+        uint32 add_length = arg_length * m_charset->mbmaxlen;
         uint dummy_errors;
 
-        if (mem_realloc(m_length + add_length))
+        if (realloc_memory(m_length + add_length))
             return FALSE;
 
         m_length += my_convert(m_ptr + m_length, add_length, m_charset, s,
@@ -89,7 +90,7 @@ bool32 String::append(const char *s, size_t arg_length)
     }
 
     //For an ASCII compatinble string we can just append.
-    if (mem_realloc(m_length + arg_length))
+    if (realloc_memory(m_length + arg_length))
         return FALSE;
 
     memcpy(m_ptr + m_length, s, arg_length);
@@ -98,7 +99,7 @@ bool32 String::append(const char *s, size_t arg_length)
     return TRUE;
 }
 
-bool32 String::my_charset_same(const CHARSET_INFO *cs1, const CHARSET_INFO *cs2)
+bool32 string_t::my_charset_same(const CHARSET_INFO *cs1, const CHARSET_INFO *cs2)
 {
     return ((cs1 == cs2) || !strcmp(cs1->csname, cs2->csname));
 }
@@ -122,8 +123,8 @@ bool32 String::my_charset_same(const CHARSET_INFO *cs1, const CHARSET_INFO *cs2)
   NOTE
   to_cs may be NULL for "no conversion" if the system variable character_set_results is NULL.
 */
-bool32 String::needs_conversion(size_t arg_length, const CHARSET_INFO *from_cs,
-                              const CHARSET_INFO *to_cs, size_t *offset)
+bool32 string_t::needs_conversion(uint32 arg_length, const CHARSET_INFO *from_cs,
+                              const CHARSET_INFO *to_cs, uint32 *offset)
 {
     *offset = 0;
     if (!to_cs || (to_cs == &my_charset_bin) || (to_cs == from_cs) || my_charset_same(from_cs, to_cs)
@@ -134,9 +135,9 @@ bool32 String::needs_conversion(size_t arg_length, const CHARSET_INFO *from_cs,
     return TRUE;
 }
 
-bool32 String::append(const char *s, size_t arg_length, const CHARSET_INFO *cs)
+bool32 string_t::append(const char *s, uint32 arg_length, const CHARSET_INFO *cs)
 {
-    size_t offset;
+    uint32 offset;
 
     if (needs_conversion(arg_length, cs, m_charset, &offset)) {
         size_t add_length;
@@ -145,7 +146,7 @@ bool32 String::append(const char *s, size_t arg_length, const CHARSET_INFO *cs)
             offset = m_charset->mbminlen - offset;  // How many characters to pad
             add_length = arg_length + offset;
 
-            if (!mem_realloc(m_length + add_length))
+            if (!realloc_memory(m_length + add_length))
                 return FALSE;
 
             memset(m_ptr + m_length, 0, offset);
@@ -158,12 +159,12 @@ bool32 String::append(const char *s, size_t arg_length, const CHARSET_INFO *cs)
         add_length = arg_length / cs->mbminlen * m_charset->mbmaxlen;
         uint dummy_errors;
 
-        if (!mem_realloc(m_length + add_length))
+        if (!realloc_memory(m_length + add_length))
             return FALSE;
 
         m_length += my_convert(m_ptr + m_length, add_length, m_charset, s, arg_length, cs, &dummy_errors);
     } else {
-        if (!mem_realloc(m_length + arg_length))
+        if (!realloc_memory(m_length + arg_length))
             return FALSE;
 
         memcpy(m_ptr + m_length, s, arg_length);
@@ -173,9 +174,9 @@ bool32 String::append(const char *s, size_t arg_length, const CHARSET_INFO *cs)
     return TRUE;
 }
 
-bool32 String::append_uint64(uint64 val)
+bool32 string_t::append_uint64(uint64 val)
 {
-    if (!mem_realloc(m_length + MAX_BIGINT_WIDTH + 2))
+    if (!realloc_memory(m_length + MAX_BIGINT_WIDTH + 2))
         return FALSE;
 
     char *end = longlong10_to_str(val, m_ptr + m_length, 10);
@@ -184,9 +185,9 @@ bool32 String::append_uint64(uint64 val)
     return TRUE;
 }
 
-bool32 String::append_int64(int64 val)
+bool32 string_t::append_int64(int64 val)
 {
-    if (!mem_realloc(m_length + MAX_BIGINT_WIDTH + 2))
+    if (!realloc_memory(m_length + MAX_BIGINT_WIDTH + 2))
         return FALSE; /* purecov: inspected */
 
     char *end = longlong10_to_str(val, m_ptr + m_length, -10);
@@ -195,7 +196,7 @@ bool32 String::append_int64(int64 val)
     return TRUE;
 }
 
-int String::strstr(const String &s, size_t offset) const
+int string_t::strstr(const string_t &s, uint32 offset) const
 {
     if (s.length() + offset <= m_length) {
         if (!s.length())
@@ -224,7 +225,7 @@ skip:
 }
 
 // Search string from end. Offset is offset to the end of string
-int String::strrstr(const String &s, size_t offset) const
+int string_t::strrstr(const string_t &s, uint32 offset) const
 {
     if (s.length() <= offset && offset <= m_length) {
         if (!s.length()) {

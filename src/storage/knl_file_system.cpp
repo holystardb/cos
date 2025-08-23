@@ -187,6 +187,7 @@ fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 flags)
     if (space == NULL) {
         return NULL;
     }
+    memset((char *)space, 0x00, size);
 
     space->name = (char *)space + ut_align8(sizeof(fil_space_t));
     strncpy_s(space->name, strlen(name) + 1, name, strlen(name));
@@ -196,8 +197,8 @@ fil_space_t* fil_space_create(char *name, uint32 space_id, uint32 flags)
     space->size_in_header = 0;
     space->free_limit = 0;
     space->flags = flags;
-    space->page_size = 0;
-    space->n_reserved_extents = 0;
+    //space->page_size = 0;
+    //space->n_reserved_extents = 0;
     space->magic_n = M_FIL_SPACE_MAGIC_N;
     space->refcount = 0;
     space->io_in_progress = 0;
@@ -515,22 +516,20 @@ static status_t fil_space_extend_node_callback(int32 code, os_aio_slot_t* slot)
     return CM_SUCCESS;
 }
 
-static bool32 fil_space_extend_node(fil_node_t* node,
-    uint32 page_hwm, uint32 size_increase, uint32 *actual_size)
+static status_t fil_space_extend_node(fil_node_t* node, uint32 page_hwm,
+    uint32 size_increase, uint32 *actual_size)
 {
     uint32            timeout_seconds = 300;
-    //uchar             buf[UNIV_PAGE_SIZE];
     const page_size_t page_size(node->space->id);
     page_id_t         page_id;
     fil_node_extend_t node_extend;
 
+    ut_ad(size_increase > 0);
     ut_ad(fil_space_is_pinned(node->space));
+    ut_ad(node->space->io_in_progress);
     ut_a(node->page_max_count >= page_hwm + size_increase);
 
     *actual_size = 0;
-    if (size_increase == 0) {
-        return TRUE ;
-    }
 
     //
     mutex_create(&node_extend.mutex);
@@ -538,12 +537,7 @@ static bool32 fil_space_extend_node(fil_node_t* node,
     node_extend.is_disk_full = FALSE;
     node_extend.extend_page_count = 0;
 
-    //memset(buf, 0x00, UNIV_PAGE_SIZE);
-
     for (uint32 page_no = page_hwm; page_no < page_hwm + size_increase; page_no++) {
-        // page header
-        //mach_write_to_4(buf + FIL_PAGE_SPACE, node->space->id);
-        //mach_write_to_4(buf + FIL_PAGE_OFFSET, page_no);
         // write to file
         page_id.reset(node->space->id, page_no);
         status_t err = fil_write(FALSE, page_id, page_size, page_size.physical(),
@@ -587,36 +581,29 @@ static bool32 fil_space_extend_node(fil_node_t* node,
         *actual_size = size_increase;
     }
 
-    return node_extend.is_disk_full ? FALSE : TRUE;
+    return node_extend.is_disk_full ? ERR_DISK_IS_FULL : CM_SUCCESS;
 
 err_exit:
 
     LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE, "fil_space_extend: A fatal error occurred, service exited.");
     ut_error;
 
-    return FALSE;
+    return CM_ERROR;
 }
 
-bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *actual_size)
+status_t fil_space_extend_to_desired_size(fil_space_t* space, uint32 size_after_extend, uint32* actual_size)
 {
-    fil_node_t       *node;
-    uint32            size_increase;
-
     ut_ad(!srv_read_only_mode || fsp_is_system_temporary(space->id));
     ut_ad(fil_space_is_pinned(space));
+    ut_ad(space->io_in_progress);
 
-    if (space->size_in_header >= size_after_extend) {
-        /* Space already big enough */
-        *actual_size = space->size_in_header;
-        return(TRUE);
-    }
-
-    size_increase = size_after_extend - space->size_in_header;
+    ut_a(space->size_in_header < size_after_extend);
+    uint32 size_increase = size_after_extend - space->size_in_header;
     *actual_size = 0;
 
     // find a node by space->size_in_header
     uint32 page_hwm = space->size_in_header;
-    node = UT_LIST_GET_FIRST(space->fil_nodes);
+    fil_node_t* node = UT_LIST_GET_FIRST(space->fil_nodes);
     for (; node != NULL && page_hwm >= node->page_max_count;) {
         page_hwm -= node->page_max_count;
         node = UT_LIST_GET_NEXT(chain_list_node, node);
@@ -624,17 +611,18 @@ bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *ac
     // extend nodes
     for (; node != NULL && size_increase > 0;) {
         uint32 free_cur_node = node->page_max_count - page_hwm;
-        uint32 node_size_increase, node_actual_size = 0;
+        uint32 node_size_increase;
         if (size_increase <= free_cur_node) {
             node_size_increase = size_increase;
         } else {
             node_size_increase = free_cur_node;
         }
 
-        bool32 ret = fil_space_extend_node(node, page_hwm, node_size_increase, &node_actual_size);
-        if (!ret) {
-            goto err_exit;
-        }
+        //
+        uint32 node_actual_size = 0;
+        CM_RETURN_IF_ERROR(fil_space_extend_node(node, page_hwm, node_size_increase, &node_actual_size));
+        ut_ad(node_actual_size > 0);
+
         page_hwm = 0;
         *actual_size += node_actual_size;
         size_increase -= node_actual_size;
@@ -642,25 +630,23 @@ bool32 fil_space_extend(fil_space_t* space, uint32 size_after_extend, uint32 *ac
         node = UT_LIST_GET_NEXT(chain_list_node, node);
     }
 
-    return TRUE;
-
-err_exit:
-
-    return FALSE;
+    return CM_SUCCESS;
 }
 
 uint32 fil_space_get_size(uint32 space_id)
 {
-    fil_space_t* space;
-    uint32       size = 0;
-
-    space = fil_system_get_space_by_id(space_id);
-    if (space) {
-        size = space->size_in_header;
-        fil_system_unpin_space(space);
+    fil_space_t* space = fil_system_get_space_by_id(space_id);
+    if (space == NULL) {
+        LOGGER_FATAL(LOGGER, LOG_MODULE_TABLESPACE,
+            "fil_space_get_size: A fatal error occurred, not found table space by space_id %lu, service exited.",
+            space_id);
+        ut_error;
     }
 
-    return(size);
+    uint32 size = space->size_in_header;
+    fil_system_unpin_space(space);
+
+    return size;
 }
 
 inline bool32 fil_addr_is_null(fil_addr_t addr) /*!< in: address */
@@ -886,13 +872,13 @@ inline fil_node_t* fil_node_get_by_page_id(fil_space_t* space, const page_id_t &
 
     ut_ad(rw_lock_own(&space->rw_lock, RW_LOCK_SHARED) || rw_lock_own(&space->rw_lock, RW_LOCK_EXCLUSIVE));
 
-    block_offset = page_id.page_no();
+    block_offset = page_id.get_page_no();
     node = UT_LIST_GET_FIRST(space->fil_nodes);
     for (;;) {
         if (node == NULL) {
             LOGGER_DEBUG(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_node_get_by_page_id: failed to find fil_node (space id = %lu page no = %lu)",
-                page_id.space_id(), page_id.page_no());
+                page_id.get_space_id(), page_id.get_page_no());
             return NULL;
         } else if (node->page_max_count > block_offset) {
             // Found
@@ -936,21 +922,33 @@ inline status_t fil_io(
     }
 
     // 1. get fil_space by page_id and pin
-    space = fil_system_get_space_by_id(page_id.space_id());
-    ut_ad(space);
+    space = fil_system_get_space_by_id(page_id.get_space_id());
+    /* If we are deleting a tablespace we don't allow any read
+    operations on that. However, we do allow write operations. */
+    if (space == NULL || (type == OS_FILE_READ && space->stop_new_ops)) {
+        if (space) {
+            fil_system_pin_space(space);
+        }
+
+        LOGGER_INFO(LOGGER, LOG_MODULE_TABLESPACE,
+            "fil_io: Trying to do i/o to a tablespace which does not exist. "
+            "i/o type %lu, space_name %s space_id %lu, page_no %lu, i/o length %lu bytes",
+            type, space ? space->name : NULL, page_id.get_space_id(), byte_offset, len);
+        return ERR_TABLESPACE_DELETED;
+    }
 
     // 2. get fil_node by page_id
 
     rw_lock_s_lock(&space->rw_lock);
 
-    block_offset = page_id.page_no();
+    block_offset = page_id.get_page_no();
     node = UT_LIST_GET_FIRST(space->fil_nodes);
     for (;;) {
         if (node == NULL) {
             rw_lock_s_unlock(&space->rw_lock);
             LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_io: failed to find fil_node (io type = %s space id = %lu page no = %lu)",
-                type == OS_FILE_READ ? "read" : "write", page_id.space_id(), page_id.page_no());
+                type == OS_FILE_READ ? "read" : "write", page_id.get_space_id(), page_id.get_page_no());
             goto err_exit;
         } else if (node->page_max_count > block_offset) {
             // Found
@@ -967,7 +965,7 @@ inline status_t fil_io(
         LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_io: failed to %s i/o to tablespace space_id %lu, page_no %lu",
             type == OS_FILE_READ ? "read" : "write",
-            node->name, page_id.space_id(), page_id.page_no());
+            node->name, page_id.get_space_id(), page_id.get_page_no());
         goto err_exit;
     }
 
@@ -979,15 +977,15 @@ inline status_t fil_io(
     // 4. get i/o context
 
     if (sync) {
-        uint32 ctx_index = page_id.page_no() % srv_sync_io_contexts;
+        uint32 ctx_index = page_id.get_page_no() % srv_sync_io_contexts;
         aio_ctx = os_aio_array_get_nth_context(srv_os_aio_sync_array, ctx_index);
     } else {
         uint32 ctx_index;
         if (type == OS_FILE_READ) {
-            ctx_index = page_id.page_no() % srv_read_io_threads;
+            ctx_index = page_id.get_page_no() % srv_read_io_threads;
             aio_ctx = os_aio_array_get_nth_context(srv_os_aio_async_read_array, ctx_index);
         } else {
-            ctx_index = page_id.page_no() % srv_write_io_threads;
+            ctx_index = page_id.get_page_no() % srv_write_io_threads;
             aio_ctx = os_aio_array_get_nth_context(srv_os_aio_async_write_array, ctx_index);
         }
     }
@@ -1002,7 +1000,7 @@ inline status_t fil_io(
         LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
             "fil_io: failed to do %s i/o from %s data file, space id %lu, page no %lu, error %s",
             type == OS_FILE_READ ? "read" : "write",
-            node->name, page_id.space_id(), page_id.page_no(), err_info);
+            node->name, page_id.get_space_id(), page_id.get_page_no(), err_info);
         goto err_exit;
     }
 
@@ -1016,7 +1014,7 @@ inline status_t fil_io(
             LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_io: timeout(%lu seconds) for do %s i/o from %s data file, space id %lu, page no %lu",
                 type == OS_FILE_READ ? "read" : "write",
-                io_timeout, node->name, page_id.space_id(), page_id.page_no());
+                io_timeout, node->name, page_id.get_space_id(), page_id.get_page_no());
             goto err_exit;
         default:
             char err_info[CM_ERR_MSG_MAX_LEN];
@@ -1024,7 +1022,7 @@ inline status_t fil_io(
             LOGGER_ERROR(LOGGER, LOG_MODULE_TABLESPACE,
                 "fil_io: failed to do %s i/o from %s data file, space id %lu, page no %lu, error %s",
                 type == OS_FILE_READ ? "read" : "write",
-                node->name, page_id.space_id(), page_id.page_no(), err_info);
+                node->name, page_id.get_space_id(), page_id.get_page_no(), err_info);
             goto err_exit;
         }
 

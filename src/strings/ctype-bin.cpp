@@ -1,23 +1,3 @@
-/* Copyright (c) 2002, tommy@valley.ne.jp
-   Copyright (c) 2002, 2022, Oracle and/or its affiliates.
-   
-   This library is free software; you can redistribute it and/or
-   modify it under the terms of the GNU Library General Public
-   License as published by the Free Software Foundation; version 2
-   of the License.
-   
-   This library is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-   Library General Public License for more details.
-   
-   You should have received a copy of the GNU Library General Public
-   License along with this library; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
-
-/* This file is for binary pseudo charset, created by bar@mysql.com */
-
-
 //#include <my_global.h>
 #include "m_string.h"
 #include "m_ctype.h"
@@ -69,13 +49,13 @@ static const uchar bin_char_array[] =
 
 static my_bool 
 my_coll_init_8bit_bin(CHARSET_INFO *cs,
-                      MY_CHARSET_LOADER *loader MY_ATTRIBUTE((unused)))
+                      MY_CHARSET_LOADER *loader MY_ATTRIBUTE(unused))
 {
   cs->max_sort_char=255; 
   return FALSE;
 }
 
-static int my_strnncoll_binary(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static int my_strnncoll_binary(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                                const uchar *s, size_t slen,
                                const uchar *t, size_t tlen,
                                my_bool t_is_prefix)
@@ -86,8 +66,8 @@ static int my_strnncoll_binary(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 }
 
 
-size_t my_lengthsp_binary(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
-                          const char *ptr MY_ATTRIBUTE((unused)),
+size_t my_lengthsp_binary(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
+                          const char *ptr MY_ATTRIBUTE(unused),
                           size_t length)
 {
   return length;
@@ -117,18 +97,18 @@ size_t my_lengthsp_binary(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 */
 
 static int my_strnncollsp_binary(const CHARSET_INFO *cs
-                                 MY_ATTRIBUTE((unused)),
+                                 MY_ATTRIBUTE(unused),
                                  const uchar *s, size_t slen,
                                  const uchar *t, size_t tlen,
                                  my_bool diff_if_only_endspace_difference
-                                 MY_ATTRIBUTE((unused)))
+                                 MY_ATTRIBUTE(unused))
 {
   return my_strnncoll_binary(cs,s,slen,t,tlen,0);
 }
 
 
 static int my_strnncoll_8bit_bin(const CHARSET_INFO *cs
-                                 MY_ATTRIBUTE((unused)),
+                                 MY_ATTRIBUTE(unused),
                                  const uchar *s, size_t slen,
                                  const uchar *t, size_t tlen,
                                  my_bool t_is_prefix)
@@ -165,7 +145,7 @@ static int my_strnncoll_8bit_bin(const CHARSET_INFO *cs
 */
 
 static int my_strnncollsp_8bit_bin(const CHARSET_INFO *cs
-                                   MY_ATTRIBUTE((unused)),
+                                   MY_ATTRIBUTE(unused),
                                    const uchar *a, size_t a_length, 
                                    const uchar *b, size_t b_length,
                                    my_bool diff_if_only_endspace_difference)
@@ -214,41 +194,41 @@ static int my_strnncollsp_8bit_bin(const CHARSET_INFO *cs
 
 /* This function is used for all conversion functions */
 
-static size_t my_case_str_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
-                              char *str MY_ATTRIBUTE((unused)))
+static size_t my_case_str_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
+                              char *str MY_ATTRIBUTE(unused))
 {
   return 0;
 }
 
 
-static size_t my_case_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
-                          char *src MY_ATTRIBUTE((unused)),
+static size_t my_case_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
+                          char *src MY_ATTRIBUTE(unused),
                           size_t srclen,
-                          char *dst MY_ATTRIBUTE((unused)),
-                          size_t dstlen MY_ATTRIBUTE((unused)))
+                          char *dst MY_ATTRIBUTE(unused),
+                          size_t dstlen MY_ATTRIBUTE(unused))
 {
   return srclen;
 }
 
 
-static int my_strcasecmp_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static int my_strcasecmp_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 			     const char *s, const char *t)
 {
   return strcmp(s,t);
 }
 
 
-uint my_mbcharlen_8bit(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
-                      uint c MY_ATTRIBUTE((unused)))
+uint my_mbcharlen_8bit(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
+                      uint c MY_ATTRIBUTE(unused))
 {
   return 1;
 }
 
 
-static int my_mb_wc_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static int my_mb_wc_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 			my_wc_t *wc,
 			const uchar *str,
-			const uchar *end MY_ATTRIBUTE((unused)))
+			const uchar *end MY_ATTRIBUTE(unused))
 {
   if (str >= end)
     return MY_CS_TOOSMALL;
@@ -258,10 +238,10 @@ static int my_mb_wc_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 }
 
 
-static int my_wc_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+static int my_wc_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 			my_wc_t wc,
 			uchar *s,
-			uchar *e MY_ATTRIBUTE((unused)))
+			uchar *e MY_ATTRIBUTE(unused))
 {
   if (s >= e)
     return MY_CS_TOOSMALL;
@@ -275,7 +255,7 @@ static int my_wc_mb_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 }
 
 
-void my_hash_sort_8bit_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+void my_hash_sort_8bit_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
                            const uchar *key, size_t len,
                            ulong *nr1, ulong *nr2)
 {
@@ -304,7 +284,7 @@ void my_hash_sort_8bit_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
 }
 
 
-void my_hash_sort_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+void my_hash_sort_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 		      const uchar *key, size_t len,ulong *nr1, ulong *nr2)
 {
   const uchar *pos = key;
@@ -444,7 +424,7 @@ my_strnxfrm_8bit_bin(const CHARSET_INFO *cs,
 
 
 static
-uint my_instr_bin(const CHARSET_INFO *cs MY_ATTRIBUTE((unused)),
+uint my_instr_bin(const CHARSET_INFO *cs MY_ATTRIBUTE(unused),
 		  const char *b, size_t b_length,
 		  const char *s, size_t s_length,
 		  my_match_t *match, uint nmatch)

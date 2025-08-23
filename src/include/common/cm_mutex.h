@@ -48,7 +48,7 @@ int os_event_wait_time(os_event_t event, uint64 timeout_us, uint64 reset_sig_cou
 
 void os_mutex_create(os_mutex_t *mutex);
 void os_mutex_enter(os_mutex_t *mutex);
-bool32 os_mutex_tryenter(os_mutex_t *mutex);
+bool32 os_mutex_try_enter(os_mutex_t *mutex);
 void os_mutex_exit(os_mutex_t *mutex);
 void os_mutex_destroy(os_mutex_t *mutex);
 
@@ -78,10 +78,12 @@ typedef struct st_spin_lock {
 } spinlock_t;
 
 typedef struct st_spinlock_stats {
+    typedef counter_t<uint64, COUNTER_SLOTS_64> uint64_counter_t;
+
     // number of spin thread yield
-    uint64 spin_thread_yield_count;
+    uint64_counter_t spin_thread_yield_count;
     // number of spin loop rounds
-    uint64 spin_round_count;
+    uint64_counter_t spin_round_count;
 } spinlock_stats_t;
 
 #define SPIN_ROUND_COUNT          30
@@ -108,7 +110,7 @@ inline void spin_lock(spinlock_t* lock, spinlock_stats_t* stats = NULL)
 
     if (atomic32_compare_and_swap(&lock->lock, 0, 1)) {
 #ifdef UNIV_MUTEX_DEBUG
-        ut_ad(lock->thread_id = os_thread_get_curr_id());
+        ut_d(lock->thread_id = os_thread_get_curr_id());
 #endif
         return;
     }
@@ -131,11 +133,12 @@ lock_loop:
     /* We try once again to obtain the lock */
     if (atomic32_compare_and_swap(&lock->lock, 0, 1)) {
 #ifdef UNIV_MUTEX_DEBUG
-        ut_ad(lock->thread_id = os_thread_get_curr_id());
+        ut_d(lock->thread_id = os_thread_get_curr_id());
 #endif
         if (stats) {
-            stats->spin_round_count += spin_round_count;
-            stats->spin_thread_yield_count += thread_yield_count;
+            uint64 thread_internal_id = os_thread_get_internal_id();
+            stats->spin_round_count.add(thread_internal_id, spin_round_count);
+            stats->spin_thread_yield_count.add(thread_internal_id, thread_yield_count);
         }
         return;
     }

@@ -6,7 +6,7 @@
 #include "cm_mutex.h"
 
 #ifndef __WIN__
-#include "libaio.h"
+#include <libaio.h>
 #endif
 
 #ifdef __cplusplus
@@ -128,7 +128,7 @@ struct st_os_aio_context {
 #ifdef __WIN__
     HANDLE*            handles;
 #else
-    io_context_t      *io_context;
+    io_context_t       io_context;
     struct io_event   *io_events; /* collect completed IOs */
 #endif /* __WIN__ */
 

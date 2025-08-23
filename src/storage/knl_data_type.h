@@ -6,6 +6,14 @@
 #include "m_ctype.h"
 #include "knl_server.h"
 
+typedef struct st_data_type_desc {
+    data_type_t type;
+    char*       name;
+    uint32      fixed_length;  // 0: Variable-length datatypes, >0: length
+    bool32      is_ext; // externally stored
+    //bool32      is_blob;
+} data_type_desc_t;
+
 // The 'MAIN TYPE' of a column
 typedef enum en_data_type {
     DATA_MISSING = 0,  // missing column
@@ -17,14 +25,13 @@ typedef enum en_data_type {
     DATA_BINARY = 4,  // fix binary
     DATA_VARBINARY = 5,
     DATA_RAW = 6,
-    //
     DATA_CLOB = 7,
-    DATA_BLOB1 = 8,
+    DATA_BLOB = 8,
 
     // NUMBER
     DATA_NUMBER = 10,
-    DATA_INTEGER = 11,
     DATA_BIGINT = 12,
+    DATA_INT = 11,
     DATA_SMALLINT = 13,
     DATA_TINYINT = 14,
     DATA_DECIMAL = 15, // decimal number stored as an ASCII string
@@ -139,7 +146,7 @@ extern inline bool32 dtype_is_string_type(uint32 mtype)
 extern inline bool32 dtype_is_binary_string_type(uint32 mtype, uint32 prtype)
 {
     if (mtype == DATA_VARBINARY || mtype == DATA_BINARY
-        || (mtype == DATA_BLOB1 && (prtype & DATA_BINARY_TYPE))) {
+        || (mtype == DATA_BLOB && (prtype & DATA_BINARY_TYPE))) {
         return TRUE;
     }
 
@@ -246,7 +253,11 @@ extern inline uint32 dtype_get_len(const dtype_t* type)
     return(type->len);
 }
 
+extern void data_type_desc_init();
 
+//-------------------------------------------------------------------------
+
+data_type_desc_t* g_data_type_desc[DATA_TYPE_MAX];
 
 
 #endif  /* _KNL_DATA_TYPE_H */

@@ -2,9 +2,10 @@
 #include "cm_dbug.h"
 #include "cm_timer.h"
 #include "cm_util.h"
+#include "securec.h"
 
 
-static text_t g_idx_time_fmt = { "HH24:MI:SS.FF", 13 };
+static text_t g_idx_time_fmt = { (char*)"HH24:MI:SS.FF", 13 };
 
 //#define IS_MYSQL_NEW_TYPE(type) \
 //    (type == CM_TYPE_DATETIME_MYSQL || type == CM_TYPE_TIME_MYSQL || type == CT_TYPE_DATE_MYSQL)
@@ -16,44 +17,44 @@ uint16 g_month_days[2][12] = {
 
 /* weekdays */
 static text_t g_week_days[7] = {
-    { "SUNDAY",    6 },
-    { "MONDAY",    6 },
-    { "TUESDAY",   7 },
-    { "WEDNESDAY", 9 },
-    { "THURSDAY",  8 },
-    { "FRIDAY",    6 },
-    { "SATURDAY",  8 }
+    { (char*)"SUNDAY",    6 },
+    { (char*)"MONDAY",    6 },
+    { (char*)"TUESDAY",   7 },
+    { (char*)"WEDNESDAY", 9 },
+    { (char*)"THURSDAY",  8 },
+    { (char*)"FRIDAY",    6 },
+    { (char*)"SATURDAY",  8 }
 };
 
 /* months */
 static text_t g_month_names[12] = {
-    { "JANUARY",   7 },
-    { "FEBRUARY",  8 },
-    { "MARCH",     5 },
-    { "APRIL",     5 },
-    { "MAY",       3 },
-    { "JUNE",      4 },
-    { "JULY",      4 },
-    { "AUGUST",    6 },
-    { "SEPTEMBER", 9 },
-    { "OCTOBER",   7 },
-    { "NOVEMBER",  8 },
-    { "DECEMBER",  8 }
+    { (char*)"JANUARY",   7 },
+    { (char*)"FEBRUARY",  8 },
+    { (char*)"MARCH",     5 },
+    { (char*)"APRIL",     5 },
+    { (char*)"MAY",       3 },
+    { (char*)"JUNE",      4 },
+    { (char*)"JULY",      4 },
+    { (char*)"AUGUST",    6 },
+    { (char*)"SEPTEMBER", 9 },
+    { (char*)"OCTOBER",   7 },
+    { (char*)"NOVEMBER",  8 },
+    { (char*)"DECEMBER",  8 }
 };
 
 static text_t g_month_roman_names[12] = {
-    { "I",    1 },
-    { "II",   2 },
-    { "III",  3 },
-    { "IV",   2 },
-    { "V",    1 },
-    { "VI",   2 },
-    { "VII",  3 },
-    { "VIII", 4 },
-    { "IX",   2 },
-    { "X",    1 },
-    { "XI",   2 },
-    { "XII",  3 }
+    { (char*)"I",    1 },
+    { (char*)"II",   2 },
+    { (char*)"III",  3 },
+    { (char*)"IV",   2 },
+    { (char*)"V",    1 },
+    { (char*)"VI",   2 },
+    { (char*)"VII",  3 },
+    { (char*)"VIII", 4 },
+    { (char*)"IX",   2 },
+    { (char*)"X",    1 },
+    { (char*)"XI",   2 },
+    { (char*)"XII",  3 }
 };
 
 const uint64 powers_of_10[20] = {1,
@@ -1573,7 +1574,7 @@ status_t cm_check_number(text_t *num_text,
     }
 
     if (size != 0) {
-        MEMS_RETURN_IFERR(memcpy_s(num, sizeof(num), num_text->str, (size_t)size));
+        MEMS_RETURN_IFERR(memcpy_s(num, sizeof(num), (const void*)num_text->str, (size_t)size));
     }
     num[size] = '\0';
 
@@ -1601,7 +1602,7 @@ status_t cm_check_number_with_sign(text_t *num_text,
     }
 
     if (size != 0) {
-        MEMS_RETURN_IFERR(memcpy_s(num, sizeof(num), num_text->str, (size_t)size));
+        MEMS_RETURN_IFERR(memcpy_s(num, sizeof(num), (const char*)num_text->str, (size_t)size));
     }
     num[size] = '\0';
 

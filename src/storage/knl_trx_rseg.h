@@ -31,9 +31,9 @@ extern inline scn_t trx_rseg_set_end(trx_t* trx, bool32 is_commit);
 extern inline uint64 trx_get_next_scn();
 extern inline void trx_get_status_by_itl(trx_slot_id_t trx_slot_id, trx_status_t* trx_status);
 
-extern byte* trx_rseg_replay_trx_slot_page_init(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
-extern byte* trx_rseg_replay_begin_slot(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
-extern byte* trx_rseg_replay_end_slot(uint32 type, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* trx_rseg_replay_trx_slot_page_init(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* trx_rseg_replay_begin_slot(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
+extern byte* trx_rseg_replay_end_slot(uint32 type, uint64 lsn, byte* log_rec_ptr, byte* log_end_ptr, void* block);
 //-----------------------------------------------------------------
 
 

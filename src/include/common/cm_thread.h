@@ -94,6 +94,9 @@ extern void os_thread_yield(void);
 extern void os_thread_sleep(unsigned int microseconds);
 extern uint64 os_thread_delay(uint64 delay);
 
+extern inline void os_thread_set_internal_id();
+extern inline uint64 os_thread_get_internal_id();
+
 #ifdef __cplusplus
 }
 #endif
@@ -106,16 +109,16 @@ extern uint64 os_thread_delay(uint64 delay);
 template<typename Function, typename Args, size_t ... N>
 auto invokeImpl(Function func, Args args, std::index_sequence<N...>)
 {
-    //实现tuple传参回调函数，得对std::tuple中的参数包进行拆包
+    // To implement a callback function, the parameter packets in std:: tuple need to be unpacked.
     return func(std::get<N>(args) ...);
 }
 
 template<typename Function, typename Args>
 auto invoke(Function func, Args args)
 {
-    //获取参数元组的尺寸
+    // Get the size of the parameter tuple
     static constexpr auto size = std::tuple_size<Args>::value;
-    //构建访问元组容器中参数的
+    // Build parameters to access tuple containers
     return invokeImpl(func, args, std::make_index_sequence<size>{});
 }
 
@@ -128,7 +131,7 @@ public:
     {
     }
 
-    static void* __stdcall start_routine(LPVOID lpThreadParameter);
+    static void* MY_ATTRIBUTE(__stdcall) start_routine(void* lpThreadParameter);
 
 public:
     Function func_;
@@ -136,11 +139,10 @@ public:
 };
 
 template<typename Function, typename... Args>
-void* __stdcall wrapper<Function, Args...>::start_routine(LPVOID lpThreadParameter)
+void* MY_ATTRIBUTE(__stdcall) wrapper<Function, Args...>::start_routine(void* lpThreadParameter)
 {
     std::unique_ptr<wrapper<Function, Args...>> pw(reinterpret_cast<wrapper<Function, Args...>*>(lpThreadParameter));
     invoke(pw->func_, pw->args_);
-    
     return NULL;
 }
 
@@ -150,7 +152,7 @@ os_thread_t thread_start(Function&& func, Args&&... args)
     os_thread_t thd;
 
     auto w = new wrapper<Function, Args...>(std::forward<Function>(func), std::forward<Args>(args)...);
-    thd = os_thread_create(w->start_routine, static_cast<LPVOID>(w), NULL);
+    thd = os_thread_create(w->start_routine, static_cast<void*>(w), NULL);
     if (!thd) {
         delete w;
     }

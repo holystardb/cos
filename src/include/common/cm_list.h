@@ -117,35 +117,35 @@ struct {\
 
 // ---------------------------------------------------------------------------------------
 
-#define SLIST_BASE_NODE_T(TYPE)\
+#define UT_SLIST_BASE_NODE_T(TYPE)\
 struct {\
     uint32 count;\
     TYPE *first;\
     TYPE *last;\
 }\
 
-#define SLIST_NODE_T(TYPE)         \
+#define UT_SLIST_NODE_T(TYPE)         \
     struct {                       \
         TYPE *next;                \
     }                              \
 
-#define SLIST_INIT(BASE)         \
+#define UT_SLIST_INIT(BASE)         \
     {                            \
         (BASE).first = NULL;     \
         (BASE).last = NULL;      \
         (BASE).count = 0;        \
     }                            \
 
-#define SLIST_GET_LEN(BASE)       (BASE).count
+#define UT_SLIST_GET_LEN(BASE)       (BASE).count
 
-#define SLIST_GET_FIRST(BASE)     (BASE).first
+#define UT_SLIST_GET_FIRST(BASE)     (BASE).first
 
-#define SLIST_GET_LAST(BASE)      (BASE).last
+#define UT_SLIST_GET_LAST(BASE)      (BASE).last
 
-#define SLIST_GET_NEXT(NAME, N)   (((N)->NAME).next)
+#define UT_SLIST_GET_NEXT(NAME, N)   (((N)->NAME).next)
 
 
-#define SLIST_GET_AND_REMOVE_FIRST(NAME, BASE, N)    \
+#define UT_SLIST_GET_AND_REMOVE_FIRST(NAME, BASE, N)    \
     {                                                \
         (N) = (BASE).first;                          \
         if (LIKELY(N != NULL)) {                             \
@@ -161,7 +161,7 @@ struct {\
         }                                            \
     }                                                \
 
-#define SLIST_REMOVE_FIRST(NAME, BASE)                   \
+#define UT_SLIST_REMOVE_FIRST(NAME, BASE)                   \
     {                                                    \
         if (LIKELY((BASE).first != NULL)) {              \
             ut_a((BASE).count > 0);                      \
@@ -176,7 +176,7 @@ struct {\
         }                                                \
     }                                                    \
 
-#define SLIST_REMOVE(NAME, BASE, PREV, N)            \
+#define UT_SLIST_REMOVE(NAME, BASE, PREV, N)            \
     {                                                \
         ut_a((N) != NULL);                           \
         if (UNLIKELY((PREV) == NULL)) {              \
@@ -190,7 +190,7 @@ struct {\
         (BASE).count--;                              \
     }                                                \
 
-#define SLIST_ADD_LAST(NAME, BASE, N)              \
+#define UT_SLIST_ADD_LAST(NAME, BASE, N)              \
     {                                              \
         if (UNLIKELY((BASE).first == NULL)) {      \
             ut_a((BASE).count == 0);               \
@@ -204,7 +204,7 @@ struct {\
         (BASE).count++;                            \
     }                                              \
 
-#define SLIST_ADD_FIRST(NAME, BASE, N)             \
+#define UT_SLIST_ADD_FIRST(NAME, BASE, N)             \
     {                                              \
         ((N)->NAME).next = (BASE).first;           \
         (BASE).first = (N);                        \
@@ -215,7 +215,7 @@ struct {\
         (BASE).count++;                            \
     }                                              \
 
-#define SLIST_APPEND_SLIST(NAME, BASE_FROM, BASE_TO)          \
+#define UT_SLIST_APPEND_SLIST(NAME, BASE_FROM, BASE_TO)          \
     {                                                         \
         if (UNLIKELY((BASE_TO).first == NULL)) {              \
             ut_a((BASE_TO).count == 0);                       \

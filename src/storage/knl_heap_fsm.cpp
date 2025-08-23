@@ -675,6 +675,7 @@ static inline uint32 fsm_get_nodes_page_count(buf_block_t* block)
 // 
 bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, mtr_t* mtr)
 {
+    status_t err;
     fsm_search_path_t search_path;
     search_path.space_id = space_id;
     search_path.nodes[FSM_PATH_MAX_LEVEL].page_no = root_page_no;
@@ -688,8 +689,9 @@ bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, 
 
         // alloc a map page
         const page_size_t page_size(space_id);
-        buf_block_t* new_block0 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, mtr);
-        if (new_block0 == NULL) {
+        buf_block_t* new_block0;
+        err = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &new_block0, mtr);
+        if (err != CM_SUCCESS) {
             return FALSE;
         }
         fsm_page_init(new_block0, mtr);
@@ -698,8 +700,9 @@ bool32 fsm_add_free_extents(uint32 space_id, uint32 root_page_no, xdes_t* xdes, 
         uint32 page1_count = fsm_get_nodes_page_count(block1);
         if (page1_count >= FSM_LEAF_NODES_PER_PAGE) {
 
-            buf_block_t* new_block1 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, mtr);
-            if (new_block1 == NULL) {
+            buf_block_t* new_block1;
+            err = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &new_block1, mtr);
+            if (err != CM_SUCCESS) {
                 const page_id_t page_id(space_id, new_block0->get_page_no());
                 fsp_free_page(page_id, page_size, mtr);
                 return FALSE;
@@ -796,10 +799,15 @@ uint32 fsm_create(uint32 space_id)
     // 1. alloc pages
 
     const page_size_t page_size(space_id);
-    buf_block_t* leaf_map_block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
-    buf_block_t* non_leaf_map_block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
-    buf_block_t* root_map_block = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &mtr);
-    if (leaf_map_block == NULL || non_leaf_map_block == NULL || root_map_block == NULL) {
+    buf_block_t* leaf_map_block = NULL;
+    buf_block_t* non_leaf_map_block = NULL;
+    buf_block_t* root_map_block = NULL;
+    status_t err1, err2, err3;
+    err1 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &leaf_map_block, &mtr);
+    err2 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &non_leaf_map_block, &mtr);
+    err3 = fsp_alloc_free_page(space_id, page_size, Page_fetch::NORMAL, &root_map_block, &mtr);
+
+    if (err1 != CM_SUCCESS || err2 != CM_SUCCESS || err2 != CM_SUCCESS) {
         goto err_exit;
     }
 
@@ -842,13 +850,14 @@ err_exit:
 // Protected by table->heap_io_in_progress.
 static bool32 fsm_extend_heap_pages(dict_table_t* table, mtr_t* mtr)
 {
+    status_t err;
     const page_size_t page_size(table->space_id);
     const uint32 alloc_page_count = 8;
     buf_block_t* block[alloc_page_count] = {NULL};
 
     for (uint32 i = 0; i < alloc_page_count; i++) {
-        block[i] = fsp_alloc_free_page(table->space_id, page_size, Page_fetch::NORMAL, mtr);
-        if (block[i] == NULL) {
+        err = fsp_alloc_free_page(table->space_id, page_size, Page_fetch::NORMAL, &block[i], mtr);
+        if (err != CM_SUCCESS) {
             goto err_exit;
         }
     }
@@ -875,6 +884,7 @@ err_exit:
 // segment expanded by a maximum of 64MB at a time
 static bool32 fsm_extend_heap_extents(dict_table_t* table, uint32 extent_count, mtr_t* mtr)
 {
+    status_t err;
     const page_size_t page_size(table->space_id);
     const uint32 alloc_extent_count = 64;
     xdes_t* descr[alloc_extent_count] = {NULL};
@@ -883,8 +893,8 @@ static bool32 fsm_extend_heap_extents(dict_table_t* table, uint32 extent_count, 
 
     // get free extents
     for (uint32 i = 0; i < extent_count; i++) {
-        descr[i] = fsp_alloc_free_extent(table->space_id, page_size, mtr);
-        if (descr[i] == NULL) {
+        err = fsp_alloc_free_extent(table->space_id, page_size, &descr[i], mtr);
+        if (err != CM_SUCCESS) {
             goto err_exit;
         }
     }

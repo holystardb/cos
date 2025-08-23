@@ -29,6 +29,7 @@
     <ClCompile Include="..\..\src\storage\knl_record.cpp" />
     <ClCompile Include="..\..\src\storage\knl_start.cpp" />
     <ClCompile Include="..\..\src\storage\knl_undo_fsm.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_ctrl_file.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\storage\include\knl_handler.h" />
@@ -63,5 +64,6 @@
     <ClInclude Include="..\..\src\storage\knl_defs.h" />
     <ClInclude Include="..\..\src\storage\knl_start.h" />
     <ClInclude Include="..\..\src\storage\knl_undo_fsm.h" />
+    <ClInclude Include="..\..\src\storage\knl_ctrl_file.h" />
   </ItemGroup>
 </Project>

@@ -24,6 +24,7 @@
     <ClCompile Include="..\..\src\storage\knl_buf_flush.cpp" />
     <ClCompile Include="..\..\src\storage\knl_buf_lru.cpp" />
     <ClCompile Include="..\..\src\storage\knl_checkpoint.cpp" />
+    <ClCompile Include="..\..\src\storage\knl_ctrl_file.cpp" />
     <ClCompile Include="..\..\src\storage\knl_data_type.cpp" />
     <ClCompile Include="..\..\src\storage\knl_dblwrite.cpp" />
     <ClCompile Include="..\..\src\storage\knl_dict.cpp" />
@@ -56,6 +57,7 @@
     <ClInclude Include="..\..\src\storage\knl_buf_flush.h" />
     <ClInclude Include="..\..\src\storage\knl_buf_lru.h" />
     <ClInclude Include="..\..\src\storage\knl_checkpoint.h" />
+    <ClInclude Include="..\..\src\storage\knl_ctrl_file.h" />
     <ClInclude Include="..\..\src\storage\knl_data_type.h" />
     <ClInclude Include="..\..\src\storage\knl_dblwrite.h" />
     <ClInclude Include="..\..\src\storage\knl_defs.h" />

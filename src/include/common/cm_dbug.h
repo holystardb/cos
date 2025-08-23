@@ -10,8 +10,8 @@ extern uint64 *ut_dbg_null_ptr;
 
 #define ut_a(EXPR) {                                                            \
     uint64 dbg_i;                                                               \
-    if (UNLIKELY(!((uint64)(EXPR) + ut_dbg_zero))) {                                      \
-        fprintf(stderr, "\nAssertion failure in thread %lu in file %s line %lu\n",\
+    if (UNLIKELY(!((uint64)(EXPR) + ut_dbg_zero))) {                              \
+        fprintf(stderr, "\nAssertion failure in thread %u in file %s line %u\n",\
             os_thread_get_curr_id(), __FILE__, (uint32)__LINE__);               \
         fprintf(stderr, "We intentionally generate a memory trap.\n");          \
         ut_dbg_stop_threads = TRUE;                                             \
@@ -21,8 +21,8 @@ extern uint64 *ut_dbg_null_ptr;
             ut_dbg_null_ptr = NULL;                                             \
         }                                                                       \
     }                                                                           \
-    if (UNLIKELY(ut_dbg_stop_threads)) {                                                  \
-        fprintf(stderr, "Thread %lu stopped in file %s line %lu\n",             \
+    if (UNLIKELY(ut_dbg_stop_threads)) {                                        \
+        fprintf(stderr, "Thread %u stopped in file %s line %u\n",             \
             os_thread_get_curr_id(), __FILE__, (uint32)__LINE__);               \
             os_thread_sleep(1000000000);                                        \
     }                                                                           \
@@ -30,7 +30,7 @@ extern uint64 *ut_dbg_null_ptr;
 
 #define ut_error {                                                              \
     uint64 dbg_i;                                                               \
-    fprintf(stderr, "\nAssertion failure in thread %lu in file %s line %lu\n",    \
+    fprintf(stderr, "\nAssertion failure in thread %u in file %s line %u\n",  \
         os_thread_get_curr_id(), __FILE__, (uint32)__LINE__);                   \
     fprintf(stderr, "We intentionally generate a memory trap.\n");              \
     ut_dbg_stop_threads = TRUE;                                                 \
@@ -38,6 +38,15 @@ extern uint64 *ut_dbg_null_ptr;
     dbg_i = *(ut_dbg_null_ptr);                                                 \
     printf("%lld", dbg_i);                                                      \
 }
+
+#define ut_a_log(EXPR, format, ...)                              \
+    do {                                                         \
+        if (unlikely(!(EXPR))) {                                 \
+            LOGGER_ERROR(LOGGER, LOG_MODULE_ALL, ##__VA_ARGS__); \
+            LOGGER.log_file_flush();                             \
+            ut_a(EXPR);                                          \
+        }                                                        \
+    } while (0);
 
 
 #ifdef UNIV_DEBUG

@@ -194,6 +194,15 @@ enum dict_col_sys_columns_enum {
 	DICT_COL__SYS_COLUMNS__PRTYPE		= 4,
 	DICT_COL__SYS_COLUMNS__LEN		= 5,
 	DICT_COL__SYS_COLUMNS__PREC		= 6,
+    DICT_COL__SYS_COLUMNS__NULLABLE  = 6,
+    DICT_COL__SYS_COLUMNS__DEFAULT_TEXT  = 6,
+    DICT_COL__SYS_COLUMNS__DEFAULT_CONST_TEXT  = 6,
+    DICT_COL__SYS_COLUMNS__DEFAULT_EXPR  = 6,
+    DICT_COL__SYS_COLUMNS__NUM_DISTINCT  = 6,
+    DICT_COL__SYS_COLUMNS__LOW_VALUE  = 6,
+    DICT_COL__SYS_COLUMNS__HIGH_VALUE  = 6,
+    DICT_COL__SYS_COLUMNS__HISTOGRAM  = 6,
+    DICT_COL__SYS_COLUMNS__OPTIONS  = 6,
 	DICT_NUM_COLS__SYS_COLUMNS		= 7
 };
 /* The field numbers in the SYS_COLUMNS clustered index */
@@ -344,12 +353,11 @@ typedef struct st_dict_index    dict_index_t;
 #define M_MIN_NUM_PRECISION     (int32)1
 #define M_MAX_NUM_PRECISION     (int32)38
 
-// Data structure for a column in a table
-// total 16 Bytes
+// Data structure for a column in a table, total 40 bytes
 typedef struct st_dict_col {
     char*  name;
-    uint8  mtype;  // main data type
     union {
+        uint8  mtype;  // main data type
         struct {
             uint8  precision;
             uint8  scale;
@@ -362,12 +370,17 @@ typedef struct st_dict_col {
         };
     };
 
-    uint32 ind           : 10; // table column position (starting from 0)
+    uint32 index         : 10; // table column position (starting from 0)
     uint32 nullable      : 1;  // null or not null
     uint32 is_compressed : 1;
     uint32 is_droped     : 1;
     uint32 is_hidden     : 1;
-    uint32 reserved      : 18;
+    uint32 is_ext        : 1;
+    uint32 reserved      : 1;
+    uint32 default_const_value_len : 16;
+    void* default_const_value;
+    void *default_expr;    // deserialized default expr
+    char* default_raw_text;    // raw expr text
 } dict_col_t;
 
 // indexed field length (or indexed prefix length) for indexes on tables
@@ -480,9 +493,10 @@ struct st_dict_table {
     // array of column descriptions
     uint16          column_index;
     uint16          column_count;
-    dict_col_t*     columns;
+    dict_col_t**    columns;
     uint16          index_count;              // index count
 
+    uint32          row_length;  // max length of row
     uchar*          default_values;
 
     uint8           init_trans;
@@ -527,6 +541,9 @@ struct st_dict_table {
     UT_LIST_BASE_NODE_T(dict_index_t) indexes;
     //UT_LIST_BASE_NODE_T(dict_foreign_t) foreign_list;
     //UT_LIST_BASE_NODE_T(dict_foreign_t) referenced_list;
+
+
+    //UT_LIST_BASE_NODE_T(dict_proc_t) used_in_procedures;
 
 
     UT_LIST_NODE_T(dict_table_t) table_LRU; // node of the LRU list of tables
@@ -702,7 +719,7 @@ struct dict_sys_t {
 
 //------------------------------------------------------
 
-#define dict_table_get_nth_col(table, pos) ((table)->columns + (pos))
+#define dict_table_get_nth_col(table, pos) ((table)->columns[pos])
 #define dict_index_get_nth_field(index, pos) ((index)->fields + (pos))
 
 extern status_t dict_boot(memory_pool_t* mem_pool, uint64 memory_cache_size, uint32 table_hash_array_size);

@@ -5,7 +5,7 @@
 
 checkpoint_t   g_checkpoint = {0};
 
-status_t checkpoint_init(char* dbwr_file_name, uint32 dbwr_file_size)
+status_t checkpoint_init(char* dbwr_file_name, uint64 dbwr_file_size)
 {
     checkpoint_t* checkpoint = &g_checkpoint;
 
@@ -63,24 +63,32 @@ status_t checkpoint_increment_checkpoint()
     return CM_SUCCESS;
 }
 
-static void checkpoint_copy_item(checkpoint_t* checkpoint,
+static uint64 checkpoint_copy_item(checkpoint_t* checkpoint,
     buf_pool_t* buf_pool, buf_block_t* block)
 {
-    // 1 copy data
+    uint64 newest_modification;
+
     rw_lock_s_lock(&(block->rw_lock));
+
+    if (block->page.recovery_lsn == 0) {
+        rw_lock_s_unlock(&(block->rw_lock));
+        return 0;
+    }
+
+    // 1 copy data
+    newest_modification = block->page.newest_modification£»
+    mach_write_to_8(block->frame + FIL_PAGE_LSN, newest_modification);
     memcpy(checkpoint->group.buf + UNIV_PAGE_SIZE * checkpoint->group.item_count,
         block->frame, block->page.size.physical());
-    rw_lock_s_unlock(&(block->rw_lock));
-    //knl_securec_check(ret);
 
     // 2 reset page.recovery_lsn and remove block from buf_pool->flush_list
-    mutex_enter(&block->mutex, NULL);
     mutex_enter(&buf_pool->flush_list_mutex);
     block->page.recovery_lsn = 0;
-    block->page.in_flush_list = FALSE;
+    ut_d(block->page.in_flush_list = FALSE);
     UT_LIST_REMOVE(list_node_flush, buf_pool->flush_list, block);
     mutex_exit(&buf_pool->flush_list_mutex);
-    mutex_exit(&block->mutex);
+
+    rw_lock_s_unlock(&(block->rw_lock));
 
     // 3 insert into group items
     checkpoint_sort_item_t* item = &checkpoint->group.items[checkpoint->group.item_count];
@@ -88,9 +96,11 @@ static void checkpoint_copy_item(checkpoint_t* checkpoint,
     item->buf_id = checkpoint->group.item_count;
     item->is_flushed = FALSE;
     checkpoint->group.item_count++;
+
+    return newest_modification;
 }
 
-static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
+static uint64 checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
     buf_block_t* block, lsn_t least_recovery_point)
 {
     mutex_t*    block_mutex;
@@ -98,21 +108,29 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
     buf_page_t* bpage;
     buf_pool_t* buf_pool;
     page_id_t   page_id;
+    uint64      newest_modification = 0;
+    space_id_t  space_id = block->get_space_id();
+    page_no_t   page_no = block->get_page_no();
+
+    uint32 space_size = fil_space_get_size(space_id);
+    if (space_size == 0) {
+        return newest_modification;
+    }
 
     //
     const uint32 buf_flush_area = 64;
-    uint32 low = ut_uint32_align_down(block->get_page_no(), buf_flush_area);
-    uint32 high = ut_uint32_align_up(block->get_page_no(), buf_flush_area);
+    uint32 low = ut_uint32_align_down(page_no, buf_flush_area);
+    uint32 high = ut_uint32_align_up(page_no, buf_flush_area);
     if (high == 0) {
         high = buf_flush_area;
     }
-    if (high > fil_space_get_size(block->get_space_id())) {
-        high = fil_space_get_size(block->get_space_id());
+    if (high > space_size) {
+        high = space_size;
     }
     ut_ad(high > 0);
     ut_ad(high > low);
 
-    for (uint32 page_no = low; page_no < high; page_no++) {
+    for (uint32 cur_page_no = low; cur_page_no < high; cur_page_no++) {
 
         // 1 We have already flushed enough pages
         if (checkpoint->group.item_count >= CHECKPOINT_GROUP_MAX_SIZE) {
@@ -120,7 +138,7 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
         }
 
         // 2 get block
-        page_id.reset(block->get_space_id(), page_no);
+        page_id.reset(space_id, cur_page_no);
         buf_pool = buf_pool_from_page_id(page_id);
         ut_ad(buf_pool);
 
@@ -128,49 +146,42 @@ static void checkpoint_copy_item_and_neighbors(checkpoint_t* checkpoint,
         if (!bpage) {
             continue;
         }
-
-        // 3 pin block
-
-        block_mutex = buf_page_get_mutex(bpage);
-        mutex_enter(block_mutex);
-
-        // Now safe to release page_hash rw_lock
-        rw_lock_s_unlock(hash_lock);
-
-        if (bpage->recovery_lsn == 0 ||
-            bpage->recovery_lsn > least_recovery_point) {
-            LOGGER_DEBUG(LOGGER, LOG_MODULE_CHECKPOINT,
-                "checkpoint_copy_item_and_neighbors: block (space id %lu, page no %lu) skiped, recovery %llu last_recovery_point %llu",
-                page_id.space_id(), page_id.page_no(), bpage->recovery_lsn, least_recovery_point);
-            mutex_exit(block_mutex);
+        if (bpage->recovery_lsn == 0 || bpage->recovery_lsn > least_recovery_point) {
+            rw_lock_s_unlock(hash_lock);
             continue;
         }
 
+        // 3 pin block
+        block_mutex = buf_page_get_mutex(bpage);
+        mutex_enter(block_mutex);
+        // Now safe to release page_hash rw_lock
+        rw_lock_s_unlock(hash_lock);
         buf_page_fix(bpage);
-
         mutex_exit(block_mutex);
 
         // 4 copy page data
-        checkpoint_copy_item(checkpoint, buf_pool, (buf_block_t *)bpage);
+        uint64 page_lsn = checkpoint_copy_item(checkpoint, buf_pool, (buf_block_t *)bpage);
+        if (newest_modification < page_lsn) {
+            newest_modification = page_lsn;
+        }
 
         // 5 unpin block
         buf_page_unfix(bpage);
 
         LOGGER_DEBUG(LOGGER, LOG_MODULE_CHECKPOINT,
             "checkpoint_copy_item_and_neighbors: block (space id %lu, page no %lu)",
-            page_id.space_id(), page_id.page_no());
+            page_id.get_space_id(), page_id.get_page_no());
     }
+
+    return newest_modification;
 }
 
 
-static status_t checkpoint_copy_dirty_pages(checkpoint_t* checkpoint, lsn_t least_recovery_point)
+static uint64 checkpoint_copy_dirty_pages(checkpoint_t* checkpoint, lsn_t least_recovery_point)
 {
     buf_block_t* block;
+    uint64 newest_modification = 0;
     uint32 buf_pool_instances = buf_pool_get_instances();
-
-    // When we traverse all the flush lists
-    // we don't want another thread to add a dirty page to any flush list.
-    //log_flush_order_mutex_enter();
 
     for (uint32 i = 0; i < buf_pool_instances && checkpoint->group.item_count < CHECKPOINT_GROUP_MAX_SIZE; i++) {
         buf_pool_t* buf_pool = buf_pool_get(i);
@@ -182,7 +193,10 @@ static status_t checkpoint_copy_dirty_pages(checkpoint_t* checkpoint, lsn_t leas
                checkpoint->group.item_count < CHECKPOINT_GROUP_MAX_SIZE) {
             mutex_exit(&buf_pool->flush_list_mutex);
 
-            checkpoint_copy_item_and_neighbors(checkpoint, block, least_recovery_point);
+            uint64 page_lsn = checkpoint_copy_item_and_neighbors(checkpoint, block, least_recovery_point);
+            if (newest_modification < page_lsn) {
+                newest_modification = page_lsn;
+            }
 
             mutex_enter(&buf_pool->flush_list_mutex);
             block = UT_LIST_GET_LAST(buf_pool->flush_list);
@@ -190,9 +204,7 @@ static status_t checkpoint_copy_dirty_pages(checkpoint_t* checkpoint, lsn_t leas
         mutex_exit(&buf_pool->flush_list_mutex);
     }
 
-    //log_flush_order_mutex_exit();
-
-    return CM_SUCCESS;
+    return newest_modification;
 }
 
 static int32 checkpoint_flush_sort_comparator(const void *pa, const void *pb)
@@ -201,16 +213,16 @@ static int32 checkpoint_flush_sort_comparator(const void *pa, const void *pb)
     const checkpoint_sort_item_t *b = (const checkpoint_sort_item_t *)pb;
 
     /* compare space no */
-    if (a->page_id.space_id() < b->page_id.space_id()) {
+    if (a->page_id.get_space_id() < b->page_id.get_space_id()) {
         return -1;
-    } else if (a->page_id.space_id() > b->page_id.space_id()) {
+    } else if (a->page_id.get_space_id() > b->page_id.get_space_id()) {
         return 1;
     }
 
     /* compare page no */
-    if (a->page_id.page_no() < b->page_id.page_no()) {
+    if (a->page_id.get_page_no() < b->page_id.get_page_no()) {
         return -1;
-    } else if (a->page_id.page_no() > b->page_id.page_no()) {
+    } else if (a->page_id.get_page_no() > b->page_id.get_page_no()) {
         return 1;
     }
 
@@ -272,7 +284,7 @@ static status_t checkpoint_write_pages(checkpoint_t* checkpoint, uint32 begin, u
 
     for (uint32 i = begin; i < end; i++) {
         item = &checkpoint->group.items[i];
-        const page_size_t page_size(item->page_id.space_id());
+        const page_size_t page_size(item->page_id.get_space_id());
 
         // checkpoint->group.buf is aligned by UNIV_PAGE_SIZE
         err = fil_write(FALSE, item->page_id, page_size, page_size.physical(),
@@ -325,7 +337,7 @@ static status_t checkpoint_sync_pages(checkpoint_t* checkpoint, uint32 begin, ui
         item = &checkpoint->group.items[i];
 
         // 2-1. get fil_space by page_id
-        space = fil_system_get_space_by_id(item->page_id.space_id());
+        space = fil_system_get_space_by_id(item->page_id.get_space_id());
         if (space == NULL) {
             continue;
         }
@@ -378,6 +390,9 @@ static bool32 checkpoint_double_write(checkpoint_t* checkpoint)
 {
     os_aio_context_t* aio_ctx = NULL;
     os_aio_slot_t*    aio_slot = NULL;
+
+    LOGGER_DEBUG(LOGGER, LOG_MODULE_CHECKPOINT,
+        "checkpoint_double_write: data len %lu", UNIV_PAGE_SIZE *checkpoint->group.item_count);
 
     aio_ctx = os_aio_array_alloc_context(checkpoint->double_write.aio_array);
     ut_ad(aio_ctx);
@@ -476,31 +491,24 @@ static status_t checkpoint_write_and_sync_pages(checkpoint_t* checkpoint)
     return CM_SUCCESS;
 }
 
-static status_t checkpoint_perform(checkpoint_t* checkpoint)
+static uint32 checkpoint_perform(checkpoint_t* checkpoint)
 {
-    status_t err;
     lsn_t least_recovery_point;
-
-    // reset
+    uint32 flushed_page_count = 0;
     uint32 pre_item_count = 0;
-    checkpoint->group.item_count = 0;
-
-    // 1 get checkpoint lsn
-    //   Search twice to ensure the minimum value for checkpoint->least_recovery_point
-    lsn_t write_to_buf_lsn = log_get_writed_to_buffer_lsn();
     lsn_t flushed_to_disk_lsn = log_get_flushed_to_disk_lsn();
+
+    checkpoint->group.item_count = 0;
 
 retry_more:
 
-    // double get
-    buf_pool_get_recovery_lsn();
     least_recovery_point = buf_pool_get_recovery_lsn();
     if (least_recovery_point == 0 && checkpoint->group.item_count == 0) {
         if (srv_recovery_on) {
-            return CM_SUCCESS;
+            return 0;
         }
-        if (write_to_buf_lsn != flushed_to_disk_lsn) {
-            return CM_SUCCESS;
+        if (log_get_writed_to_buffer_lsn() != flushed_to_disk_lsn || buf_pool_get_recovery_lsn() > 0) {
+            return 0;
         }
         // Long time no write operation, refresh the last CHECK POINT
         if (checkpoint->least_recovery_point < flushed_to_disk_lsn + 1) {
@@ -510,7 +518,7 @@ retry_more:
                 "checkpoint: set checkpoint point, least_recovery_point=%llu",
                 checkpoint->least_recovery_point);
         }
-        return CM_SUCCESS;
+        return 0;
     }
 
     if (least_recovery_point != 0) {
@@ -519,14 +527,11 @@ retry_more:
             checkpoint->least_recovery_point, least_recovery_point);
     }
 
-    // 2 flush redo log to update lrp point.
-    log_write_up_to(least_recovery_point);
-
-    // 3 write and sync pages
+    // write and sync pages
     while (TRUE) {
-        // 3.1 copy all dirty pages to dirty pages list of checkpoint for all buffer pool
-        err = checkpoint_copy_dirty_pages(checkpoint, least_recovery_point);
-        CM_RETURN_IF_ERROR(err);
+        // copy all dirty pages to dirty pages list of checkpoint for all buffer pool
+        uint64 newest_modification = checkpoint_copy_dirty_pages(checkpoint, least_recovery_point);
+        log_write_up_to(newest_modification);
 
         if (checkpoint->group.item_count == 0) {
             // all dirty pages have been already writed and synchronized
@@ -540,48 +545,50 @@ retry_more:
             goto retry_more;
         }
         
-        // 3.2 double write pages to be flushed if need.
+        // double write pages to be flushed if need.
         if (checkpoint->enable_double_write && !checkpoint_double_write(checkpoint)) {
-            return CM_ERROR;
+            LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint: fatal error occurred, service exited");
+            ut_error;
         }
 
-        // 3.3 sort pages by space id and page no
+        // sort pages by space id and page no
         err = checkpoint_sort_pages(checkpoint);
         CM_RETURN_IF_ERROR(err);
 
-        // 3.4 write and sync pages to disk
+        // write and sync pages to disk
         err = checkpoint_write_and_sync_pages(checkpoint);
         CM_RETURN_IF_ERROR(err);
 
         // reset
+        flushed_page_count += checkpoint->group.item_count;
         pre_item_count = 0;
         checkpoint->group.item_count = 0;
     }
 
-    // 3. save checkpoint info
+    // save checkpoint info
     if (!srv_recovery_on) {
         log_checkpoint(least_recovery_point);
         checkpoint->least_recovery_point = least_recovery_point;
     }
 
-    return CM_SUCCESS;
+    return flushed_page_count;
 }
 
 void* checkpoint_proc_thread(void *arg)
 {
     checkpoint_t* checkpoint = &g_checkpoint;
     uint64 signal_count = 0;
-    uint32 timeout_microseconds = 1000000;
+    uint32 timeout_microseconds = 100000; // 0.1s
 
     LOGGER_INFO(LOGGER, LOG_MODULE_CHECKPOINT,"checkpoint thread starting ...");
 
     while (srv_shutdown_state != SHUTDOWN_EXIT_THREADS) {
-        if (checkpoint_perform(checkpoint) != CM_SUCCESS) {
-            LOGGER_FATAL(LOGGER, LOG_MODULE_CHECKPOINT, "checkpoint: fatal error occurred, service exited");
-            ut_error;
+        if (checkpoint_perform(checkpoint) >= CHECKPOINT_GROUP_MAX_SIZE) {
+            // There may still be a large number of dirty pages, need to be flushed immediately
+            continue;
         }
 
-        // wake up by checkpoint thread
+        // checkpoint thread waits until awaken by other threads or timeout
         os_event_wait_time(checkpoint->checkpoint_event, timeout_microseconds, signal_count);
         signal_count = os_event_reset(checkpoint->checkpoint_event);
     }

@@ -5,13 +5,16 @@
 #include "cm_dbug.h"
 
 /** Default number of slots to use in counter_t */
-#define IB_N_SLOTS     64
+#define COUNTER_SLOTS_64        64
+#define COUNTER_SLOTS_128       128
+#define COUNTER_SLOTS_256       256
+#define COUNTER_SLOTS_512       512
 
 
 /** Class for using fuzzy counters.
 The counter is not protected by any mutex and the results are not guaranteed to be 100% accurate but close enough.*/
 
-template <typename Type, int N = IB_N_SLOTS>
+template <typename Type, int N = COUNTER_SLOTS_64>
 class counter_t {
 public:
     counter_t() { memset(m_counter, 0x0, sizeof(m_counter)); }
@@ -22,7 +25,7 @@ public:
 
     /** If you can't use a good index id. @param n is the amount to increment */
     void add(Type n) {
-        size_t i = offset(N == IB_N_SLOTS ? ut_rnd_interval(1, IB_N_SLOTS) : 1);
+        size_t i = offset(ut_rnd_interval(1, N));
         ut_ad(i < UT_ARR_SIZE(m_counter));
         m_counter[i] += n;
     }
@@ -42,7 +45,7 @@ public:
     /** If you can't use a good index id.
     @param n the amount to decrement */
     void sub(Type n) {
-        size_t i = offset(ut_rnd_interval(1, IB_N_SLOTS));
+        size_t i = offset(ut_rnd_interval(1, N));
         ut_ad(i < UT_ARR_SIZE(m_counter));
         m_counter[i] -= n;
     }

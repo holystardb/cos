@@ -45,6 +45,7 @@ static inline undo_fsm_header_t* undo_fsm_get_fsm_header(uint32 space_id, mtr_t*
 static inline status_t undo_fsm_alloc_log_pages(uint32 space_id,
     undo_fsm_header_t* fsm_header, uint32 alloc_count, mtr_t* mtr)
 {
+    status_t err;
     uint32 page_count = 0;
 
     ut_ad(mlog_read_uint32(fsm_header + UNDO_FSM_STATUS, MLOG_4BYTES) != UNDO_FSM_STATUS_FULL);
@@ -53,9 +54,9 @@ static inline status_t undo_fsm_alloc_log_pages(uint32 space_id,
 
     for (page_count = 0; page_count < alloc_count; page_count++) {
         // alloc undo_log page
-        buf_block_t* log_block = fsp_alloc_free_page(space_id, undo_log_page_size, Page_fetch::NORMAL, mtr);
-        if (log_block == NULL) {
-            // set full
+        buf_block_t* log_block;
+        err = fsp_alloc_free_page(space_id, undo_log_page_size, Page_fetch::NORMAL, &log_block, mtr);
+        if (err == ERR_TABLESPACE_IS_FULL) {
             mlog_write_uint32(fsm_header + UNDO_FSM_STATUS, UNDO_FSM_STATUS_FULL, MLOG_4BYTES, mtr);
             break;
         }
@@ -120,13 +121,14 @@ static status_t undo_fsm_init_fsm_pages(uint32 space_id, uint32 fsm_page_count)
     status_t err = CM_SUCCESS;
     mtr_t init_mtr, *mtr = &init_mtr;
 
-    // 1 first extent
+    // 1 from first extent
     for (uint32 page_no = 2; page_no < FSP_EXTENT_SIZE; page_no++) {
         mtr_start(mtr);
 
         // 1.1 create page
-        buf_block_t* block = fsp_alloc_free_page(space_id, undo_log_page_size, Page_fetch::RESIDENT, mtr);
-        if (block == NULL) {
+        buf_block_t* block;
+        err = fsp_alloc_free_page(space_id, undo_log_page_size, Page_fetch::RESIDENT, &block, mtr);
+        if (err != CM_SUCCESS) {
             goto err_exit;
         }
         ut_a(block->get_page_no() == page_no);
@@ -142,7 +144,7 @@ static status_t undo_fsm_init_fsm_pages(uint32 space_id, uint32 fsm_page_count)
         mtr_commit(mtr);
     }
 
-    // other extents
+    // from other extents
     uint32 remain_page_count = (fsm_page_count > (FSP_EXTENT_SIZE - 2) * NODE_COUNT_PER_UNDO_FSM_PAGE)
         ? (fsm_page_count - (FSP_EXTENT_SIZE - 2) * NODE_COUNT_PER_UNDO_FSM_PAGE) : 0;
     if (remain_page_count  > 0) {
@@ -150,8 +152,9 @@ static status_t undo_fsm_init_fsm_pages(uint32 space_id, uint32 fsm_page_count)
         for (uint32 i = 0; i < extent_count; i++) {
             mtr_start(mtr);
             // get free extents
-            xdes_t* descr = fsp_alloc_free_extent(space_id, undo_log_page_size, mtr);
-            if (descr == NULL) {
+            xdes_t* descr;
+            err = fsp_alloc_free_extent(space_id, undo_log_page_size, &descr, mtr);
+            if (err != CM_SUCCESS) {
                 goto err_exit;
             }
             xdes_set_state(descr, XDES_FSEG, mtr);
@@ -188,21 +191,20 @@ err_exit:
     mtr->modifications = FALSE;
     mtr_commit(mtr);
 
-    return CM_ERROR;
+    return err;
 }
 
 static status_t undo_fsm_hdr_init(uint32 space_id, uint32 fsm_page_count, uint32 log_page_max_count)
 {
+    buf_block_t* block;
     status_t err = CM_SUCCESS;
     mtr_t init_mtr, *mtr = &init_mtr;
 
     mtr_start(mtr);
 
-    //
-    buf_block_t* block = fsp_alloc_free_page(space_id, undo_log_page_size, Page_fetch::RESIDENT, mtr);
-    if (block == NULL) {
+    err = fsp_alloc_free_page(space_id, undo_log_page_size, Page_fetch::RESIDENT, &block, mtr);
+    if (err != CM_SUCCESS) {
         mtr->modifications = FALSE;
-        err = CM_ERROR;
         goto err_exit;
     }
     ut_a(block->get_page_no() == UNDO_FSM_HEADER_PAGE_NO);
@@ -254,15 +256,17 @@ status_t undo_fsm_tablespace_init(uint32 space_id, uint64 init_size, uint64 max_
         FSP_EXTENT_SIZE * ((fsm_page_count - (FSP_EXTENT_SIZE - 2) + FSP_EXTENT_SIZE - 1) / FSP_EXTENT_SIZE);
     uint32 log_page_max_count = page_max_count - xdes_page_count - fsm_page_align_count - 1 /*fsm header*/;
 
+    // undo header page
     err = undo_fsm_hdr_init(space_id, fsm_page_align_count, log_page_max_count);
     CM_RETURN_IF_ERROR(err);
 
-    // alloc undo fsm pages
+    // undo fsm page
     err = undo_fsm_init_fsm_pages(space_id, fsm_page_align_count);
     CM_RETURN_IF_ERROR(err);
 
-    // alloc undo log page
-    uint32 log_page_init_count = (init_size == max_size) ? log_page_max_count : (uint32)(init_size / undo_log_page_size.physical());
+    // undo log page
+    uint32 log_page_init_count = (init_size == max_size) ?
+                                 log_page_max_count : (uint32)(init_size / undo_log_page_size.physical());
     if (log_page_init_count > log_page_max_count) {
         log_page_init_count = log_page_max_count;
     }
@@ -386,7 +390,7 @@ static inline undo_fsm_page_t undo_fsm_alloc_page_from_update_list(uint32 space_
 {
     undo_fsm_page_t fsm_page = {space_id, FIL_NULL, FIL_NULL, 0};
 
-    // get frist node from insert_list
+    // get frist node from update_list
     fsm_page.node_addr = flst_get_first(fsm_header + UNDO_FSM_UPDATE_LIST, mtr);
     if (fil_addr_is_null(fsm_page.node_addr)) {
         return fsm_page;
@@ -404,9 +408,10 @@ static inline undo_fsm_page_t undo_fsm_alloc_page_from_update_list(uint32 space_
         return fsm_page;
     }
 
+    // run here, we will reuse this page
+
     // remove node from update_list
     flst_remove(fsm_header + UNDO_FSM_UPDATE_LIST, node + UNDO_FSM_FLST_NODE, mtr);
-
     // add node to used_list
     flst_add_first(fsm_header + UNDO_FSM_USED_LIST, node + UNDO_FSM_FLST_NODE, mtr);
 

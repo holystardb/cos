@@ -21,12 +21,13 @@ extern "C" {
 
 #define LOG_LEVEL_NONE            0
 #define LOG_LEVEL_CRITICAL        7   // include fatal, error, warn
-#define LOG_LEVEL_DEFAULT         15  // include fatal, error, warn, notice
+#define LOG_LEVEL_DEFAULT         31  // include fatal, error, warn, notice
 #define LOG_LEVEL_ALL             255
 
 // log module
 enum log_module_id_t {
-    LOG_MODULE_COMMON = 0,
+    LOG_MODULE_ALL = 0,
+    LOG_MODULE_COMMON,
     LOG_MODULE_DBUG,
     LOG_MODULE_GUC,
     LOG_MODULE_SECUREC,
@@ -110,6 +111,9 @@ enum log_module_id_t {
     LOG_MODULE_END = 1024
 };
 
+#define LOG_MODULE_ALL             1023
+
+
 //
 #define LOG_WRITE_BUFFER_SIZE      1023
 
@@ -118,8 +122,8 @@ public:
     log_info();
 
     bool32 log_init(uint32 level, char *log_path, char *file_name, bool32 batch_flush = FALSE);
-    void log_to_stderr(char* log_level_desc, uint32 module_id, const char *fmt, ...);
-    void log_to_file(char* log_level_desc, uint32 module_id, const char *fmt, ...);
+    void log_to_stderr(const char* log_level_desc, uint32 module_id, const char *fmt, ...);
+    void log_to_file(const char* log_level_desc, uint32 module_id, const char *fmt, ...);
     void log_file_flush();
     void coredump_to_file(char **symbol_strings, int len_symbols);
 
@@ -140,17 +144,16 @@ public:
     }
 
     void set_module_log_level(uint32 module_id, uint32 level) {
-        ut_a(module_id >= 0 && module_id < LOG_MODULE_END);
+        ut_ad(module_id > 0 && module_id < LOG_MODULE_END);
         modules_log_level[module_id] = level;
     }
 
     uint32 get_module_log_level(uint32 module_id) {
-        ut_a(module_id >= 0 && module_id < LOG_MODULE_END);
+        ut_ad(module_id >=0 && module_id < LOG_MODULE_END);
         return modules_log_level[module_id];
     }
 
-    uint32 is_print_module_log(uint32 module_id, uint32 level) {
-        ut_a(module_id >= 0 && module_id < LOG_MODULE_END);
+    bool32 is_print_module_log(uint32 module_id, uint32 level) {
         return modules_log_level[module_id] & level;
     }
 
@@ -160,7 +163,7 @@ private:
 private:
     char      write_buffer[LOG_WRITE_BUFFER_SIZE+1];
     uint32    write_pos;
-    bool32    write_to_buffer_flag;
+    volatile bool32    write_to_buffer_flag;
     uint64    log_file_size;
     uint32    log_file_create_time;
     bool32    is_print_stderr;
