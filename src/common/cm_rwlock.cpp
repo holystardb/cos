@@ -7,9 +7,9 @@
 #define SYNC_SPIN_ROUNDS         30
 #define SYNC_SPIN_WAIT_DELAY     6
 
-static rw_lock_sync_mgr_t   rw_lock_sync_mgr;
-static rw_lock_stats_t      rw_lock_stats;
-static bool32               sync_initialized = FALSE;
+rw_lock_sync_mgr_t   rw_lock_sync_mgr;
+rw_lock_stats_t      rw_lock_stats;
+static bool32        sync_initialized = FALSE;
 
 rw_lock_sync_mgr_t::rw_lock_sync_mgr_t()
 {
@@ -20,7 +20,7 @@ rw_lock_sync_mgr_t::rw_lock_sync_mgr_t()
         UT_LIST_INIT(m_sync_wait_array[i].free_sync_cell_list);
         mutex_create(&m_sync_wait_array[i].free_sync_cell_list_mutex);
         mutex_create(&m_sync_wait_array[i].sync_cell_mutex);
-        memset(&m_sync_wait_array[i].free_sync_cell_list_mutex_stats, 0x00, sizeof(mutex_stats_t));
+        //memset(&m_sync_wait_array[i].free_sync_cell_list_mutex_stats, 0x00, sizeof(mutex_stats_t));
     }
 
     os_mutex_create(&m_rw_lock_debug_mutex);
@@ -326,7 +326,7 @@ void sync_array_t::free_sync_cell(sync_cell_t* sync_cell)
 
 #ifdef UNIV_DEBUG
 
-inline bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type)
+bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type)
 {
     ut_ad(lock);
     ut_ad(rw_lock_validate(lock));
@@ -438,26 +438,7 @@ static void sync_array_wait_event(sync_array_t *arr, sync_cell_t*& cell)
     sync_array_free_cell(arr, cell);
 }
 
-/* Checks that the rw-lock has been initialized and that there are no simultaneous shared and exclusive locks. */
-inline bool32 rw_lock_validate(const rw_lock_t *lock)
-{
-    uint32 waiters;
-    int32 lock_word;
-
-    ut_ad(lock);
-
-    waiters = lock->waiters;
-    lock_word = lock->lock_word;
-
-    ut_ad(lock->magic_n == RW_LOCK_MAGIC_N);
-    ut_ad(waiters == 0 || waiters == 1);
-    ut_ad(lock_word > -(2 * X_LOCK_DECR));
-    ut_ad(lock_word <= X_LOCK_DECR);
-
-    return TRUE;
-}
-
-inline void rw_lock_create_func(
+void rw_lock_create_func(
     rw_lock_t    *lock, /*!< in: pointer to memory */
     //uint32        level,
     const char   *cfile_name,  /*!< in: file name where created */
@@ -494,7 +475,7 @@ inline void rw_lock_create_func(
 }
 
 
-inline void rw_lock_destroy_func(rw_lock_t *lock)
+void rw_lock_destroy_func(rw_lock_t *lock)
 {
     os_rmb;
     ut_ad(rw_lock_validate(lock));
@@ -507,56 +488,7 @@ inline void rw_lock_destroy_func(rw_lock_t *lock)
     //spin_unlock(&rw_lock_list_lock);
 }
 
-inline bool32 rw_lock_lock_word_decr(rw_lock_t *lock, uint32 amount)
-{
-    os_rmb;
-    int32 local_lock_word = lock->lock_word;
-    while (local_lock_word > 0) {
-        if (atomic32_compare_and_swap(&lock->lock_word, local_lock_word, local_lock_word - amount)) {
-            return TRUE;
-        }
-        local_lock_word = lock->lock_word;
-    }
-    return FALSE;
-}
-
-inline int32 rw_lock_lock_word_incr(rw_lock_t *lock, uint32 amount)
-{
-    return(atomic32_add(&lock->lock_word, amount));
-}
-
-inline bool32 rw_lock_s_lock_low(
-    rw_lock_t  *lock, /*!< in: pointer to rw-lock */
-    uint32      pass, /*!< in: pass value; != 0, if the lock will be passed to another thread to unlock */
-    const char *file_name, /*!< in: file name where lock requested */
-    uint32      line) /*!< in: line where requested */
-{
-    if (!rw_lock_lock_word_decr(lock, 1)) {
-        /* Locking did not succeed */
-        return FALSE;
-    }
-
-    ut_d(rw_lock_sync_mgr.add_rwlock_debug_info(lock, pass, RW_LOCK_SHARED, file_name, line));
-
-    /* These debugging values are not set safely: they may be incorrect
-    or even refer to a line that is invalid for the file name. */
-    lock->last_s_file_name = file_name;
-    lock->last_s_line = line;
-
-    return(TRUE);	/* locking succeeded */
-}
-
-inline void rw_lock_set_waiter_flag(rw_lock_t *lock)
-{
-    (void)atomic32_compare_and_swap(&lock->waiters, 0, 1);
-}
-
-inline void rw_lock_reset_waiter_flag(rw_lock_t *lock)
-{
-    (void) atomic32_compare_and_swap(&lock->waiters, 1, 0);
-}
-
-inline void rw_lock_s_lock_spin(
+void rw_lock_s_lock_spin(
     rw_lock_t   *lock, /*!< in: pointer to rw-lock */
     uint32       pass, /*!< in: pass value; != 0, if the lock will be passed to another thread to unlock */
     const char  *file_name, /*!< in: file name where lock requested */
@@ -625,61 +557,8 @@ lock_loop:
     }
 }
 
-inline void rw_lock_s_lock_func(
-    rw_lock_t  *lock, /*!< in: pointer to rw-lock */
-    uint32      pass, /*!< in: pass value; != 0, if the lock will be passed to another thread to unlock */
-    const char *file_name,/*!< in: file name where lock requested */
-    uint32      line) /*!< in: line where requested */
-{
-    ut_ad(!rw_lock_own(lock, RW_LOCK_SHARED));
-    ut_ad(!rw_lock_own(lock, RW_LOCK_EXCLUSIVE));
 
-    if (!rw_lock_s_lock_low(lock, pass, file_name, line)) {
-        /* Did not succeed, try spin wait */
-        rw_lock_s_lock_spin(lock, pass, file_name, line);
-    }
-}
 
-inline void rw_lock_s_unlock_func(
-    uint32      pass, /*!< in: pass value; != 0, if the lock may have been passed to another thread to unlock */
-    rw_lock_t  *lock) /*!< in/out: rw-lock */
-{
-    ut_ad(lock->lock_word > -X_LOCK_DECR);
-    ut_ad(lock->lock_word != 0);
-    ut_ad(lock->lock_word < X_LOCK_DECR);
-
-    ut_d(rw_lock_sync_mgr.remove_rwlock_debug_info(lock, pass, RW_LOCK_SHARED));
-
-    /* Increment lock_word to indicate 1 less reader */
-    if (rw_lock_lock_word_incr(lock, 1) == 0) {
-        /* wait_ex waiter exists. It may not be asleep, but we signal
-        anyway. We do not wake other waiters, because they can't
-        exist without wait_ex waiter and wait_ex waiter goes first.*/
-        os_event_set(lock->wait_ex_event);
-    }
-
-    ut_ad(rw_lock_validate(lock));
-}
-
-inline void rw_lock_set_writer_id_and_recursion_flag(
-    rw_lock_t *lock,  /*!< in/out: lock to work on */
-    bool32     recursive)  /*!< in: TRUE if recursion allowed */
-{
-    os_thread_id_t curr_thread = os_thread_get_curr_id();
-    os_thread_id_t local_thread;
-    bool32 success;
-
-    /* Prevent Valgrind warnings about writer_thread being
-    uninitialized.  It does not matter if writer_thread is
-    uninitialized, because we are comparing writer_thread against
-    itself, and the operation should always succeed. */
-    //UNIV_MEM_VALID(&lock->writer_thread, sizeof lock->writer_thread);
-
-    local_thread = lock->writer_thread_id;
-    success = atomic32_compare_and_swap(&lock->writer_thread_id, local_thread, curr_thread);
-    ut_a(success);
-    lock->recursive = recursive;
-}
 
 inline void rw_lock_x_lock_wait(
     rw_lock_t   *lock, /*!< in: pointer to rw-lock */
@@ -783,7 +662,7 @@ inline bool32 rw_lock_x_lock_low(
     return TRUE;
 }
 
-inline void rw_lock_x_lock_func(
+void rw_lock_x_lock_func(
 	rw_lock_t  *lock, /*!< in: pointer to rw-lock */
 	uint32      pass, /*!< in: pass value; != 0, if the lock will be passed to another thread to unlock */
 	const char *file_name,/*!< in: file name where lock requested */
@@ -857,7 +736,7 @@ lock_loop:
     goto lock_loop;
 }
 
-inline bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line)
+bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line)
 {
     os_thread_id_t curr_thread = os_thread_get_curr_id();
     bool32 success = atomic32_compare_and_swap(&lock->lock_word, X_LOCK_DECR, 0);
@@ -886,7 +765,7 @@ inline bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name,
     return TRUE;
 }
 
-inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock)
+void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock)
 {
     ut_ad(lock->lock_word == 0 || lock->lock_word <= -X_LOCK_DECR);
 
@@ -921,49 +800,6 @@ inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock)
     }
 
     ut_ad(rw_lock_validate(lock));
-}
-
-uint32 rw_lock_get_writer(const rw_lock_t *lock)
-{
-    int32 lock_word = lock->lock_word;
-    ut_ad(lock_word <= X_LOCK_DECR);
-
-    if (lock_word > 0) {
-        /* return NOT_LOCKED in s-lock state, like the writer
-           member of the old lock implementation. */
-        return(RW_LOCK_NOT_LOCKED);
-    } else if (lock_word == 0 || lock_word <= -X_LOCK_DECR) {
-        return(RW_LOCK_EXCLUSIVE);
-    } else {
-        ut_ad(lock_word > -X_LOCK_DECR);
-        return(RW_LOCK_WAIT_EXCLUSIVE);
-    }
-}
-
-inline uint32 rw_lock_get_reader_count(const rw_lock_t *lock)
-{
-    int32 lock_word = lock->lock_word;
-    if (lock_word > 0) {
-        /* s-locked, no x-waiters */
-        return(X_LOCK_DECR - lock_word);
-    } else if (lock_word < 0 && lock_word > -X_LOCK_DECR) {
-        /* s-locked, with x-waiters */
-        return((uint32)(-lock_word));
-    }
-    return(0);
-}
-
-// Returns the value of writer_count for the lock.
-// Does not reserve the lock mutex,
-// so the caller must be sure it is not changed during the call.
-// return value of writer_count
-inline uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock)
-{
-    int32 lock_copy = lock->lock_word;
-    if ((lock_copy != 0) && (lock_copy > -X_LOCK_DECR)) {
-        return(0);
-    }
-    return((lock_copy == 0) ? 1 : (2 - (lock_copy + X_LOCK_DECR)));
 }
 
 status_t sync_init(memory_pool_t* pool)

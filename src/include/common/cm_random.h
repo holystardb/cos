@@ -2,6 +2,7 @@
 #define _CM_RANDOM_H
 
 #include "cm_type.h"
+#include "cm_dbug.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +18,7 @@ extern inline uint32 ut_fold_string(const char* str);
 
 #define ut_fold_uint64(d) ((uint32)d & 0xFFFFFFFF, (uint32)(d >> 32))
 
-
+#include "cm_random.ic"
 #ifdef __cplusplus
 }
 #endif

@@ -1,35 +1,14 @@
 #include "cm_thread.h"
 #include "cm_mutex.h"
 
-static THREAD_LOCAL uint64 g_thread_internal_id = 0;
-static atomic64_t          g_thread_internal_index = 0;
+THREAD_LOCAL uint64    g_thread_internal_id = 0;
+static atomic64_t      g_thread_internal_index = 0;
 
-
-#define THD_NAME_LEN     64
-
-typedef struct st_thr_identifier {
-    char    name[THD_NAME_LEN];
-} thr_identifier_t;
-
-/*Returns the thread identifier of current thread. */
-inline os_thread_id_t os_thread_get_curr_id(void)
-{
-#ifdef __WIN__
-    return GetCurrentThreadId();
-#else
-    pthread_t    pthr;
-    pthr = pthread_self();
-    /* TODO: in the future we have to change os_thread_id to pthread_t;
-       the following cast may work in a wrong way on some systems if pthread_t is a struct;
-       this is just a quick fix for HP-UX to eliminate a compiler warning */
-    return (os_thread_id_t)pthread_self();
-#endif
-}
 
 os_thread_t os_thread_create(
     void*               (*start_f)(void*), /* in: pointer to function from which to start */
     void*               arg,        /* in: argument to start function */
-    os_thread_id_t     *thread_id)  /* out: id of created	thread */	
+    os_thread_id_t     *thread_id)  /* out: id of created thread */
 {
 #ifdef __WIN__
     os_thread_t thread;
@@ -66,7 +45,7 @@ void os_thread_exit(void* exit_value)
 #endif
 }
 
-inline bool32 os_thread_join(os_thread_t thread)
+bool32 os_thread_join(os_thread_t thread)
 {
     bool32 result = TRUE;
 
@@ -89,50 +68,12 @@ inline bool32 os_thread_join(os_thread_t thread)
             break;
     }
 #else
-    if(pthread_join(thread, NULL) != 0)
-    {
+    if(pthread_join(thread, NULL) != 0) {
         result = FALSE;
     }
 #endif
 
     return result;
-}
-
-inline bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b)
-{
-#ifdef __WIN__
-    if (a == b) {
-        return(TRUE);
-    }
-
-    return(FALSE);
-#else
-    if (pthread_equal(a, b)) {
-        return(TRUE);
-    }
-
-    return(FALSE);
-#endif
-}
-
-
-inline bool32 os_thread_is_valid(os_thread_t thread)
-{
-#ifdef __WIN__
-    return (thread == NULL) ? FALSE : TRUE;
-#else
-    return (thread == 0) ? FALSE : TRUE;
-#endif
-}
-
-/*Returns handle to the current thread. */
-inline os_thread_t os_thread_get_curr(void)
-{
-#ifdef __WIN__
-    return GetCurrentThread();
-#else
-    return pthread_self();
-#endif
 }
 
 /*Advises the os to give up remainder of the thread's time slice. */
@@ -175,25 +116,8 @@ uint64 os_thread_delay(uint64 delay)
     return(j);
 }
 
-/*Gets the last operating system error code for the calling thread. */
-inline uint32 os_thread_get_last_error(void)
-{
-#ifdef __WIN__
-    return GetLastError();
-#else
-    return errno;
-#endif
-}
-
-inline uint64 os_thread_get_internal_id()
-{
-    if (unlikely(g_thread_internal_id == 0)) {
-        os_thread_set_internal_id();
-    }
-    return g_thread_internal_id;
-}
-
-inline void os_thread_set_internal_id()
+void os_thread_set_internal_id()
 {
     g_thread_internal_id = atomic64_inc(&g_thread_internal_index);
 }
+

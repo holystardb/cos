@@ -14,7 +14,7 @@ typedef struct st_source_location {
 typedef struct st_error_info_t {
     int32       code;
     uint32      line;
-    char*       file;
+    const char* file;
     source_location_t loc;
     char        message[ERROR_INFO_MSG_LENGTH];
     bool8       is_ignored;

@@ -357,7 +357,7 @@ bool32 os_file_set_eof(os_file_t file)
 #endif /* __WIN__ */
 }
 
-inline void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size)
+void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size)
 {
     if (err == OS_FILE_NOT_FOUND) {
         sprintf_s(desc, size, "OS_FILE_NOT_FOUND");
@@ -386,7 +386,7 @@ inline void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size)
     }
 }
 
-inline void os_file_get_last_error_desc(char *desc, uint32 size)
+void os_file_get_last_error_desc(char *desc, uint32 size)
 {
     int32 err = os_file_get_last_error();
     os_file_get_error_desc_by_err(err, desc, size);
@@ -781,7 +781,7 @@ loop:
     return slot;
 }
 
-inline void os_aio_context_free_slot(os_aio_slot_t* slot)
+void os_aio_context_free_slot(os_aio_slot_t* slot)
 {
     uint32 len;
 
@@ -989,7 +989,7 @@ static bool32 os_aio_linux_submit(os_aio_context_t* context, os_aio_slot_t* slot
 
 #endif
 
-inline os_aio_slot_t* os_file_aio_submit(
+os_aio_slot_t* os_file_aio_submit(
     os_aio_context_t* context,
     uint32            type,     /* in: OS_FILE_READ or OS_FILE_WRITE */
     const char*       name,     /* in: name of the file or path as a null-terminated string */
@@ -1056,7 +1056,7 @@ inline os_aio_slot_t* os_file_aio_submit(
 
 
 // Waits for an aio operation to complete.
-inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us)
+int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us)
 {
     int32 ret;
 
@@ -1074,7 +1074,7 @@ inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us)
 }
 
 // Waits for an aio operation to complete.
-inline int32 os_file_aio_context_wait(os_aio_context_t* context, os_aio_slot_t** slot, uint64 timeout_us)
+int32 os_file_aio_context_wait(os_aio_context_t* context, os_aio_slot_t** slot, uint64 timeout_us)
 {
     int32 ret;
 
@@ -1095,7 +1095,7 @@ inline int32 os_file_aio_context_wait(os_aio_context_t* context, os_aio_slot_t**
     return OS_FILE_IO_COMPLETION;
 }
 
-inline os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array)
+os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array)
 {
     uint64            signal_count = 0;
     os_aio_context_t *ctx;
@@ -1120,7 +1120,7 @@ retry:
     return ctx;
 }
 
-inline void os_aio_array_free_context(os_aio_context_t* context)
+void os_aio_array_free_context(os_aio_context_t* context)
 {
     uint32 len;
     os_aio_array_t* array = context->array;
@@ -1137,7 +1137,7 @@ inline void os_aio_array_free_context(os_aio_context_t* context)
     }
 }
 
-inline os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index)
+os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index)
 {
     ut_a(index < array->context_count);
 

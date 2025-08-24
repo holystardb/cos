@@ -5,7 +5,7 @@
 *                                     os muetx                                                 *
 ***********************************************************************************************/
 
-os_event_t os_event_create(char* name)
+os_event_t os_event_create(const char* name)
 {
 #ifdef _WIN32
     HANDLE event;

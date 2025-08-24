@@ -1,0 +1,63 @@
+
+/*Returns the thread identifier of current thread. */
+inline os_thread_id_t os_thread_get_curr_id(void)
+{
+#ifdef __WIN__
+    return GetCurrentThreadId();
+#else
+    return (os_thread_id_t)pthread_self();
+#endif
+}
+
+inline bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b)
+{
+#ifdef __WIN__
+    if (a == b) {
+        return(TRUE);
+    }
+    return(FALSE);
+#else
+    if (pthread_equal(a, b)) {
+        return(TRUE);
+    }
+    return(FALSE);
+#endif
+}
+
+inline bool32 os_thread_is_valid(os_thread_t thread)
+{
+#ifdef __WIN__
+    return (thread == NULL) ? FALSE : TRUE;
+#else
+    return (thread == 0) ? FALSE : TRUE;
+#endif
+}
+
+/*Returns handle to the current thread. */
+inline os_thread_t os_thread_get_curr(void)
+{
+#ifdef __WIN__
+    return GetCurrentThread();
+#else
+    return pthread_self();
+#endif
+}
+
+/*Gets the last operating system error code for the calling thread. */
+inline uint32 os_thread_get_last_error(void)
+{
+#ifdef __WIN__
+    return GetLastError();
+#else
+    return errno;
+#endif
+}
+
+inline uint64 os_thread_get_internal_id()
+{
+    if (unlikely(g_thread_internal_id == 0)) {
+        os_thread_set_internal_id();
+    }
+    return g_thread_internal_id;
+}
+

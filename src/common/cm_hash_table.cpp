@@ -250,7 +250,7 @@ static inline void hash_table_free_element(hash_table_t* table, hash_table_eleme
     mutex_exit(&table->free_element_mutex[free_list_id]);
 }
 
-inline status_t hash_table_insert(hash_table_t* table, void* key, void* data)
+status_t hash_table_insert(hash_table_t* table, void* key, void* data)
 {
     uint32 hash_value;
     bool32 is_need_expand;
@@ -318,7 +318,7 @@ inline status_t hash_table_insert(hash_table_t* table, void* key, void* data)
     return CM_SUCCESS;
 }
 
-inline void* hash_table_delete(hash_table_t* table, void* key, bool32* is_found)
+void* hash_table_delete(hash_table_t* table, void* key, bool32* is_found)
 {
     hash_table_element_t *element, *prev_element = NULL;
     uint32 hash_value;
@@ -369,7 +369,7 @@ inline void* hash_table_delete(hash_table_t* table, void* key, bool32* is_found)
     return data;
 }
 
-inline void* hash_table_search(hash_table_t* table, const void* key, bool32* is_found)
+void* hash_table_search(hash_table_t* table, const void* key, bool32* is_found)
 {
     uint32 hash_value;
     rw_lock_t* bucket_rwlock;

@@ -2,6 +2,7 @@
 #define _CM_UTIL_H
 
 #include "cm_type.h"
+#include "cm_dbug.h"
 
 /* Bug in developerstudio: use the C version */
 #if defined(__cplusplus) && !defined(__SUNPRO_CC)
@@ -631,13 +632,15 @@ extern inline longlong sint8korr(const uchar *A)
 #ifdef __WIN__
 #define strcasecmp      _stricmp
 #define strncasecmp     _strnicmp
-#endif
-
-#ifdef __WIN__
-
-#define strtok_r strtok_s
+#define strtok_r        strtok_s
 
 #endif
+
+
+
+
+
+#include "cm_util.ic"
 
 #ifdef __cplusplus
 }

@@ -4,6 +4,8 @@
 #include "cm_log.h"
 #include "cm_util.h"
 #include "cm_error.h"
+#include "securec.h"
+
 
 #define INVALID_SWAP_PAGE_ID                 (uint64)-1
 #define VM_GET_OFFSET_BY_SWAP_PAGE_ID(id)    ((id & 0xFFFFFFFF) * pool->page_size)
@@ -563,13 +565,13 @@ retry:
     return NULL;
 }
 
-inline vm_ctrl_t* vm_alloc(vm_pool_t *pool)
+vm_ctrl_t* vm_alloc(vm_pool_t *pool)
 {
     uint64 owner_list_id = os_thread_get_internal_id();
     return vm_alloc_low(pool, owner_list_id);
 }
 
-static inline void vm_lock_ctrl_for_free(vm_ctrl_t* ctrl)
+static void vm_lock_ctrl_for_free(vm_ctrl_t* ctrl)
 {
     for (;;) {
         mutex_enter(&ctrl->mutex, NULL);
@@ -581,7 +583,7 @@ static inline void vm_lock_ctrl_for_free(vm_ctrl_t* ctrl)
     }
 }
 
-inline bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl)
+bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl)
 {
     uint64     swap_page_id;
     vm_page_t *page;
@@ -610,7 +612,7 @@ inline bool32 vm_free(vm_pool_t *pool, vm_ctrl_t *ctrl)
     DBUG_RETURN(TRUE);
 }
 
-static inline vm_page_t* vm_swap_out_page(vm_pool_t *pool)
+static vm_page_t* vm_swap_out_page(vm_pool_t *pool)
 {
     DBUG_ENTER("vm_swap_out_page");
 
@@ -646,7 +648,7 @@ static inline vm_page_t* vm_swap_out_page(vm_pool_t *pool)
     DBUG_RETURN(page);
 }
 
-static inline vm_page_t* vm_alloc_page(vm_pool_t *pool)
+static vm_page_t* vm_alloc_page(vm_pool_t *pool)
 {
     vm_page_t *page;
 
@@ -660,7 +662,7 @@ static inline vm_page_t* vm_alloc_page(vm_pool_t *pool)
     DBUG_RETURN(page);
 }
 
-static inline void vm_lock_ctrl_for_open_close(vm_ctrl_t* ctrl)
+static void vm_lock_ctrl_for_open_close(vm_ctrl_t* ctrl)
 {
     for (;;) {
         mutex_enter(&ctrl->mutex, NULL);
@@ -672,7 +674,7 @@ static inline void vm_lock_ctrl_for_open_close(vm_ctrl_t* ctrl)
     }
 }
 
-inline bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl)
+bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl)
 {
     vm_page_t *page = NULL;
 
@@ -755,7 +757,7 @@ inline bool32 vm_open(vm_pool_t *pool, vm_ctrl_t* ctrl)
     DBUG_RETURN(FALSE);
 }
 
-inline bool32 vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl)
+bool32 vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl)
 {
     bool32 is_need_add_closed_list = FALSE;
 
@@ -775,7 +777,7 @@ inline bool32 vm_close(vm_pool_t *pool, vm_ctrl_t *ctrl)
     return TRUE;
 }
 
-static inline void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_page_id)
+static void vm_file_free_page(vm_pool_t *pool, vm_file_t *vm_file, uint64 swap_page_id)
 {
     vm_ctrl_t      *ctrl;
     vm_page_slot_t *slot;

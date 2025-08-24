@@ -211,45 +211,55 @@ private:
 extern status_t sync_init(memory_pool_t* pool);
 extern void sync_close(void);
 
-extern inline void rw_lock_create_func(rw_lock_t *lock, const char *cfile_name, uint32 cline);
-extern inline void rw_lock_destroy_func(rw_lock_t *lock);
+extern void rw_lock_create_func(rw_lock_t *lock, const char *cfile_name, uint32 cline);
+extern void rw_lock_destroy_func(rw_lock_t *lock);
 
 extern inline void rw_lock_s_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
 extern inline void rw_lock_s_unlock_func(uint32 pass, rw_lock_t *lock);
 extern inline bool32 rw_lock_s_lock_low(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
 
-extern inline void rw_lock_x_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
-extern inline void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock);
-extern inline bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line);
+extern void rw_lock_x_lock_func(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
+extern void rw_lock_x_unlock_func(uint32 pass, rw_lock_t *lock);
+extern bool32 rw_lock_x_lock_func_nowait(rw_lock_t *lock, const char* file_name, uint32 line);
 
 extern inline bool32 rw_lock_validate(const rw_lock_t *lock);
 #ifdef UNIV_DEBUG
-extern inline bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type);
+extern bool32 rw_lock_own(rw_lock_t *lock, uint32 lock_type);
 #endif
 
 extern inline uint32 rw_lock_get_reader_count(const rw_lock_t *lock);
 extern inline uint32 rw_lock_get_x_lock_count(const rw_lock_t *lock);
+extern inline uint32 rw_lock_get_writer(const rw_lock_t *lock);
+extern inline void rw_lock_set_waiter_flag(rw_lock_t *lock);
+extern inline void rw_lock_reset_waiter_flag(rw_lock_t *lock);
+extern inline void rw_lock_set_writer_id_and_recursion_flag(rw_lock_t *lock, bool32 recursive);
+extern void rw_lock_s_lock_spin(rw_lock_t *lock, uint32 pass, const char *file_name, uint32 line);
+extern inline bool32 rw_lock_lock_word_decr(rw_lock_t *lock, uint32 amount);
+extern inline int32 rw_lock_lock_word_incr(rw_lock_t *lock, uint32 amount);
 
+extern rw_lock_sync_mgr_t   rw_lock_sync_mgr;
+extern rw_lock_stats_t      rw_lock_stats;
 
-#define rw_lock_create(M) rw_lock_create_func((M), __FILE__, __LINE__)
-#define rw_lock_destroy(M) rw_lock_destroy_func((M))
-
-#define rw_lock_s_lock(M) rw_lock_s_lock_func((M), 0, __FILE__, __LINE__)
-#define rw_lock_s_lock_gen(M, P) rw_lock_s_lock_func((M), (P), __FILE__, __LINE__)
-#define rw_lock_s_lock_nowait(M, F, L) rw_lock_s_lock_low((M), 0, (F), (L))
-#define rw_lock_s_unlock(M) rw_lock_s_unlock_func(0, M)
-#define rw_lock_s_unlock_gen(M, P) rw_lock_s_unlock_func((P), (M))
-
-#define rw_lock_x_lock(M) rw_lock_x_lock_func((M), 0, __FILE__, __LINE__)
-#define rw_lock_x_lock_gen(M, P) rw_lock_x_lock_func((M), (P), __FILE__, __LINE__)
-#define rw_lock_x_lock_nowait(M) rw_lock_x_lock_func_nowait((M), __FILE__, __LINE__)
-#define rw_lock_x_unlock(M) rw_lock_x_unlock_func(0, M)
-#define rw_lock_x_unlock_gen(M, P) rw_lock_x_unlock_func((P), (M))
-
-
+#include "cm_rwlock.ic"
 #ifdef __cplusplus
 }
 #endif
+
+#define rw_lock_create(M)          rw_lock_create_func((M), __FILE__, __LINE__)
+#define rw_lock_destroy(M)         rw_lock_destroy_func((M))
+
+#define rw_lock_s_lock(M)          rw_lock_s_lock_func((M), 0, __FILE__, __LINE__)
+#define rw_lock_s_lock_gen(M, P)   rw_lock_s_lock_func((M), (P), __FILE__, __LINE__)
+#define rw_lock_s_lock_nowait(M)   rw_lock_s_lock_low((M), 0, __FILE__, __LINE__)
+#define rw_lock_s_unlock(M)        rw_lock_s_unlock_func(0, M)
+#define rw_lock_s_unlock_gen(M, P) rw_lock_s_unlock_func((P), (M))
+
+#define rw_lock_x_lock(M)          rw_lock_x_lock_func((M), 0, __FILE__, __LINE__)
+#define rw_lock_x_lock_gen(M, P)   rw_lock_x_lock_func((M), (P), __FILE__, __LINE__)
+#define rw_lock_x_lock_nowait(M)   rw_lock_x_lock_func_nowait((M), __FILE__, __LINE__)
+#define rw_lock_x_unlock(M)        rw_lock_x_unlock_func(0, M)
+#define rw_lock_x_unlock_gen(M, P) rw_lock_x_unlock_func((P), (M))
+
 
 #endif  /* _CM_RWLOCK_H */
 

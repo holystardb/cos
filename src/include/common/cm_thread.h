@@ -68,7 +68,7 @@ inline void* os_get_thread_local(os_thread_local_key_t key)
 #endif
 }
 
-inline int os_set_thread_local(os_thread_local_key_t key,         void *value)
+inline int os_set_thread_local(os_thread_local_key_t key, void *value)
 {
 #ifdef __WIN__
     return !TlsSetValue(key, value);
@@ -83,7 +83,7 @@ extern os_thread_t os_thread_create(
     os_thread_id_t*  thread_id);    // out: id of created thread
 extern void os_thread_exit(void* exit_value);
 
-extern inline bool32 os_thread_join(os_thread_t thread);
+extern bool32 os_thread_join(os_thread_t thread);
 extern inline bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b);
 extern inline bool32 os_thread_is_valid(os_thread_t thread);
 extern inline os_thread_id_t os_thread_get_curr_id(void);
@@ -94,8 +94,11 @@ extern void os_thread_yield(void);
 extern void os_thread_sleep(unsigned int microseconds);
 extern uint64 os_thread_delay(uint64 delay);
 
-extern inline void os_thread_set_internal_id();
+extern void os_thread_set_internal_id();
 extern inline uint64 os_thread_get_internal_id();
+
+extern THREAD_LOCAL uint64 g_thread_internal_id;
+#include "cm_thread.ic"
 
 #ifdef __cplusplus
 }
@@ -159,7 +162,6 @@ os_thread_t thread_start(Function&& func, Args&&... args)
 
     return thd;
 }
-
 
 #endif  /* _CM_THREAD_H */
 

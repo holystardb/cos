@@ -67,7 +67,7 @@ extern bool32 os_chmod_file(os_file_t file, uint32 perm);
 extern bool32 os_truncate_file(os_file_t file, uint64 offset);
 extern int32 os_file_get_last_error();
 extern void os_file_get_last_error_desc(char *desc, uint32 size);
-extern inline void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size);
+extern void os_file_get_error_desc_by_err(int32 err, char *desc, uint32 size);
 extern bool32 os_file_handle_error(const char *name, const char* operation, bool32 should_exit);
 extern bool32 os_file_get_size(os_file_t file, uint64 *size);
 extern bool32 os_file_extend(char *file_name, os_file_t file, uint64 extend_size);
@@ -157,13 +157,13 @@ typedef struct st_os_aio_array {
 extern os_aio_array_t* os_aio_array_create(uint32 io_pending_count_per_context, uint32 io_context_count);
 extern void os_aio_array_free(os_aio_array_t* array);
 
-extern inline os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array);
-extern inline void os_aio_array_free_context(os_aio_context_t* context);
-extern inline os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index);
+extern os_aio_context_t* os_aio_array_alloc_context(os_aio_array_t* array);
+extern void os_aio_array_free_context(os_aio_context_t* context);
+extern os_aio_context_t* os_aio_array_get_nth_context(os_aio_array_t* array, uint32 index);
 
-extern inline void os_aio_context_free_slot(os_aio_slot_t* slot);
+extern void os_aio_context_free_slot(os_aio_slot_t* slot);
 
-extern inline os_aio_slot_t* os_file_aio_submit(
+extern os_aio_slot_t* os_file_aio_submit(
     os_aio_context_t* context,
     uint32            type,      /* in: OS_FILE_READ or OS_FILE_WRITE */
     const char*       name,      /* in: name of the file or path as a null-terminated string */
@@ -175,10 +175,10 @@ extern inline os_aio_slot_t* os_file_aio_submit(
     void*             message1 = NULL,  /* in: message to be passed along with the aio operation */
     void*             message2 = NULL); /* in: message to be passed along with the aio operation */
 
-extern inline int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us);
+extern int32 os_file_aio_slot_wait(os_aio_slot_t* slot, uint32 timeout_us);
 
 //Waits for an aio operation to complete.
-extern inline int32 os_file_aio_context_wait(os_aio_context_t* context,
+extern int32 os_file_aio_context_wait(os_aio_context_t* context,
     os_aio_slot_t** slot, uint64 timeout_us = OS_WAIT_INFINITE_TIME);
 
 #ifndef __WIN__

@@ -38,7 +38,7 @@ struct os_event_struct {
 typedef struct os_event_struct*  os_event_t;
 #endif
 
-os_event_t os_event_create(char* name);
+os_event_t os_event_create(const char* name);
 void os_event_set(os_event_t event);
 void os_event_set_signal(os_event_t event);
 uint64 os_event_reset(os_event_t event);

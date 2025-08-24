@@ -87,13 +87,13 @@ typedef struct st_hash_table {
 extern status_t hash_table_create(hash_table_t* table, uint32 bucket_count, hash_table_ctrl_t* info);
 extern void hash_table_destroy(hash_table_t* table);
 
-extern inline status_t hash_table_insert(hash_table_t* table, void* key, void* data);
+extern status_t hash_table_insert(hash_table_t* table, void* key, void* data);
 
 // Only delete the mapping relationship within HASHTABLE,
 // the memory of key and data needs to be freed by the caller themselves.
-extern inline void* hash_table_delete(hash_table_t* table, void* key, bool32* is_found);
+extern void* hash_table_delete(hash_table_t* table, void* key, bool32* is_found);
 
-extern inline void* hash_table_search(hash_table_t* table, const void* key, bool32* is_found);
+extern void* hash_table_search(hash_table_t* table, const void* key, bool32* is_found);
 
 #ifdef __cplusplus
 }

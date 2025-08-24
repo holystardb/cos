@@ -125,6 +125,7 @@ bool32 log_info::create_log_file()
         return FALSE;
     }
 
+#ifdef __WIN__
     DWORD           offset_low; /* least significant 32 bits of file offset where to read */
     LONG            offset_high; /* most significant 32 bits of offset */
     DWORD           ret2;
@@ -132,7 +133,6 @@ bool32 log_info::create_log_file()
     offset_low = (log_file_size & 0xFFFFFFFF);
     offset_high = (log_file_size >> 32);
 
-#ifdef __WIN__
     ret2 = SetFilePointer(log_handle, offset_low, &offset_high, FILE_BEGIN);
     if (ret2 == 0xFFFFFFFF && GetLastError() != NO_ERROR) {
         return FALSE;
@@ -144,11 +144,11 @@ bool32 log_info::create_log_file()
 
 void log_info::log_to_file(const char* log_level_desc, uint32 module_id, const char *fmt, ...)
 {
-    int             len, write_size = 0;
+    int             len = 0;
     va_list         ap;
     date_clock_t    clock;
     char            errbuf[LOG_WRITE_BUFFER_SIZE+1];
-    bool32          need_retry = TRUE, need_flush = FALSE;
+    bool32          need_flush = FALSE;
 
     va_start(ap, fmt);
     len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
@@ -169,7 +169,7 @@ retry:
 
     current_clock(&clock);
     write_pos = snprintf(write_buffer, LOG_WRITE_BUFFER_SIZE,
-        "%d-%02d-%02d %02d:%02d:%02d.%03d %s [%04u] [%08lu] %s\n",
+        "%d-%02d-%02d %02d:%02d:%02d.%03d %s [%04u] [%08u] %s\n",
         clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second,
         clock.milliseconds, log_level_desc, module_id, os_thread_get_curr_id(), errbuf);
     write_buffer[write_pos] = '\0';
@@ -201,7 +201,7 @@ retry:
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
 
-            fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%lu] %s, error %s\n",
+            fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%u] %s, error %s\n",
                 clock.year, clock.month, clock.day,
                 clock.hour, clock.minute, clock.second,
                 clock.milliseconds, "[ERROR] ", os_thread_get_curr_id(),
@@ -215,7 +215,7 @@ retry:
             char err_info[CM_ERR_MSG_MAX_LEN];
             os_file_get_last_error_desc(err_info, CM_ERR_MSG_MAX_LEN);
 
-            fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%lu] %s, error %s\n",
+            fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%u] %s, error %s\n",
                 clock.year, clock.month, clock.day,
                 clock.hour, clock.minute, clock.second,
                 clock.milliseconds, "[ERROR] ", os_thread_get_curr_id(),
@@ -335,7 +335,7 @@ void log_info::log_to_stderr(const char* log_level_desc, uint32 module_id, const
 #ifdef __WIN__
     len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
-    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%04u] [%08lu] %s\n",
+    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%04u] [%08u] %s\n",
         clock.year, clock.month, clock.day,
         clock.hour, clock.minute, clock.second,
         clock.milliseconds, log_level_desc, module_id, os_thread_get_curr_id(), errbuf);
@@ -343,7 +343,7 @@ void log_info::log_to_stderr(const char* log_level_desc, uint32 module_id, const
 #else
     len = vsnprintf(errbuf, LOG_WRITE_BUFFER_SIZE, fmt, ap);
     errbuf[len] = '\0';
-    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%04u] [%08lu] %s\n",
+    fprintf(stderr, "%d-%02d-%02d %02d:%02d:%02d.%03d [%s] [%04u] [%08u] %s\n",
         clock.year, clock.month, clock.day,
         clock.hour, clock.minute, clock.second,
         clock.milliseconds, log_level_desc, module_id, os_thread_get_curr_id(), errbuf);

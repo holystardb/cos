@@ -8,7 +8,7 @@
 
 #include "cm_type.h"
 
-#ifdef	__cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -19,7 +19,7 @@ extern "C" {
 #define MY_CS_SORT_ORDER_TABLE_SIZE	256
 #define MY_CS_TO_UNI_TABLE_SIZE		256
 
-#define CHARSET_DIR	"charsets/"
+#define CHARSET_DIR    "charsets/"
 
 #define my_wc_t ulong
 
