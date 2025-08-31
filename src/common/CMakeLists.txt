@@ -1,19 +1,24 @@
 aux_source_directory (${CMAKE_CURRENT_SOURCE_DIR} COMMON_LIB_SRCS)
 
-include_directories (  
+include_directories (
+    #${PROJECT_SOURCE_DIR}/third_lib/openssl-1.1.1/include/openssl
+    ${PROJECT_SOURCE_DIR}/src/include/securec
+    ${PROJECT_SOURCE_DIR}/src/include/strings
     ${PROJECT_SOURCE_DIR}/src/include/common
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 link_directories (
-    ${CMAKE_OUTPUT_DIR}/lib
+    ${PROJECT_SOURCE_DIR}/third_lib/securec/lib/linux
+    ${PROJECT_SOURCE_DIR}/build/src/strings
 )
-
-link_libraries (m rt pthread dl)
 
 #
 add_library (libcommon.lib STATIC ${COMMON_LIB_SRCS})
 add_library (libcommon.dll SHARED ${COMMON_LIB_SRCS})
+
+#target_link_libraries(libcommon.lib libsecurec.a libstrings.a m rt pthread dl)
+#target_link_libraries(libcommon.dll libsecurec.so libstrings.so m rt pthread dl)
 
 #
 set_target_properties (libcommon.lib PROPERTIES OUTPUT_NAME "common")
@@ -27,5 +32,3 @@ install (TARGETS libcommon.lib libcommon.dll
          LIBRARY DESTINATION ${CMAKE_OUTPUT_DIR}/lib
          ARCHIVE DESTINATION ${CMAKE_OUTPUT_DIR}/lib
 )
-
-install (DIRECTORY ${PROJECT_SOURCE_DIR}/src/include/common DESTINATION ${CMAKE_OUTPUT_DIR}/include)

@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\src\main\files_encrypt.cpp" />
+    <ClCompile Include="..\src\main\sock_proxy.cpp" />
+    <ClCompile Include="..\src\main\server.cpp" />
+    <ClCompile Include="..\src\main\guc.cpp" />
+    <ClCompile Include="..\src\main\db_init.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\src\main\guc.h" />
+  </ItemGroup>
+</Project>

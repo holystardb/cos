@@ -1,0 +1,7 @@
+/home/cos/cos/third_lib/securec/source/output/lib/libsecurec.a
+/home/cos/cos/third_lib/securec/source/output/lib/libsecurec.so.1.0
+/home/cos/cos/third_lib/securec/source/output/lib/libsecurec.so.1
+/home/cos/cos/third_lib/securec/source/output/lib/libsecurec.so
+/home/cos/cos/third_lib/securec/source/output/include/securec.h
+/home/cos/cos/third_lib/securec/source/output/include/securectype.h
+/home/cos/cos/third_lib/securec/source/output/bin/test_memory

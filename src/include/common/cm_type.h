@@ -45,7 +45,8 @@ extern "C" {
 ***********************************************************************************************/
 
 /* If supported, give compiler hints for branch prediction. */
-#if !defined(__builtin_expect) && (!defined(__GNUC__) || (__GNUC__ == 2 && __GNUC_MINOR__ < 96))
+#if defined(__GNUC__) && ((__GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 3 /*above 3.4*/ )))
+#else
 #define __builtin_expect(x, expected_value)     (x)
 #endif
 
@@ -293,7 +294,7 @@ typedef int32                       os_file_t;
 #define fseeki64                    fseeko64
 #define ftelli64                    ftello64
 #define fopen_s(pFile,name,mode)    ((*(pFile))=fopen((name),(mode)))==NULL
-#define errno_t                     int
+//#define errno_t                     int
 #endif
 
 

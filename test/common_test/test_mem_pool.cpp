@@ -4,6 +4,7 @@
 #include "cm_log.h"
 #include "cm_mutex.h"
 #include "cm_list.h"
+#include "securec.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -90,7 +91,7 @@ bool32 test_pool()
 
     // check
     for (uint32 i = 0; i < MPOOL_FREE_PAGE_LIST_COUNT; i++) {
-        pool_free_page_list_t* free_page_list = &g_mem_pool->page_list[i];
+        pool_free_page_list_t* free_page_list = &g_mem_pool->free_page_list[i];
         printf("free_list %02u: count %u\n", i, UT_LIST_GET_LEN(*free_page_list));
     }
 
@@ -270,6 +271,12 @@ int main(int argc, char *argv[])
 err_exit:
 
     destroy_memory_pool();
+
+    if (ret) {
+        printf("memory pool: ok\n");
+    } else {
+        printf("memory pool: fail\n");
+    }
 
     return ret;
 }

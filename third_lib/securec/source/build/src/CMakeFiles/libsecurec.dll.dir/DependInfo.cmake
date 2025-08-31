@@ -1,0 +1,72 @@
+# The set of languages for which implicit dependencies are needed:
+set(CMAKE_DEPENDS_LANGUAGES
+  "C"
+  )
+# The set of files for implicit dependencies of each language:
+set(CMAKE_DEPENDS_CHECK_C
+  "/home/cos/cos/third_lib/securec/source/src/fscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/fscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/fwscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/fwscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/gets_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/gets_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/memcpy_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/memcpy_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/memmove_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/memmove_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/memset_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/memset_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/scanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/scanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/securecutil.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/securecutil.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/secureinput_a.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/secureinput_a.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/secureinput_w.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/secureinput_w.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/secureprintoutput_a.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/secureprintoutput_a.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/secureprintoutput_w.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/secureprintoutput_w.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/snprintf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/snprintf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/sprintf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/sprintf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/sscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/sscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/strcat_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/strcat_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/strcpy_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/strcpy_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/strncat_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/strncat_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/strncpy_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/strncpy_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/strtok_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/strtok_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/swprintf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/swprintf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/swscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/swscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vfscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vfscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vfwscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vfwscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vsnprintf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vsnprintf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vsprintf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vsprintf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vsscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vsscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vswprintf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vswprintf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vswscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vswscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/vwscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/vwscanf_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wcscat_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wcscat_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wcscpy_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wcscpy_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wcsncat_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wcsncat_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wcsncpy_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wcsncpy_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wcstok_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wcstok_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wmemcpy_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wmemcpy_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wmemmove_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wmemmove_s.c.o"
+  "/home/cos/cos/third_lib/securec/source/src/wscanf_s.c" "/home/cos/cos/third_lib/securec/source/build/src/CMakeFiles/libsecurec.dll.dir/wscanf_s.c.o"
+  )
+set(CMAKE_C_COMPILER_ID "GNU")
+
+# Preprocessor definitions for this target.
+set(CMAKE_TARGET_DEFINITIONS_C
+  "libsecurec_dll_EXPORTS"
+  )
+
+# The include file search paths:
+set(CMAKE_C_TARGET_INCLUDE_PATH
+  "../include"
+  "../src"
+  )
+
+# Pairs of files generated by the same build rule.
+set(CMAKE_MULTIPLE_OUTPUT_PAIRS
+  "/home/cos/cos/third_lib/securec/source/build/src/libsecurec.so" "/home/cos/cos/third_lib/securec/source/build/src/libsecurec.so.1.0"
+  "/home/cos/cos/third_lib/securec/source/build/src/libsecurec.so.1" "/home/cos/cos/third_lib/securec/source/build/src/libsecurec.so.1.0"
+  )
+
+
+# Targets to which this target links.
+set(CMAKE_TARGET_LINKED_INFO_FILES
+  )
+
+# Fortran module output directory.
+set(CMAKE_Fortran_TARGET_MODULE_DIR "")

@@ -2,19 +2,23 @@
 aux_source_directory (${CMAKE_CURRENT_SOURCE_DIR} STRINGS_LIB_SRCS)
 
 include_directories (  
+    ${PROJECT_SOURCE_DIR}/src/include/securec
     ${PROJECT_SOURCE_DIR}/src/include/strings
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 link_directories (
-    ${CMAKE_OUTPUT_DIR}/lib
+    ${PROJECT_SOURCE_DIR}/third_lib/securec/lib/linux
 )
 
-link_libraries (m rt pthread dl)
+#link_libraries (m rt pthread dl)
 
 #
 add_library (libstrings.lib STATIC ${STRINGS_LIB_SRCS})
 add_library (libstrings.dll SHARED ${STRINGS_LIB_SRCS})
+
+target_link_libraries(libstrings.lib libsecurec.a m rt pthread dl)
+target_link_libraries(libstrings.dll libsecurec.so m rt pthread dl)
 
 #
 set_target_properties (libstrings.lib PROPERTIES OUTPUT_NAME "strings")
@@ -28,6 +32,3 @@ install (TARGETS libstrings.lib libstrings.dll
          LIBRARY DESTINATION ${CMAKE_OUTPUT_DIR}/lib
          ARCHIVE DESTINATION ${CMAKE_OUTPUT_DIR}/lib
 )
-
-install (DIRECTORY ${PROJECT_SOURCE_DIR}/src/include/strings DESTINATION ${CMAKE_OUTPUT_DIR}/include)
-

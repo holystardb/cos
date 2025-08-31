@@ -1,0 +1,55 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="..\..\src\fscanf_s.c" />
+    <ClCompile Include="..\..\src\fwscanf_s.c" />
+    <ClCompile Include="..\..\src\gets_s.c" />
+    <ClCompile Include="..\..\src\memcpy_s.c" />
+    <ClCompile Include="..\..\src\memmove_s.c" />
+    <ClCompile Include="..\..\src\memset_s.c" />
+    <ClCompile Include="..\..\src\scanf_s.c" />
+    <ClCompile Include="..\..\src\securecutil.c" />
+    <ClCompile Include="..\..\src\secureinput_a.c" />
+    <ClCompile Include="..\..\src\secureinput_w.c" />
+    <ClCompile Include="..\..\src\secureprintoutput_a.c" />
+    <ClCompile Include="..\..\src\secureprintoutput_w.c" />
+    <ClCompile Include="..\..\src\snprintf_s.c" />
+    <ClCompile Include="..\..\src\sprintf_s.c" />
+    <ClCompile Include="..\..\src\sscanf_s.c" />
+    <ClCompile Include="..\..\src\strcat_s.c" />
+    <ClCompile Include="..\..\src\strcpy_s.c" />
+    <ClCompile Include="..\..\src\strncat_s.c" />
+    <ClCompile Include="..\..\src\strncpy_s.c" />
+    <ClCompile Include="..\..\src\strtok_s.c" />
+    <ClCompile Include="..\..\src\swprintf_s.c" />
+    <ClCompile Include="..\..\src\swscanf_s.c" />
+    <ClCompile Include="..\..\src\vfscanf_s.c" />
+    <ClCompile Include="..\..\src\vfwscanf_s.c" />
+    <ClCompile Include="..\..\src\vscanf_s.c" />
+    <ClCompile Include="..\..\src\vsnprintf_s.c" />
+    <ClCompile Include="..\..\src\vsprintf_s.c" />
+    <ClCompile Include="..\..\src\vsscanf_s.c" />
+    <ClCompile Include="..\..\src\vswprintf_s.c" />
+    <ClCompile Include="..\..\src\vswscanf_s.c" />
+    <ClCompile Include="..\..\src\vwscanf_s.c" />
+    <ClCompile Include="..\..\src\wcscat_s.c" />
+    <ClCompile Include="..\..\src\wcscpy_s.c" />
+    <ClCompile Include="..\..\src\wcsncat_s.c" />
+    <ClCompile Include="..\..\src\wcsncpy_s.c" />
+    <ClCompile Include="..\..\src\wcstok_s.c" />
+    <ClCompile Include="..\..\src\wmemcpy_s.c" />
+    <ClCompile Include="..\..\src\wmemmove_s.c" />
+    <ClCompile Include="..\..\src\wscanf_s.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\src\input.inl" />
+    <None Include="..\..\src\output.inl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\secinput.h" />
+    <ClInclude Include="..\..\src\securecutil.h" />
+    <ClInclude Include="..\..\src\secureprintoutput.h" />
+    <ClInclude Include="..\..\include\securec.h" />
+    <ClInclude Include="..\..\include\securectype.h" />
+  </ItemGroup>
+</Project>

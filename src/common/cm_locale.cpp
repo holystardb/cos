@@ -1,4 +1,7 @@
 #include "cm_locale.h"
+#include "cm_type.h"
+#include "cm_log.h"
+
 
 MY_LOCALE *my_default_lc_messages;
 MY_LOCALE *my_default_lc_time_names;
@@ -13,13 +16,13 @@ void init()
 
     if (!(my_default_lc_time_names =  my_locale_by_name(lc_time_names_name)))
     {
-        LOG_PRINT_ERROR("Unknown locale: '%s'", lc_time_names_name);
+        //LOGGER_ERROR("Unknown locale: '%s'", lc_time_names_name);
         return;
     }
 
     if (!(my_default_lc_messages =  my_locale_by_name(lc_messages)))
     {
-        LOG_PRINT_ERROR("Unknown locale: '%s'", lc_messages);
+        //LOG_PRINT_ERROR("Unknown locale: '%s'", lc_messages);
         return;
     }
 
@@ -103,13 +106,13 @@ MY_LOCALE my_locale_en_US
 
 /***** LOCALE BEGIN zh_CN: Chinese - Peoples Republic of China *****/
 static const char *my_locale_month_names_zh_CN[13] = 
- {"一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月", NullS };
+ {"一�?,"二月","三月","四月","五月","六月","七月","八月","九月","十月","十一�?,"十二�?, NullS };
 static const char *my_locale_ab_month_names_zh_CN[13] = 
- {" 1月"," 2月"," 3月"," 4月"," 5月"," 6月"," 7月"," 8月"," 9月","10月","11月","12月", NullS };
+ {" 1�?," 2�?," 3�?," 4�?," 5�?," 6�?," 7�?," 8�?," 9�?,"10�?,"11�?,"12�?, NullS };
 static const char *my_locale_day_names_zh_CN[8] = 
- {"星期一","星期二","星期三","星期四","星期五","星期六","星期日", NullS };
+ {"星期一","星期�?,"星期�?,"星期�?,"星期�?,"星期�?,"星期�?, NullS };
 static const char *my_locale_ab_day_names_zh_CN[8] = 
- {"一","二","三","四","五","六","日", NullS };
+ {"一","�?,"�?,"�?,"�?,"�?,"�?, NullS };
 static TYPELIB my_locale_typelib_month_names_zh_CN = 
  { array_elements(my_locale_month_names_zh_CN)-1, "", my_locale_month_names_zh_CN, NULL };
 static TYPELIB my_locale_typelib_ab_month_names_zh_CN = 

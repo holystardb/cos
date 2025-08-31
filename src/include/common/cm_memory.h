@@ -7,7 +7,6 @@
 #include "cm_util.h"
 #include "securec.h"
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif

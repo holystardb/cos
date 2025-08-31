@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/securec.h
+securectype.h
+../include/securectype.h
+stdarg.h
+-
+memory.h
+-
+
+../include/securectype.h
+stdio.h
+-
+string.h
+-
+stdlib.h
+-
+version.h
+-
+stddef.h
+-
+
+/home/cos/cos/third_lib/securec/source/test/test_memory.cpp
+securec.h
+/home/cos/cos/third_lib/securec/source/test/securec.h
+
