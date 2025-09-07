@@ -454,24 +454,27 @@ retry:
 
 static inline log_slot_t* log_sys_get_slot(uint64 slot_index)
 {
-    return &log_sys->slots[slot_index % LOG_SLOT_MAX_COUNT];
+    return &log_sys->slots[slot_index & (LOG_SLOT_MAX_COUNT -1)];
 }
 
 static void* log_writer_thread_entry(void *arg)
 {
-    uint64 signal_count = 0;
-    uint64 slot_write_pos;
-    uint32 slot_sleep_microseconds = 1000;
+    uint64 signal_count = 0, slot_write_pos;
+    uint32 slot_count;
+    const uint32 slot_sleep_microseconds = 1000, slot_count_per_write = LOG_SLOT_MAX_COUNT - SIZE_K(1);
 
     LOGGER_INFO(LOGGER, LOG_MODULE_REDO, "log_writer thread starting ...");
 
     while (TRUE) {
-
+        //
         slot_write_pos = log_sys->slot_write_pos;
-        while (log_sys_get_slot(log_sys->slot_write_pos)->status == LogSlotStatus::COPIED) {
+        slot_count = 0;
+        while (slot_count < slot_count_per_write &&
+               log_sys_get_slot(log_sys->slot_write_pos)->status == LogSlotStatus::COPIED) {
+            slot_count++;
             log_sys->slot_write_pos++;
         }
-        if (slot_write_pos == log_sys->slot_write_pos) {
+        if (slot_count == 0) {
             log_sys->writer_event_is_waitting = TRUE;
             if (log_sys_get_slot(log_sys->slot_write_pos)->status == LogSlotStatus::COPIED) {
                 // check again

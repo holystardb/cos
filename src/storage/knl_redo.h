@@ -106,7 +106,7 @@ extern "C" {
 
 
 constexpr uint32 LOG_SESSION_WAIT_EVENT_COUNT = 2048;
-constexpr uint32 LOG_SLOT_MAX_COUNT = 655360; //640KB
+constexpr uint32 LOG_SLOT_MAX_COUNT = SIZE_K(640);
 
 typedef enum {
     INIT     = 0,

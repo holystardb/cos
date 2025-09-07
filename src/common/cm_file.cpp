@@ -19,8 +19,9 @@
 
 /* We use these mutexes to protect lseek + file i/o operation, if the OS does not provide an atomic pread or pwrite, or similar */
 #define OS_FILE_N_SEEK_MUTEXES          13
-os_mutex_t os_file_seek_mutexes[OS_FILE_N_SEEK_MUTEXES];
-bool32     is_os_file_mutexs_inited = FALSE;
+
+os_mutex_t      os_file_seek_mutexes[OS_FILE_N_SEEK_MUTEXES];
+volatile bool32 is_os_file_mutexs_inited = FALSE;
 
 void os_file_init()
 {

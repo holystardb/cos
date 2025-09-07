@@ -242,10 +242,24 @@ int main(int argc, char *argv[])
 {
     bool32 ret;
     char *log_path = "D:\\MyWork\\cos\\data\\";
-    //LOGGER.log_init(LOG_LEVEL_ALL, log_path, "memory_test");
+    LOGGER.init(LOG_LEVEL_ALL, log_path, "memory_test");
     //LOGGER.log_init(LOG_INFO, NULL, "memory_test");
-    //LOGGER_WARN(LOGGER, "WARN: This is memory test");
-    //LOGGER_DEBUG(LOGGER, "DEBUG: This is memory test");
+
+    for (uint32 i = 1; i <= 100; i++) {
+        LOGGER_FATAL(LOGGER, LOG_MODULE_ALL, "This is %08d FATAL memory test", i);
+        LOGGER_ERROR(LOGGER, LOG_MODULE_ALL, "This is %08d ERROR memory test", i);
+        LOGGER_WARN(LOGGER, LOG_MODULE_ALL, "This is %08d WARN memory test", i);
+        LOGGER_INFO(LOGGER, LOG_MODULE_ALL, "This is %08d INFO memory test", i);
+        LOGGER_NOTICE(LOGGER, LOG_MODULE_ALL, "This is %08d NOTICE memory test", i);
+        LOGGER_DEBUG(LOGGER, LOG_MODULE_ALL, "This is %08d DEBUG memory test", i);
+        LOGGER_TRACE(LOGGER, LOG_MODULE_ALL, "This is %08d TRACE memory test", i);
+        if (i % 5000 == 0) {
+            printf("i = %d\n", i);
+        }
+    }
+    printf("\n\ndone\n");
+    os_thread_sleep(100000000000);
+    LOGGER.destroy();
 
     DBUG_INIT(log_path, "memory_dbug", 1);
     //DBUG_INIT(NULL, "memory_dbug", 1);

@@ -26,11 +26,7 @@ inline bool32 os_thread_eq(os_thread_id_t a, os_thread_id_t b)
 
 inline bool32 os_thread_is_valid(os_thread_t thread)
 {
-#ifdef __WIN__
-    return (thread == NULL) ? FALSE : TRUE;
-#else
-    return (thread == 0) ? FALSE : TRUE;
-#endif
+    return (thread == INVALID_OS_THREAD) ? FALSE : TRUE;
 }
 
 /*Returns handle to the current thread. */

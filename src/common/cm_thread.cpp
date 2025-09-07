@@ -38,7 +38,7 @@ os_thread_t os_thread_create(
 void os_thread_exit(void* exit_value)
 {
 #ifdef __WIN__
-    ExitThread((DWORD)exit_value);
+    ExitThread(exit_value == NULL ? 0 : *(DWORD*)exit_value);
 #else
     pthread_detach(pthread_self());
     pthread_exit(exit_value);

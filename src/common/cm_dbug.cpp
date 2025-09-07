@@ -32,7 +32,7 @@ bool32 dbug_init(char *log_path, char *file_name, int level)
         return FALSE;
     }
 
-    DBUG_LOGGER.log_init(LOG_LEVEL_TRACE, log_path, file_name, TRUE);
+    DBUG_LOGGER.init(LOG_LEVEL_TRACE, log_path, file_name);
 
     return TRUE;
 }

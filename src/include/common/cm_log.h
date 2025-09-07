@@ -24,6 +24,7 @@ extern "C" {
 #define LOG_LEVEL_DEFAULT         31  // include fatal, error, warn, notice
 #define LOG_LEVEL_ALL             255
 
+
 // log module
 enum log_module_id_t {
     LOG_MODULE_ALL = 0,
@@ -111,70 +112,99 @@ enum log_module_id_t {
     LOG_MODULE_END = 1024
 };
 
-#define LOG_MODULE_ALL             1023
-
 
 //
+#define LOG_BUFFER_SIZE            SIZE_M(4)  //must be power of 2
+#define LOG_DATA_PREFIX_SIZE       51
+#define LOG_FILE_MAX_SIZE          SIZE_G(1)
+
 #define LOG_WRITE_BUFFER_SIZE      1023
+#define LOGINFO_SLOT_COUNT         SIZE_K(8) //must be power of 2
+
+#define LOGINFO_SLOT_STATUS_INIT   0
+#define LOGINFO_SLOT_STATUS_COPIED 1
+
+
+struct loginfo_slot_t {
+    volatile uint32  start_pos;
+    volatile uint16  data_len;
+    volatile uint16  status;
+};
 
 class log_info {
 public:
     log_info();
 
-    bool32 log_init(uint32 level, char *log_path, char *file_name, bool32 batch_flush = FALSE);
+    bool32 init(uint32 log_level, char *log_path, char *file_name);
+    void destroy();
+
     void log_to_stderr(const char* log_level_desc, uint32 module_id, const char *fmt, ...);
     void log_to_file(const char* log_level_desc, uint32 module_id, const char *fmt, ...);
     void log_file_flush();
     void coredump_to_file(char **symbol_strings, int len_symbols);
 
-    void set_print_stderr(bool32 val) {
-        is_print_stderr = val;
-    }
-
-    bool32 get_is_print_stderr() {
-        return is_print_stderr;
-    }
-
     uint32 get_log_level() {
-        return log_level;
+        return m_log_level;
     }
 
-    void set_log_level(uint32 level) {
-        log_level = level;
+    void set_log_level(uint32 log_level) {
+        m_log_level = log_level;
     }
 
-    void set_module_log_level(uint32 module_id, uint32 level) {
+    void set_log_thread_exited() {
+        m_is_exited = TRUE;
+    }
+    bool32 get_log_thread_exited()
+    {
+        return m_is_exited;
+    }
+
+    void set_module_log_level(uint32 module_id, uint32 log_level) {
         ut_ad(module_id > 0 && module_id < LOG_MODULE_END);
-        modules_log_level[module_id] = level;
+        m_modules_log_level[module_id] = log_level;
     }
 
     uint32 get_module_log_level(uint32 module_id) {
         ut_ad(module_id >=0 && module_id < LOG_MODULE_END);
-        return modules_log_level[module_id];
+        return m_modules_log_level[module_id];
     }
 
-    bool32 is_print_module_log(uint32 module_id, uint32 level) {
-        return modules_log_level[module_id] & level;
+    bool32 is_print_module_log(uint32 module_id, uint32 log_level) {
+        return m_modules_log_level[module_id] & log_level;
     }
 
-private:
-    bool32 create_log_file();
+    os_thread_ret_t log_write_file_thread_run();
 
 private:
-    char      write_buffer[LOG_WRITE_BUFFER_SIZE+1];
-    uint32    write_pos;
-    volatile bool32    write_to_buffer_flag;
-    uint64    log_file_size;
-    uint32    log_file_create_time;
-    bool32    is_print_stderr;
-    char      log_file_path[CM_FILE_NAME_BUF_SIZE];
-    char      log_file_name[CM_FILE_NAME_BUF_SIZE];
-    os_file_t log_handle;
-    bool32    batch_flush_flag;
-    uint32    log_level;
-    uint64    batch_flush_pos;
-    mutex_t   mutex;
-    uint32    modules_log_level[LOG_MODULE_END];
+    bool32 open_or_create_log_file();
+    bool32 log_rotate_file_if_needed();
+    bool32 rename_log_file();
+    bool32 get_reserve_buf(uint32 len, uint32 &slot_index);
+    uint32 get_buf_slots(uint32 &slot_start_index);
+
+
+private:
+    char*            m_buffer;
+    volatile uint64  m_buffer_write_offset;
+    volatile uint64  m_buffer_sync_offset;
+
+    volatile uint32  m_file_slot_index;
+    volatile uint32  m_buffer_slot_index;
+    loginfo_slot_t   m_slot[LOGINFO_SLOT_COUNT];
+
+    uint64           m_file_offset;
+    os_file_t        m_log_handle;
+    os_thread_t      m_write_file_thread;
+    volatile bool32  m_is_exited;
+    uint32           m_log_file_create_time;
+    uint32           m_log_file_index;
+    char             m_log_file_path[CM_FILE_NAME_BUF_SIZE];
+    char             m_log_file_name[CM_FILE_NAME_BUF_SIZE];
+    char             m_log_file_path_name[CM_FILE_NAME_BUF_SIZE];
+
+    uint32           m_log_level;
+    mutex_t          m_mutex;
+    uint32           m_modules_log_level[LOG_MODULE_END];
 };
 
 

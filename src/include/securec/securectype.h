@@ -70,7 +70,7 @@
 #endif
 
 #ifndef LIKELY
-#if defined(__GNUC__) && ((__GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 3 /*above 3.4*/ ))  ) 
+#if defined(__GNUC__) && ((__GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 3 /*above 3.4*/ ))) 
     long __builtin_expect(long exp, long c);
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -78,7 +78,7 @@
 #define LIKELY(x) (x)
 #define UNLIKELY(x) (x) 
 #endif
-#endif // !LIKELY
+#endif // !LINKELY
 
 #ifndef TWO_MIN
 #define TWO_MIN(a, b) ((a) < (b) ? (a) : (b))

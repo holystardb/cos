@@ -15,13 +15,20 @@ extern "C" {
 typedef void*                     os_thread_t;
 typedef DWORD                     os_thread_id_t;
 typedef DWORD                     os_thread_local_key_t;
+typedef uint32                    os_thread_ret_t;
+#define INVALID_OS_THREAD         NULL
+#define OS_THREAD_DUMMY_RETURN    return(0)
 #else
 typedef pthread_t                 os_thread_t;
 typedef uint32                    os_thread_id_t;
 typedef pthread_key_t             os_thread_local_key_t;
+typedef void*                     os_thread_ret_t;
+#define INVALID_OS_THREAD         0
+#define OS_THREAD_DUMMY_RETURN    return(NULL)
 #endif
 
-#if defined __WIN__
+
+#ifdef __WIN__
 /* In the Win32 API, the x86 PAUSE instruction is executed by calling
 the YieldProcessor macro defined in WinNT.h. It is a CPU architecture-
 independent way by using YieldProcessor. */
@@ -30,15 +37,9 @@ independent way by using YieldProcessor. */
 #define OS_RELAX_CPU()           __asm__ __volatile__("rep; nop")
 #else
 #define OS_RELAX_CPU()           __asm__ __volatile__("pause")
-#endif
+#endif  // __WIN__
 
-#ifdef __WIN__
-typedef uint32 os_thread_ret_t;
-#define OS_THREAD_DUMMY_RETURN return(0)
-#else
-typedef void* os_thread_ret_t;
-#define OS_THREAD_DUMMY_RETURN return(NULL)
-#endif
+
 
 inline int os_create_thread_local_key(os_thread_local_key_t *key,            void (*destructor)(void *))
 {
